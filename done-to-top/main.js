@@ -385,6 +385,63 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "u" }],
 			editorCallback: (editor) => this.quadrant(editor, 1),
 		});
+		// 命令名里带「明天」：编辑器里打 /明天 就能从斜杠命令里叫出来
+		this.addCommand({
+			id: "send-block-to-tomorrow",
+			name: "发送到明天：把光标所在块（连同子项）移到明天的日记",
+			editorCallback: (editor, ctx) => this.sendToTomorrow(editor, ctx && ctx.file),
+		});
+	}
+
+	// 明天的日记：当前笔记是日记就取它的后一天；不是日记就取「今天」的后一天（和螺旋日程同一个凌晨分界）
+	tomorrowOf(file) {
+		if (file && JOURNAL_NAME_RE.test(file.basename)) {
+			const to = journalAfter(file.basename, 1);
+			return { ...to, folder: file.parent && file.parent.path !== "/" ? file.parent.path : "", source: file.basename };
+		}
+		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
+		const d = new Date();
+		if (d.getHours() * 60 + d.getMinutes() < (cfg.dayCutoff ?? 7) * 60) d.setDate(d.getDate() - 1);
+		const today = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())].join("_");
+		return { ...journalAfter(today, 1), folder: cfg.folder || "日记", source: file ? file.basename : today };
+	}
+
+	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，行尾记上「← [[来源]]」
+	async sendToTomorrow(editor, file) {
+		file = file || this.app.workspace.getActiveFile();
+		const lines = editor.getValue().split("\n");
+		const b = this.blockAt(lines, editor.getCursor().line);
+		if (!b) return new Notice("光标不在列表项里");
+		const { start, end, baseIndent } = b;
+		const orig = lines.slice(start, end + 1);
+		const moved = orig.map((l) => (isBlank(l) ? "" : dedent(l, baseIndent)));
+		while (moved.length > 1 && isBlank(moved[moved.length - 1])) moved.pop();
+		const to = this.tomorrowOf(file);
+		if (file && to.name === file.basename) return new Notice("这里已经是明天的日记了");
+		// 已经是搬来的就保留最初的来源，不叠两个记号
+		moved[0] = normalizeKeyword(moved[0], false);
+		if (!FROM_RE.test(moved[0])) moved[0] = markFrom(moved[0], to.source);
+		const path = (to.folder ? to.folder + "/" : "") + to.name + ".md";
+		try {
+			let target = this.app.vault.getAbstractFileByPath(path);
+			if (!target) target = await this.app.vault.create(path, `---\njournal: 每日\njournal-date: ${to.date}\n---\n`);
+			await this.app.vault.process(target, (data) => addBlock(data, moved));
+		} catch (e) {
+			console.error("[done-to-top] 发送到明天失败", path, e);
+			return new Notice("写入明天的日记失败，原文没动。详情见控制台");
+		}
+		// 原文里删掉这一块（编辑器事务，⌘Z 能撤回；明天日记里那份要手动删）
+		if (editor.getRange({ line: start, ch: 0 }, { line: end, ch: lines[end].length }) !== orig.join("\n")) {
+			return new Notice(`已写进 ${to.name}，但原文在这期间变了，没有删原处，请手动删`);
+		}
+		const last = editor.lastLine();
+		const from = end < last ? { line: start, ch: 0 } : start > 0 ? { line: start - 1, ch: editor.getLine(start - 1).length } : { line: 0, ch: 0 };
+		const until = end < last ? { line: end + 1, ch: 0 } : { line: end, ch: lines[end].length };
+		editor.transaction({ changes: [{ from, to: until, text: "" }] });
+		const next = Math.min(start, editor.lastLine());
+		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+		const label = orig[0].replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").slice(0, 24);
+		new Notice(`➡️ 已发送到明天（${to.name}）：${label}${orig.length > 1 ? `（含 ${orig.length - 1} 行子项）` : ""}`);
 	}
 
 	// 光标所在的列表项（光标在续行/空行时向上找）连同子项

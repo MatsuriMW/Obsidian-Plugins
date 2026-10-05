@@ -14,6 +14,7 @@ journal-tidy
 nautilus-notify
 block-ref-plus
 palette-split-open
+bookmark-icons
 qws-bridge
 list-paste-merge
 board-jump

@@ -1,9 +1,9 @@
 {
 	"id": "done-to-top",
 	"name": "Done To Top",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"minAppVersion": "1.0.0",
-	"description": "按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急。",
+	"description": "按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急；「发送到明天」把光标所在块移到明天的日记（编辑器里打 /明天 也能叫出来）。",
 	"author": "马自立",
 	"isDesktopOnly": false
 }

@@ -1,0 +1,9 @@
+{
+	"id": "bookmark-icons",
+	"name": "书签图标",
+	"version": "0.1.0",
+	"minAppVersion": "1.5.0",
+	"description": "书签面板里每个笔记换成各自的图标（淡色底小方块），不再都是同一个文件图标；笔记属性 icon / icon-color 可以自己指定。只改显示。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

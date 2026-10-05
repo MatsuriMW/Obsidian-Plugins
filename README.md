@@ -10,7 +10,7 @@
 
 - **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）：仿 Roam 的 Nautilus，把今天日记里的事件和待办画成一圈螺旋，没做完的任务从「现在」往后流，带容量条，一眼看出今天还排不排得下。只读日记，日记可以在 Bike 里写。
 - **任务提醒**（[`nautilus-notify`](nautilus-notify)）：螺旋日程的搭档，用 macOS 通知横幅提醒：快开始的事件、过点没做的待办、做太久的 DOING、排不下的容量预警、下一件该做什么、今日简报和收尾。
-- **Done To Top**（[`done-to-top`](done-to-top)）+ **日记整理**（[`journal-tidy`](journal-tidy)）：顶格任务按 DONE / DOING / TODO 分区归位，写着「明天 / 后天」的整块搬到那天的日记；日记整理再把日记里的问句汇总起来，交给本机 Claude 联网查证后写上回答。
+- **Done To Top**（[`done-to-top`](done-to-top)）+ **日记整理**（[`journal-tidy`](journal-tidy)）：顶格任务按 DONE / DOING / TODO 分区归位，写着「明天 / 后天」的整块搬到那天的日记，光标所在块也能用 `/明天` 直接发送到明天的日记；日记整理再把日记里的问句汇总起来，交给本机 Claude 联网查证后写上回答。
 
 ### 知识库与写作
 
@@ -23,6 +23,7 @@
 ### 界面与操作
 
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）：照 Chrome 做的标签页分组：命名、颜色、折叠、拖色块移动整组、移至新窗口，加上 Chrome 的右键菜单。
+- **书签图标**（[`bookmark-icons`](bookmark-icons)）：书签面板里每个看板换成各自的彩色图标，不再是一排一样的文件图标；笔记属性 `icon` / `icon-color` 可以自己指定。
 - **Palette Enhancements**（[`palette-split-open`](palette-split-open)）：Better Command Palette 文件搜索增强：⌘⌥↵ 右侧拆分打开；文件名搜不到时自动搜正文；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。
 
 ### 改得最多的社区插件
@@ -38,15 +39,16 @@
 |---|---|---|
 | **螺旋日程** ([`nautilus-spiral`](nautilus-spiral)) | 0.1.0 | 仿 Roam 的 Nautilus：把今天日记里的事件和待办画成螺旋日程，未完成的任务从「现在」往后流，带容量条。只读日记不写日记，日记可以在 Bike 里写。 |
 | **第二大脑（自用）** ([`second-brain`](second-brain)) | 0.2.0 | 每日回顾（那年今日 / 随机旧块 / 孤岛笔记）、写作模式（相关笔记 + Claudian）、库周报。 |
-| **Backlink Defaults** ([`backlink-defaults`](backlink-defaults)) | 0.1.0 | 反向链接面板默认按修改时间从新到旧排序，并显示更多上下文。 |
+| **Backlink Defaults** ([`backlink-defaults`](backlink-defaults)) | 0.1.0 | 反链面板重排：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑；未链接提及默认折叠。 |
 | **Chrome Tab Groups** ([`chrome-tab-groups`](chrome-tab-groups)) | 1.0.0 | 仿 Chrome 的标签页管理：标签页分组（命名、颜色、折叠、拖色块移动整组、移至新窗口）、右键菜单（在右侧新建、向新拆分视图添加、添加到组、复制标签页）、搜索标签页。 |
 | **LLM Wiki** ([`llm-wiki`](llm-wiki)) | 0.1.0 | 左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面，提示哪些新笔记还没摄入，一键让本机 Claude 摄入 / 回答问题，本地体检 wiki 规则。 |
 | **Outline Block** ([`outline-block`](outline-block)) | 1.1.0 | ⌘⌥L：把光标所在的那一个长段落块，整理成层级列表并给核心概念加双链，层级按反链面板来定：引出 [[X]] 的那一项，展开讲 X 的内容都挂成它的子项（调用本机 Claude）。⌘⌥⇧L：整篇笔记（或选中的部分）按同一套规则整理，自动按标题/段落分份并行处理再拼回。先预览再替换。 |
-| **Done To Top** ([`done-to-top`](done-to-top)) | 1.1.0 | 按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急。 |
+| **Done To Top** ([`done-to-top`](done-to-top)) | 1.2.0 | 按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急；「发送到明天」把光标所在块移到明天的日记（编辑器里打 /明天 也能叫出来）。 |
 | **日记整理** ([`journal-tidy`](journal-tidy)) | 1.0.0 | 手动一键整理日记：任务按 DONE / DOING / TODO 分区；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。 |
 | **任务提醒** ([`nautilus-notify`](nautilus-notify)) | 0.1.0 | 用 macOS 通知横幅提醒今天日记里的任务：快开始的事件、过点没做的待办、做太久的 DOING、完成时的祝贺、排不下的容量预警、下一件该做什么、今日简报和收尾提醒。分析全部来自螺旋日程插件。 |
 | **块引用增强** ([`block-ref-plus`](block-ref-plus)) | 0.1.0 | 仿思源：[[页#^id]] 显示被引用块的当前内容（动态锚文本）；被引用的块旁边显示引用次数，点开可跳到引用处。只改显示，不改文件。 |
 | **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.0.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。 |
+| **书签图标** ([`bookmark-icons`](bookmark-icons)) | 0.1.0 | 书签面板里每个笔记换成各自的图标（淡色底小方块），不再都是同一个文件图标；笔记属性 icon / icon-color 可以自己指定。只改显示。 |
 | **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |
 | **List Paste Merge** ([`list-paste-merge`](list-paste-merge)) | 1.0.0 | 在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。 |
 | **看板直达** ([`board-jump`](board-jump)) | 0.1.0 | 一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接 |

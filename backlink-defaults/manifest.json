@@ -3,7 +3,7 @@
   "name": "Backlink Defaults",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "反向链接面板默认按修改时间从新到旧排序，并显示更多上下文。",
+  "description": "反链面板重排：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑；未链接提及默认折叠。",
   "author": "马自立",
   "isDesktopOnly": false
 }
