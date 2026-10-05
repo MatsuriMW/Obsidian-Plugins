@@ -9,10 +9,14 @@
 //   · 排序：有一行同时含全部词的在前，再按出现次数，再按日记日期从新到旧
 //   · 结果就是面板里的普通条目：↵ 打开并跳到那一行，⇧↵ 新标签页，⌘⌥↵ 右侧拆分；最后一条「在搜索面板中查看全部」打开 Obsidian 自带的全局搜索
 //   · 全文按修改时间缓存在内存里（全库约 13 MB），启动后空闲时先读一遍，之后只读改过的文件
+// Tab 递进加一层全文搜索（文件名有匹配时也能搜正文）：
+//   · 第一次按 Tab：文件名结果不动，正文命中接在下面（已经在文件名结果里的笔记不重复列）；之后继续改输入，这一层一直开着，直到面板关掉
+//   · 正文结果已经在面板里时再按 Tab：打开 Obsidian 自带的全局搜索（⌘⇧F）接着搜，面板关掉
 const { Plugin, Modal, MarkdownView } = require("obsidian");
 
 const PALETTE_CLS = "better-command-palette";
 const HINT = "Open in split view";
+const CS_HINT = "全文搜索，再按打开搜索面板";
 const MAX_COLUMNS = 3;
 const CONTENT_LIMIT = 50;
 const JOURNAL_RE = /^日记\/(\d{4})_(\d{2})_(\d{2})\.md$/;
@@ -42,7 +46,11 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		this.register(() => window.clearTimeout(this.warmTimer));
 		const orig = Modal.prototype.open;
 		const patched = function (...args) {
-			if (this.modalEl?.hasClass(PALETTE_CLS) && !this.__splitOpen) plugin.enhance(this);
+			if (this.modalEl?.hasClass(PALETTE_CLS)) {
+				if (!this.__splitOpen) plugin.enhance(this);
+				this.__csLayer = false;   // 每次打开面板都从只搜文件名开始
+				this.__csShown = false;
+			}
 			return orig.apply(this, args);
 		};
 		Modal.prototype.open = patched;
@@ -62,6 +70,22 @@ module.exports = class PaletteSplitOpen extends Plugin {
 			return false;
 		});
 
+		// Tab：没开全文层就开；正文结果已经在面板里了就交给 Obsidian 自带的全局搜索
+		palette.scope.register([], "Tab", (evt) => {
+			if (!isFiles()) return;
+			evt.preventDefault();
+			const q = this.queryOf(palette);
+			if (!q) return false;
+			if (palette.__csShown) {
+				palette.close();
+				this.openGlobalSearch(q);
+			} else {
+				palette.__csLayer = true;
+				this.scheduleContentSearch(palette, 0);
+			}
+			return false;
+		});
+
 		// 底部提示：插在「Open file in new pane」后面；面板切模式时会重建提示，所以包一层
 		const origUpdate = palette.updateInstructions;
 		palette.updateInstructions = function (...args) {
@@ -73,6 +97,10 @@ module.exports = class PaletteSplitOpen extends Plugin {
 					item.createSpan({ cls: "prompt-instruction-command", text: "⌘ ⌥ ↵" });
 					item.createSpan({ text: HINT });
 					box.insertBefore(item, box.children[2] || null);
+					const tab = box.createDiv({ cls: "prompt-instruction pso-hint" });
+					tab.createSpan({ cls: "prompt-instruction-command", text: "⇥" });
+					tab.createSpan({ text: CS_HINT });
+					box.insertBefore(tab, item.nextSibling);
 				}
 			}
 			return r;
@@ -110,26 +138,37 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		return palette.fileAdapter.cleanQuery((palette.inputEl.value || "").trim()).trim();
 	}
 
-	scheduleContentSearch(palette) {
+	// 文件名没匹配时自动搜正文；按过 Tab（__csLayer）时文件名有匹配也搜，正文结果接在文件名结果下面
+	scheduleContentSearch(palette, delay = 200) {
 		window.clearTimeout(palette.__csTimer);
 		const token = ++palette.__csToken;
 		const q = this.queryOf(palette);
+		const files = (palette.currentSuggestions || []).filter((x) => !x.__cs);
+		palette.__csShown = false;
 		if (palette.__csEmpty === undefined) palette.__csEmpty = palette.emptyStateText;
-		if (!q || (palette.currentSuggestions && palette.currentSuggestions.length)) { palette.emptyStateText = palette.__csEmpty; return; }
-		palette.emptyStateText = `文件名里没有「${q}」，正在全文搜索…`;
-		palette.updateSuggestions();
+		if (!q || (files.length && !palette.__csLayer)) { palette.emptyStateText = palette.__csEmpty; return; }
+		if (!files.length) {
+			palette.emptyStateText = `文件名里没有「${q}」，正在全文搜索…`;
+			palette.updateSuggestions();
+		}
 		palette.__csTimer = window.setTimeout(async () => {
-			const hits = await this.contentSearch(q);
+			const hits = await this.contentSearch(q, new Set(files.map((x) => x.id)));
 			if (token !== palette.__csToken || !palette.modalEl.isConnected) return;   // 期间又改了输入，或面板关了
 			const Item = palette.fileAdapter.allItems[0] && palette.fileAdapter.allItems[0].constructor;
 			if (!Item) return;
-			const items = hits.map((h) => Object.assign(new Item(h.path, h.path, []), { __cs: h }));
-			if (items.length) items.push(Object.assign(new Item("__pso_global_search__", "", []), { __cs: { panel: true, q } }));
+			const found = hits.map((h) => Object.assign(new Item(h.path, h.path, []), { __cs: h }));
+			if (found.length && files.length) found[0].__cs.section = q;   // 文件名结果下面的第一条正文结果带一个小标题
+			const items = [...files, ...found];
+			if (items.length) items.push(Object.assign(new Item("__pso_global_search__", "", []), { __cs: { panel: true, q, none: !found.length } }));
+			const sel = palette.chooser?.selectedItem ?? 0;
 			palette.currentSuggestions = items;
 			palette.limit = items.length;
 			palette.emptyStateText = items.length ? palette.__csEmpty : `文件名和正文里都没有「${q}」`;
+			palette.__csShown = true;
 			palette.updateSuggestions();
-		}, 200);
+			// 正文结果是追加的，别把正在看的文件名结果的选中项挪回第一条
+			if (files.length && sel > 0 && sel < files.length) palette.chooser.setSelectedItem(sel, false);
+		}, delay);
 	}
 
 	async fillCache(files) {
@@ -145,13 +184,14 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		}
 	}
 
-	async contentSearch(q) {
+	async contentSearch(q, exclude) {
 		const terms = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
 		if (!terms.length) return [];
 		const files = this.app.vault.getMarkdownFiles();
 		await this.fillCache(files);
 		const hits = [];
 		for (const f of files) {
+			if (exclude && exclude.has(f.path)) continue;   // 文件名结果里已经有了
 			const c = this.textCache.get(f.path);
 			if (!c || !terms.every((t) => c.low.includes(t))) continue;
 			const lines = c.low.split("\n");
@@ -189,10 +229,12 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		const h = item.__cs;
 		aux.empty();   // 去掉「隐藏这一项」的叉
 		if (h.panel) {
+			if (h.none) content.createDiv({ cls: "suggestion-note pso-section", text: `正文里没有更多含「${h.q}」的笔记` });
 			content.createDiv({ cls: "suggestion-title", text: `🔍 在搜索面板中查看「${h.q}」的全部结果` });
-			content.createDiv({ cls: "suggestion-note", text: "Obsidian 全局搜索（⌘⇧F），支持 path: tag: 等搜索语法" });
+			content.createDiv({ cls: "suggestion-note", text: "Obsidian 全局搜索（⌘⇧F，面板里再按 Tab 也行），支持 path: tag: 等搜索语法" });
 			return;
 		}
+		if (h.section) content.createDiv({ cls: "suggestion-note pso-section", text: `── 正文里含「${h.section}」的笔记 ──` });
 		content.createDiv({ cls: "suggestion-title", text: h.path.replace(/\.md$/, "") });
 		const note = content.createDiv({ cls: "suggestion-note pso-snippet" });
 		const s = h.snippet || "", low = s.toLowerCase();
@@ -212,11 +254,7 @@ module.exports = class PaletteSplitOpen extends Plugin {
 
 	async openHit(palette, item, evt) {
 		const h = item.__cs;
-		if (h.panel) {
-			const gs = this.app.internalPlugins.getPluginById("global-search");
-			if (gs && gs.instance) gs.instance.openGlobalSearch(h.q);
-			return;
-		}
+		if (h.panel) return this.openGlobalSearch(h.q);
 		const mod = palette.plugin && palette.plugin.settings && palette.plugin.settings.openInNewTabMod;
 		const newLeaf = !!evt && (mod === "Shift" ? evt.shiftKey : (evt.metaKey || evt.ctrlKey));
 		const ws = this.app.workspace;
@@ -244,6 +282,11 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		const ed = place();
 		// 别的插件切模式时可能把光标恢复到上次的位置：过一会儿看一眼，被挪走了就再放回来
 		if (ed) window.setTimeout(() => { const e = leaf.view && leaf.view.editor; if (e && e.getCursor("from").line !== h.line && !e.somethingSelected()) place(); }, 250);
+	}
+
+	openGlobalSearch(q) {
+		const gs = this.app.internalPlugins.getPluginById("global-search");
+		if (gs && gs.instance) gs.instance.openGlobalSearch(q);
 	}
 
 	async openInSplit(palette, item, evt) {
