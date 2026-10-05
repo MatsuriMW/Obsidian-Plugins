@@ -25,21 +25,37 @@ for n in $mine; do
   done
 done
 
-# README 的插件清单
+# README：开头的介绍取 README.intro.md，插件清单按 order.txt 分组排序
+g() { plutil -extract "$2" raw -o - "$DST/$1/manifest.json" 2>/dev/null | tr '\n' ' ' | sed -e 's/|/\\|/g' -e 's/ *$//'; }
+titles=() ; typeset -A members
+for line in "${(@f)$(grep -v -e '^#[^#]' -e '^$' "$DST/order.txt")}"; do
+  if [[ $line == '## '* ]]; then titles+=("${line#\#\# }"); continue; fi
+  (( ${mine[(Ie)$line]} )) && members[${#titles}]+="$line "
+done
+listed=" ${(j: :)${(v)members}} "
+for n in $mine; do
+  [[ $listed == *" $n "* ]] && continue
+  if [[ $(g $n author) == *改自* ]]; then members[2]+="$n "; else members[1]+="$n "; fi
+done
 {
-  echo "# Obsidian Plugins"
+  cat "$DST/README.intro.md"
   echo
-  echo "马自立自用的 Obsidian 插件，装在主库「马自立」的 \`.obsidian/plugins/\` 下。由 \`sync.sh\` 从库里同步，不要直接改这里的文件。"
-  echo
-  echo "| 插件 | 版本 | 说明 |"
-  echo "|---|---|---|"
-  for n in $mine; do
-    j="$DST/$n/manifest.json"
-    g() { plutil -extract "$1" raw -o - "$j" 2>/dev/null | tr '\n' ' ' | sed -e 's/|/\\|/g' -e 's/ *$//'; }
-    echo "| **$(g name)** (\`$(g id)\`) | $(g version) | $(g description) |"
+  echo "## 全部插件"
+  for i in {1..${#titles}}; do
+    [[ -z ${members[$i]} ]] && continue
+    echo
+    echo "### ${titles[$i]}"
+    echo
+    echo "| 插件 | 版本 | 说明 |"
+    echo "|---|---|---|"
+    for n in ${=members[$i]}; do
+      echo "| **$(g $n name)** ([\`$n\`]($n)) | $(g $n version) | $(g $n description) |"
+    done
   done
   echo
-  echo "安装：把对应目录复制到库的 \`.obsidian/plugins/\` 下，完全退出并重新打开 Obsidian，再到「第三方插件」里启用。"
+  echo "## 安装"
+  echo
+  echo "把对应目录复制到库的 \`.obsidian/plugins/\` 下，完全退出并重新打开 Obsidian，再到「第三方插件」里启用。"
 } > "$DST/README.md"
 
 cd "$DST"
