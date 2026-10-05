@@ -1,0 +1,9 @@
+{
+	"id": "list-paste-merge",
+	"name": "List Paste Merge",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

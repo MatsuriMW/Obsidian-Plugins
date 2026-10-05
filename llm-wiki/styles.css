@@ -1,0 +1,55 @@
+.wiki-root { padding: 10px 12px 24px; font-size: var(--font-ui-small); }
+.wiki-head { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+.wiki-title { flex: 1; font-weight: 700; font-size: var(--font-ui-medium); }
+.wiki-head button, .wiki-topic-head button { padding: 1px 8px; font-size: var(--font-ui-smaller); height: auto; }
+
+.wiki-status { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; background: var(--background-modifier-hover); margin-bottom: 8px; }
+.wiki-status span { flex: 1; }
+.wiki-result { border: 1px solid var(--background-modifier-border); border-radius: 6px; margin-bottom: 8px; }
+.wiki-result.is-error { border-color: var(--color-red); }
+.wiki-result-bar { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--background-modifier-hover); font-size: var(--font-ui-smaller); }
+.wiki-result-bar span { flex: 1; }
+.wiki-result-bar button { padding: 0 6px; height: auto; font-size: var(--font-ui-smaller); }
+.wiki-result-body { padding: 4px 10px; max-height: 320px; overflow-y: auto; font-size: var(--font-ui-small); }
+
+.wiki-ask { display: flex; gap: 6px; align-items: flex-end; margin-bottom: 12px; }
+.wiki-ask textarea { flex: 1; resize: vertical; font-size: var(--font-ui-small); }
+
+.wiki-topic, .wiki-lint { margin-bottom: 12px; }
+.wiki-topic-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.wiki-topic-name { flex: 1; font-weight: 600; color: var(--text-muted); }
+.wiki-pending { color: var(--text-accent); }
+.wiki-muted { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.wiki-pending-list { margin: 2px 0 6px 8px; border-left: 2px solid var(--text-accent); }
+
+.wiki-row { display: flex; gap: 8px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.wiki-row:hover { background: var(--background-modifier-hover); }
+.wiki-page { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-meta { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.wiki-row.is-pending { color: var(--text-accent); padding-left: 8px; }
+.wiki-row.is-issue { flex-direction: column; gap: 0; }
+.wiki-issue { color: var(--text-error); font-size: var(--font-ui-smaller); }
+
+/* 概览式面板 */
+.wiki-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 4px; }
+.wiki-stat { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 4px; text-align: center; }
+.wiki-stat-n { font-size: 1.35em; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.wiki-stat-l { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.wiki-stat.is-accent .wiki-stat-n { color: var(--text-accent); }
+.wiki-sub { margin: 2px 2px 8px; }
+.wiki-sec { display: flex; align-items: baseline; gap: 8px; margin: 14px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--background-modifier-border); font-weight: 700; }
+.wiki-sec > span:first-child { flex: 1; }
+.wiki-sec button { padding: 1px 8px; font-size: var(--font-ui-smaller); height: auto; font-weight: 400; }
+.wiki-ok { color: var(--color-green); font-size: var(--font-ui-smaller); }
+.wiki-entry { flex-direction: column; gap: 0; }
+.wiki-entry-line { display: flex; gap: 8px; }
+.wiki-summary { font-size: var(--font-ui-smaller); color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-meta.is-stale { color: var(--color-orange); }
+.wiki-sug { align-items: center; }
+.wiki-sug button { padding: 0 7px; height: 20px; font-size: var(--font-ui-smaller); flex: none; }
+.wiki-sug .wiki-x { padding: 0 5px; color: var(--text-faint); background: transparent; box-shadow: none; }
+.wiki-log { align-items: baseline; }
+.wiki-kind { flex: none; font-size: var(--font-ui-smaller); padding: 0 6px; border-radius: 8px; background: var(--background-modifier-hover); color: var(--text-muted); }
+.wiki-kind.is-ingest, .wiki-kind.is-create { color: var(--color-green); }
+.wiki-kind.is-ask { color: var(--color-blue); }
+.wiki-kind.is-lint, .wiki-kind.is-fix { color: var(--color-orange); }

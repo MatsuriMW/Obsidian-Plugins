@@ -1,0 +1,11 @@
+{
+  "id": "expandomatic",
+  "name": "Expandomatic",
+  "version": "9999.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Expand selection outward through word, sentence, paragraph, section, document — like VSCode's expand selection.",
+  "author": "马自立（改自 Onsi Fakhouri）",
+  "isDesktopOnly": false,
+  "pinnedFrom": "1.0.0",
+  "localPatch": "Expand Selection：整块列表项选中后继续向下选下一个列表块（nextBulletBlock）。更新插件会丢失这个改动。"
+}

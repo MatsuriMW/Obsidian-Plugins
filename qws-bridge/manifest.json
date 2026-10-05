@@ -1,0 +1,9 @@
+{
+	"id": "qws-bridge",
+	"name": "追问成稿（QWS / grill-me）",
+	"version": "1.0.0",
+	"minAppVersion": "1.5.0",
+	"description": "把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。",
+	"author": "马自立",
+	"isDesktopOnly": true
+}

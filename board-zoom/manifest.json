@@ -1,0 +1,9 @@
+{
+  "id": "board-zoom",
+  "name": "看板聚焦",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "从 DataView 看板点开某一条时，自动用 Bullet 插件 zoom in 聚焦到那个列表块。",
+  "author": "马自立",
+  "isDesktopOnly": false
+}

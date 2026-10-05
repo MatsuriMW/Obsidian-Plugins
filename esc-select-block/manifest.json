@@ -1,0 +1,9 @@
+{
+	"id": "esc-select-block",
+	"name": "Esc Select Block",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "仿 Logseq：在列表里按 Esc 选中光标所在的整块（含所有子项），再按一次取消并回到原来的光标位置。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

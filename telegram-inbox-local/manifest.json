@@ -1,0 +1,9 @@
+{
+	"id": "telegram-inbox-local",
+	"name": "Telegram Inbox（自用）",
+	"version": "1.9.2",
+	"minAppVersion": "1.5.11",
+	"description": "Receive messages from Telegram bot and add them to daily note.",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

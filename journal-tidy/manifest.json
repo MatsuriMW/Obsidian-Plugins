@@ -1,0 +1,9 @@
+{
+  "id": "journal-tidy",
+  "name": "日记整理",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "手动一键整理日记：任务按 DONE / DOING / TODO 分区；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。",
+  "author": "马自立",
+  "isDesktopOnly": true
+}

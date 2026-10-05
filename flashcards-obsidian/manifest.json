@@ -1,0 +1,12 @@
+{
+	"id": "flashcards-obsidian",
+	"name": "Flashcards",
+	"version": "9999.0.0",
+	"minAppVersion": "1.13.0",
+	"description": "Create and sync Anki flashcards from your notes.",
+	"author": "马自立（改自 Alex Colucci）",
+	"authorUrl": "https://github.com/reuseman",
+	"isDesktopOnly": true,
+	"pinnedFrom": "2.2.0",
+	"localPatch": "修了往 flashcards 属性里追加条目时少换行、把条目粘到下一个属性上的 bug（3 处 entriesEnd 插入）"
+}

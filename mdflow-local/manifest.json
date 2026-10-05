@@ -1,0 +1,9 @@
+{
+  "id": "mdflow-local",
+  "name": "MDFlow（自用）",
+  "version": "1.4.1-local",
+  "minAppVersion": "1.7.2",
+  "description": "把 Markdown 排成公众号、X Articles、小红书图片。本地自用版，不从插件市场更新。",
+  "author": "马自立",
+  "isDesktopOnly": true
+}

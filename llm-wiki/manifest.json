@@ -1,0 +1,9 @@
+{
+  "id": "llm-wiki",
+  "name": "LLM Wiki",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面，提示哪些新笔记还没摄入，一键让本机 Claude 摄入 / 回答问题，本地体检 wiki 规则。",
+  "author": "马自立",
+  "isDesktopOnly": true
+}

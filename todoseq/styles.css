@@ -1,0 +1,2563 @@
+.todoseq-hidden {
+  display: none;
+}
+
+/* TodoView theme-aligned styles. Inherit fonts/colors from the active Obsidian theme. */
+.todoseq-panel {
+  color: var(--text-normal);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Toolbar and mode icons */
+.todoseq-panel .todoseq-toolbar {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Visually-hidden label for accessibility */
+.todoseq-panel .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Task list container - scrollable area (full width, outer background visible) */
+.todoseq-panel .todoseq-task-list-container {
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+/* Main tab: page margins matching Obsidian editor pages */
+.todoseq-panel.todoseq-is-main-tab {
+  padding: var(--file-margins);
+}
+
+/* Main tab with readable line length: constrain toolbar and task list to 700px */
+/* Both children of the column flex panel use width:100% + max-width + align-self:center */
+.todoseq-panel.todoseq-is-main-tab.todoseq-readable-line-length
+  .todoseq-toolbar,
+.todoseq-panel.todoseq-is-main-tab.todoseq-readable-line-length
+  .todoseq-task-list-container {
+  width: 100%;
+  max-width: 700px;
+  align-self: center;
+}
+
+/* List layout */
+.todoseq-panel .todoseq-task-list {
+  font-family: var(--font-text);
+  font-size: var(--font-text-size);
+  margin: 0;
+  padding-left: 0;
+  list-style-type: none;
+}
+
+/* List item */
+.todoseq-panel .todoseq-task-item {
+  position: relative;
+  padding: var(--size-2-2) 0 var(--size-2-2) var(--size-2-2);
+  content-visibility: auto;
+  contain-intrinsic-size: 0 100px;
+  transition: background-color 100ms ease;
+}
+
+.todoseq-panel .todoseq-task-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-s);
+  background-color: transparent;
+  transition: background-color 100ms ease;
+  z-index: -1;
+}
+
+.todoseq-panel .todoseq-task-item:hover::before {
+  background-color: var(--background-modifier-hover);
+}
+
+.todoseq-panel .todoseq-task-item::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: var(--radius-s);
+  right: var(--radius-s);
+  height: 1px;
+  background: var(--background-modifier-border, rgba(0, 0, 0, 0.1));
+}
+
+/* Drag-and-drop */
+.todoseq-panel .todoseq-task-dragging {
+  opacity: 0.4;
+}
+
+.todoseq-drag-overlay {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  --todoseq-drag-offset: 12px;
+  transform: translate(var(--todoseq-drag-offset), var(--todoseq-drag-offset));
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  max-width: 300px;
+  font-size: var(--font-ui-small);
+}
+
+.todoseq-drag-overlay-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-normal);
+}
+
+.todoseq-drag-overlay-action {
+  display: none;
+  color: var(--text-muted);
+  font-size: var(--font-smallest);
+  margin-top: 2px;
+}
+
+.todoseq-drag-overlay-over-target .todoseq-drag-overlay-action {
+  display: block;
+}
+
+/* Task text and completion state */
+.todoseq-panel .todoseq-task-text {
+  line-height: var(--line-height-tight, 1.4);
+}
+.todoseq-panel .todoseq-task-text.completed {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* Keyword toggle (TODO/DOING/DONE) */
+.todoseq-panel .todo-task-keyword {
+  color: var(--interactive-accent);
+  cursor: pointer;
+  font-weight: var(--font-bold);
+  font-size: 0.85rem;
+}
+
+/* Hover hint */
+.todoseq-panel .todo-task-keyword:hover {
+  text-decoration: underline;
+  background-color: var(--background-modifier-hover);
+}
+
+/* Keyboard focus highlight for state keyword when tabbing elements */
+.todoseq-panel .todo-task-keyword:focus,
+.todoseq-panel .todo-task-keyword:focus-visible {
+  outline: 2px solid var(--interactive-accent, #7f6df2);
+  outline-offset: 2px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, var(--interactive-accent, #7f6df2) 20%, transparent);
+}
+
+/* Comprehensive focus styles for all interactive elements */
+.todoseq-panel .clickable-icon:focus-visible,
+.todoseq-panel button:focus-visible,
+.todoseq-panel [tabindex='0']:focus-visible,
+.todoseq-panel input:focus-visible,
+.todoseq-panel select:focus-visible {
+  outline: 2px solid var(--background-modifier-border-focus);
+}
+
+/* Focus styles for Obsidian-style elements */
+.todoseq-panel .dropdown:focus-visible,
+.todoseq-panel .mod-small:focus-visible {
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  border-radius: var(--input-radius);
+}
+
+/* Checkbox alignment */
+.todoseq-panel .todoseq-task-checkbox {
+  margin-right: var(--size-2-2);
+  vertical-align: middle;
+}
+
+/* Editor checkbox styling for active tasks when NOT using themed styles */
+.cm-editor .cm-task-checkbox[data-task='/'] {
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent, #7f6df2) 33%,
+    transparent
+  );
+}
+
+/* Checkbox styling for active tasks when NOT using themed styles */
+.todoseq-panel .todoseq-task-checkbox[data-task='/'] {
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent, #7f6df2) 33%,
+    transparent
+  );
+}
+
+/* Reader view checkbox styling for active tasks */
+.markdown-preview-view .task-list-item-checkbox[data-task='/'] {
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent, #7f6df2) 33%,
+    transparent
+  );
+}
+
+/* Embedded task list checkbox styling for active tasks */
+.todoseq-embedded-task-checkbox[data-task='/'] {
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent, #7f6df2) 33%,
+    transparent
+  );
+}
+
+/* Non-clickable link-like styling for in-text links */
+.todoseq-panel .todoseq-task-link {
+  color: var(--link-color);
+  border-bottom: 1px dotted;
+  cursor: pointer;
+}
+
+/* ============================================================================
+   Priority Badges - Consolidated
+   Used in TodoView, Reader View, and Embedded Task Lists
+   ============================================================================ */
+
+/* Base priority badge styles */
+.todoseq-priority-badge {
+  display: inline-block;
+  padding: 0 var(--size-2-2);
+  border-radius: var(--radius-s);
+  background-color: var(
+    --background-modifier-accent,
+    var(--interactive-accent)
+  );
+  color: var(--text-on-accent);
+  font-weight: var(--font-medium);
+  font-size: 0.7em;
+  line-height: 1.4;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.1em;
+}
+
+.todoseq-panel .todoseq-priority-badge {
+  margin-left: var(--size-2-2);
+}
+
+/* High priority (A): stronger, urgent tint */
+.todoseq-priority-badge.priority-high {
+  background-color: var(--color-red);
+}
+
+/* Medium priority (B): default accent */
+.todoseq-priority-badge.priority-med {
+  background-color: var(--interactive-accent);
+}
+
+/* Low priority (C): muted tone */
+.todoseq-priority-badge.priority-low {
+  background-color: var(--background-modifier-border);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+}
+
+/* Raw text mode when cursor is near priority token */
+.todoseq-edit-priority-raw {
+  font-family: var(--font-monospace);
+  opacity: 0.8;
+}
+
+/* Raw text mode colors by priority */
+.todoseq-edit-priority-raw.todoseq-edit-priority-a {
+  color: var(--color-red);
+}
+
+.todoseq-edit-priority-raw.todoseq-edit-priority-b {
+  color: var(--interactive-accent);
+}
+
+.todoseq-edit-priority-raw.todoseq-edit-priority-c {
+  color: var(--text-muted);
+}
+
+/* Tag styling (#tag) - consolidated for todoseq-panel and embedded task lists */
+:is(.todoseq-panel, .todoseq-embedded-task-list-container)
+  :is(.todoseq-task-tag, .todoseq-embedded-task-tag) {
+  /* display: inline-block; */
+  background-color: var(--tag-background);
+  border: var(--tag-border-width) solid var(--tag-border-color);
+  border-radius: var(--tag-radius);
+  corner-shape: var(--tag-corner-shape);
+  color: var(--tag-color);
+  font-size: var(--tag-size);
+  font-weight: var(--tag-weight);
+  text-decoration: var(--tag-decoration);
+  padding: var(--tag-padding-y) var(--tag-padding-x);
+  padding-top: var(--tag-padding-y);
+  padding-bottom: var(--tag-padding-y);
+  line-height: 1;
+}
+
+/* Source chip (org/code) on the file info line */
+.todoseq-panel .todoseq-source-chip {
+  font-family: var(--font-monospace);
+  opacity: 0.65;
+  margin-right: var(--size-2-1);
+}
+
+.todoseq-task-item[data-source='org'] .todoseq-source-chip::before {
+  content: '\25CE';
+}
+
+.todoseq-task-item[data-source='code'] .todoseq-source-chip::before {
+  content: '#';
+}
+
+/* File info (path:line) */
+.todoseq-panel .todoseq-task-file-info {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  margin-top: var(--size-2-2);
+}
+
+/* Empty-state Guidance UI */
+.todoseq-panel .todoseq-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-6) var(--size-4-4);
+  margin: var(--size-4-3) var(--size-4-3) 0;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--background-secondary) 90%, transparent),
+    color-mix(in srgb, var(--background-secondary) 96%, transparent)
+  );
+}
+
+.todoseq-panel .todoseq-panel-empty-title {
+  font-size: 1rem;
+  font-weight: var(--font-bold);
+  color: var(--text-normal);
+}
+
+.todoseq-panel .todoseq-panel-empty-subtitle {
+  max-width: 640px;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+/* Icon base for toolbar buttons rendered via CSS masks */
+
+/* Date display styling */
+.todoseq-panel .todoseq-task-date-container {
+  margin-top: var(--size-2-2);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.todoseq-panel .todoseq-task-date {
+  padding: var(--size-2-1) var(--size-2-3);
+  margin: var(--size-2-1) 0;
+  border-radius: var(--radius-s);
+  border-left: 3px solid;
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 5%,
+    transparent
+  );
+  border-left-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 50%,
+    transparent
+  );
+  position: relative;
+}
+
+/* This works in both Flex and Inline-Block */
+.todoseq-embedded-task-text-container > span:not(:last-child) {
+  margin-right: var(--size-2-3);
+}
+
+/* Date row with right-aligned repeat icon */
+.todoseq-panel .todoseq-task-date-row {
+  display: flex;
+  align-items: center;
+}
+
+.todoseq-panel .todoseq-task-date-repeat-cell {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Repeat icon styling (consolidated) */
+.todoseq-embedded-task-text-container .todoseq-task-date-repeat-icon,
+.todoseq-panel .todoseq-task-date-repeat-icon {
+  right: 4px;
+  opacity: 0.8;
+  display: inline-flex;
+  vertical-align: middle;
+}
+
+.todoseq-embedded-task-text-container .todoseq-task-date-repeat-icon {
+  align-self: center;
+}
+
+.todoseq-panel .todoseq-task-date-repeat-icon {
+  align-items: center;
+}
+
+.todoseq-embedded-task-text-container .todoseq-task-date-repeat-icon svg,
+.todoseq-panel .todoseq-task-date-repeat-icon svg {
+  width: 0.9rem;
+}
+
+.todoseq-panel .todoseq-task-date .todoseq-task-date-label {
+  font-weight: var(--font-medium);
+  opacity: 0.8;
+  margin-right: var(--size-2-2);
+}
+
+.todoseq-panel .todoseq-task-date .todoseq-task-date-value {
+  font-weight: var(--font-normal);
+}
+
+/* Main content container - holds checkbox+text and indicator on same row */
+.todo-main-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* Task text wrapper - contains checkbox and text */
+.todoseq-task-text-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Subtask indicator styling - positioned as right-aligned cell */
+.todoseq-subtask-indicator {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.todoseq-panel .todoseq-subtask-indicator {
+  margin-top: var(--size-2-1);
+  margin-left: var(--size-2-2);
+}
+
+/* Scheduled and Deadline date styling */
+.todoseq-panel .todoseq-task-date-overdue {
+  background-color: color-mix(in srgb, var(--color-red) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-red) 50%, transparent);
+}
+
+.todoseq-panel .todoseq-task-date-overdue .todoseq-task-date-value {
+  color: var(--color-red);
+  font-weight: var(--font-semibold);
+}
+
+.todoseq-panel .todoseq-task-date-today {
+  background-color: color-mix(in srgb, var(--color-orange) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-orange) 50%, transparent);
+}
+
+.todoseq-panel .todoseq-task-date-today .todoseq-task-date-value {
+  color: var(--text-accent);
+  font-weight: var(--font-semibold);
+}
+
+.todoseq-panel .todoseq-task-date-soon {
+  background-color: color-mix(in srgb, var(--color-green) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-green) 50%, transparent);
+}
+
+.todoseq-panel .todoseq-task-date-soon .todoseq-task-date-value {
+  color: var(--text-accent);
+}
+
+/* Closed date styling - grey theme for completed tasks */
+.todoseq-panel .todoseq-task-date-closed {
+  background-color: color-mix(in srgb, var(--text-muted) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
+}
+
+.todoseq-panel .todoseq-task-date-closed .todoseq-task-date-value {
+  color: var(--text-muted);
+}
+
+/* Warning period arrow indicator */
+.todoseq-panel .todoseq-task-date-warning-arrow {
+  margin-left: var(--size-2-2);
+  font-size: 0.75rem;
+  opacity: 0.7;
+  vertical-align: middle;
+}
+
+/* Standalone warning period arrow indicator (shown when the corresponding
+   date is hidden by embedded list settings). Appears in floating-indicators
+   (wrap/dynamic modes) or inline in the text container (truncate mode). */
+.todoseq-embedded-task-warning-arrow {
+  font-size: 0.75rem;
+  opacity: 0.7;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.todoseq-embedded-task-text-container .todoseq-embedded-task-warning-arrow {
+  margin-left: var(--size-4-2);
+}
+
+.todoseq-embedded-task-floating-indicators
+  .todoseq-embedded-task-warning-arrow {
+  margin-left: 0;
+}
+
+/* Settings UI - Shared font size for messages */
+.todoseq-setting-item-error,
+.todoseq-setting-item-warning,
+.todoseq-setting-item-info,
+.setting-item-info .todoseq-info-message {
+  font-size: 0.7rem;
+}
+
+/* Settings UI - Keyword validation error */
+.todoseq-setting-item-error {
+  color: var(--error-color, #ff0000);
+}
+
+/* Settings UI - Binary file extension warning */
+.todoseq-setting-item-warning {
+  color: var(--text-warning, var(--color-orange, #ff9500));
+}
+
+/* Settings UI - Info message */
+.todoseq-setting-item-info,
+.setting-item-info .todoseq-info-message {
+  color: var(--text-muted, #999999);
+}
+
+/* Settings UI - Invalid input highlighting (consolidated) */
+.setting-item :is(input, textarea).todoseq-invalid-input {
+  border-color: var(--error-color, #ff0000);
+  border-width: 2px;
+  border-style: solid;
+}
+
+/* Smart date highlight — subtle outline and background on the active task line */
+.todoseq-smart-date-highlight {
+  background-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 20%,
+    transparent
+  );
+  color: color-mix(in srgb, var(--interactive-accent) 20%, currentColor);
+  outline: 1.5px solid
+    color-mix(in srgb, var(--interactive-accent) 28%, transparent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* Task keyword formatting in editor and reading view */
+.todoseq-keyword-formatted {
+  font-weight: var(--font-bold);
+  color: var(--interactive-accent);
+  font-size: 0.9rem; /* reduce size slightly */
+  border-radius: 2px; /* Subtle rounding */
+  cursor: pointer; /* Show hand/finger cursor like a link */
+}
+
+/* Heading task keyword - 0.9 of heading font size */
+.todoseq-keyword-formatted.todoseq-heading-task-keyword {
+  font-size: 0.9em;
+}
+
+/* Source mode - simpler styling without bold/size */
+.markdown-source-view:not(.is-live-preview) .todoseq-keyword-formatted {
+  font-weight: normal;
+  font-size: inherit;
+  /* Keep the color styling */
+}
+
+/* Source mode - simpler styling without size for date lines */
+.markdown-source-view:not(.is-live-preview) .todoseq-scheduled-line,
+.markdown-source-view:not(.is-live-preview) .todoseq-deadline-line,
+.markdown-source-view:not(.is-live-preview) .todoseq-closed-line,
+.markdown-source-view:not(.is-live-preview) .todoseq-started-line {
+  font-size: inherit;
+}
+
+/* Scheduled, Deadline, Closed, and Started line styling - editor and reader (consolidated) */
+:is(.cm-editor, .markdown-preview-view) .todoseq-scheduled-line,
+:is(.cm-editor, .markdown-preview-view) .todoseq-deadline-line,
+:is(.cm-editor, .markdown-preview-view) .todoseq-closed-line,
+:is(.cm-editor, .markdown-preview-view) .todoseq-started-line {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.markdown-preview-view .todoseq-scheduled-line,
+.markdown-preview-view .todoseq-deadline-line,
+.markdown-preview-view .todoseq-closed-line,
+.markdown-preview-view .todoseq-started-line {
+  display: inline-block; /* Ensure it doesn't affect the entire paragraph */
+}
+
+/* Table cell date line styling in editor Live Preview rendered tables */
+.markdown-source-view .table-cell-wrapper .todoseq-scheduled-line,
+.markdown-source-view .table-cell-wrapper .todoseq-deadline-line,
+.markdown-source-view .table-cell-wrapper .todoseq-closed-line,
+.markdown-source-view .table-cell-wrapper .todoseq-started-line {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  display: inline;
+}
+
+/* Description line - editor and reader preview */
+:is(.cm-editor, .markdown-preview-view) .todoseq-task-description {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  display: inline;
+}
+
+/* Description in main task list - smaller font */
+.todoseq-panel .todoseq-task-description {
+  font-size: 0.75rem;
+}
+
+/* Description icon in main task list - match font size to avoid line spacing issues */
+.todoseq-panel .todoseq-task-description-icon svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+/* Description line - source mode */
+.markdown-source-view:not(.is-live-preview) .todoseq-task-description {
+  font-size: inherit;
+  display: inline;
+}
+
+/* Description line - reader preview inline */
+.markdown-preview-view .todoseq-task-description {
+  display: inline;
+}
+
+/* Description icon - matches repeat icon styling */
+.todoseq-task-description-icon {
+  opacity: 0.8;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: var(--size-2-2);
+}
+
+/* Icon-only mode: add left margin to separate from task title */
+.todoseq-task-text-wrapper .todoseq-task-description-icon {
+  margin-left: var(--size-2-2);
+}
+
+.todoseq-embedded-task-text-container .todoseq-task-description-icon {
+  align-self: center;
+}
+
+.todoseq-panel .todoseq-task-description-icon {
+  align-items: center;
+}
+
+.todoseq-task-description-icon svg,
+.todoseq-embedded-task-text-container .todoseq-task-description-icon svg,
+.todoseq-panel .todoseq-task-description-icon svg {
+  width: 0.9rem;
+}
+
+/* Description text */
+.todoseq-task-description-text {
+  color: var(--text-muted);
+}
+
+:is(.cm-editor, .markdown-preview-view) .todoseq-scheduled-keyword,
+:is(.cm-editor, .markdown-preview-view) .todoseq-deadline-keyword,
+:is(.cm-editor, .markdown-preview-view) .todoseq-closed-keyword,
+:is(.cm-editor, .markdown-preview-view) .todoseq-started-keyword,
+.markdown-source-view .table-cell-wrapper .todoseq-scheduled-keyword,
+.markdown-source-view .table-cell-wrapper .todoseq-deadline-keyword,
+.markdown-source-view .table-cell-wrapper .todoseq-closed-keyword,
+.markdown-source-view .table-cell-wrapper .todoseq-started-keyword {
+  font-weight: var(--font-normal);
+}
+
+/* Hover effect for task keywords - underline and background highlight */
+:is(
+  .todoseq-keyword-formatted,
+  .cm-editor .todoseq-footnote-task-keyword,
+  .cm-editor [class^='todoseq-quote-block-task-keyword-']
+):hover {
+  text-decoration: underline;
+  background-color: var(--background-modifier-hover);
+}
+
+/* Ensure formatting works in both light and dark themes */
+:is(.cm-editor, .markdown-preview-view) .todoseq-keyword-formatted,
+.markdown-source-view .table-cell-wrapper .todoseq-keyword-formatted {
+  text-shadow: 0 0 1px
+    color-mix(in srgb, var(--interactive-accent) 50%, transparent);
+}
+
+/* Ensure paragraphs containing date lines don't inherit date styling */
+.markdown-preview-view
+  p:not(.todoseq-scheduled-line):not(.todoseq-deadline-line):not(
+    .todoseq-closed-line
+  ):not(.todoseq-started-line) {
+  font-size: var(--font-text-size);
+  color: var(--text-normal);
+}
+
+/* Completed task text styling */
+:is(.markdown-preview-view, .cm-editor) .todoseq-completed-task-text {
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+/* Completed task keyword styling - applies strikethrough to the keyword itself */
+/* Works for both built-in (DONE, CANCELLED, CANCELED) and custom completed keywords */
+:is(.markdown-preview-view, .cm-editor) .todoseq-completed-keyword {
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+/* Archived task styling - muted/dimmed appearance without strikethrough */
+/* Works for both built-in (ARCHIVED) and custom archived keywords */
+:is(.markdown-preview-view, .cm-editor) .todoseq-archived-keyword {
+  color: var(--interactive-accent);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* Archived task text styling */
+:is(.markdown-preview-view, .cm-editor) .todoseq-archived-task-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* Table cell task keyword styling */
+:is(.cm-editor, .markdown-preview-view) .todoseq-table-task-keyword {
+  font-weight: var(--font-bold);
+  color: var(--interactive-accent);
+}
+
+/* Dropdown containers for search suggestions and options */
+.todoseq-dropdown {
+  position: absolute;
+  z-index: var(--layer-menu);
+  display: none;
+  --todoseq-dropdown-gap: 2px;
+  transform: translateY(var(--todoseq-dropdown-gap));
+}
+
+.todoseq-dropdown.show {
+  display: block;
+}
+
+/* Search history item styling */
+.todoseq-dropdown .search-suggest-history-item {
+  cursor: pointer;
+}
+
+.todoseq-dropdown .search-suggest-history-item:hover,
+.todoseq-dropdown .search-suggest-history-item.is-selected {
+  background-color: var(--background-modifier-hover);
+}
+
+/* Ensure group headers (Search options, History) are left-aligned consistently */
+.todoseq-dropdown .search-suggest-item.mod-group {
+  padding-left: var(--size-4-2);
+}
+
+/* Search option rows - single line with truncation */
+.todoseq-dropdown
+  .search-suggest-item:not(.mod-group):not(.search-suggest-saved-item):not(
+    .search-suggest-history-item
+  )
+  .suggestion-content {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.todoseq-dropdown
+  .search-suggest-item:not(.mod-group):not(.search-suggest-saved-item):not(
+    .search-suggest-history-item
+  )
+  .suggestion-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Status bar item styling */
+.todoseq-status-bar {
+  order: -1;
+  margin-right: auto;
+}
+
+/* Embedded Task List Styles - New Implementation */
+
+/* Main container */
+.todoseq-embedded-task-list-container {
+  padding: var(--size-4-1) var(--size-4-3);
+  border-radius: var(--code-radius);
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.markdown-reading-view .todoseq-embedded-task-list-container {
+  margin: var(--size-4-4) 0;
+}
+
+/* Title styling */
+.todoseq-embedded-task-list-title {
+  font-weight: var(--font-bold);
+  font-size: 1rem;
+  color: var(--text-normal);
+  padding: var(--size-2-1) var(--size-2-3) var(--size-2-3) var(--size-2-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+}
+
+/* Title with border when no header follows */
+.todoseq-embedded-task-list-title-bordered {
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+}
+
+/* Header with search/sort info */
+.todoseq-embedded-task-list-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) 0 var(--size-4-2) 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* When title is present, remove top padding from header */
+.todoseq-embedded-task-list-title + .todoseq-embedded-task-list-header {
+  padding-top: 0;
+}
+
+.todoseq-embedded-task-list-search,
+.todoseq-embedded-task-list-sort,
+.todoseq-embedded-task-list-completed,
+.todoseq-embedded-task-list-future,
+.todoseq-embedded-task-list-limit {
+  background-color: var(--background-modifier-selection);
+  padding: var(--size-2-1) var(--size-2-3);
+  border-radius: var(--radius-s);
+  font-family: var(--font-monospace);
+}
+
+/* Truncated results indicator */
+.todoseq-embedded-task-list-truncated {
+  text-align: center;
+  padding: var(--size-4-2) 0 var(--size-4-1) 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: var(--size-4-2);
+}
+
+/* Task list */
+.todoseq-embedded-task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  margin-inline-start: -2ch;
+}
+
+/* Individual task item */
+.todoseq-embedded-task-item {
+  display: flex;
+  align-items: center;
+  padding: var(--size-2-3) var(--size-4-2);
+  border-radius: var(--radius-s);
+  margin-bottom: var(--size-2-1);
+  cursor: pointer;
+  transition: background-color 100ms ease;
+}
+
+.todoseq-embedded-task-item:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.todoseq-embedded-task-item:active {
+  background-color: var(--background-modifier-active);
+}
+
+.is-mobile .todoseq-embedded-task-item {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.is-mobile .todoseq-embedded-task-item.todoseq-pressed {
+  background-color: var(--background-modifier-active);
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.is-mobile .todoseq-embedded-task-item:focus-within {
+  outline: none;
+}
+
+.todoseq-embedded-task-item.todoseq-pressed {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.is-mobile .todoseq-embedded-task-state {
+  -webkit-touch-callout: none;
+}
+
+/* Checkbox */
+.todoseq-embedded-task-checkbox {
+  margin-right: var(--size-4-2);
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+/* Task text container */
+.todoseq-embedded-task-text-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Ensure all direct children are baseline aligned */
+.todoseq-embedded-task-text-container > * {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Task text needs block-like behavior for ellipsis */
+.todoseq-embedded-task-text-container > .todoseq-embedded-task-text {
+  display: inline-block;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Task state */
+.todoseq-embedded-task-state {
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 0.9rem;
+  white-space: nowrap; /* Prevent keyword wrapping */
+}
+
+/* Task text */
+.todoseq-embedded-task-text {
+  color: var(--text-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  font-size: 0.95rem;
+}
+
+/* File info */
+.todoseq-embedded-task-file-info {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-monospace);
+  margin-left: auto; /* Push to right side of text row */
+  opacity: 0.7;
+  max-width: 32ch; /* Fallback: ensure max width of 23 monospace characters */
+  overflow: hidden;
+  text-overflow: ellipsis; /* Additional fallback for safety */
+  flex-shrink: 0; /* Prevent shrinking */
+}
+
+/* Urgency value */
+.todoseq-embedded-task-urgency {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-monospace);
+  opacity: 0.7;
+  margin-left: var(--size-4-2);
+  flex-shrink: 0;
+  display: inline;
+}
+
+/* Inline date badge (truncated mode and dynamic wide screens) */
+.todoseq-embedded-task-date-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.todoseq-embedded-task-date-badge svg {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+
+/* Wrap mode date info rows */
+.todoseq-embedded-task-date-info {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+.todoseq-embedded-task-date-info-label {
+  font-weight: var(--font-medium);
+}
+
+.todoseq-embedded-task-date-info-value {
+  font-weight: var(--font-normal);
+}
+
+/* Dynamic mode: date info rows hidden on wide screens, shown on narrow */
+.todoseq-embedded-task-item-wrap-dynamic
+  .todoseq-embedded-task-date-info-dynamic-wrap {
+  display: none;
+}
+
+/* Dynamic mode: inline date badge shown on wide screens */
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-date-badge {
+  display: inline-flex;
+}
+
+/* ============================================================================
+   Wrap Content Mode - Task text wrapping and file info on new row
+   ============================================================================ */
+
+/* Wrap content mode - task item stays as row but allows content to wrap */
+.todoseq-embedded-task-item-wrap {
+  align-items: flex-start;
+}
+
+/* Wrap content mode - checkbox alignment with first text line */
+.todoseq-embedded-task-item-wrap .todoseq-embedded-task-checkbox {
+  margin-top: var(--size-4-1);
+}
+
+/* Wrap content mode - content wrapper for stacked layout (text + file info) */
+.todoseq-embedded-task-content-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0; /* Allow content to shrink */
+}
+
+/* Text row - holds text and floating indicators side by side */
+.todoseq-embedded-task-text-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--size-4-2);
+  min-width: 0;
+}
+
+/* Wrap content mode - text container uses inline flow for natural wrapping */
+.todoseq-embedded-task-text-wrap {
+  display: inline;
+  min-width: 0;
+}
+
+/* Wrap content mode - keep all inline elements together */
+.todoseq-embedded-task-text-wrap .todoseq-embedded-task-state,
+.todoseq-embedded-task-text-wrap .todoseq-embedded-task-text {
+  display: inline;
+}
+
+/* Priority badge needs inline-block to maintain dimensions */
+.todoseq-embedded-task-text-wrap .todoseq-priority-badge {
+  display: inline-block;
+}
+
+/* Ensure repeat icon stays baseline aligned in inline context */
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-task-date-repeat-icon {
+  margin-left: 0;
+}
+
+/* Wrap content mode - text element allows wrapping */
+.todoseq-embedded-task-text-wrap .todoseq-embedded-task-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+}
+
+/* Wrap content mode - description on separate line */
+.todoseq-embedded-task-text-wrap .todoseq-task-description {
+  display: block;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+/* No-wrap and dynamic modes - shrink priority: filename > description > title */
+.todoseq-embedded-task-text-container:not(.todoseq-embedded-task-text-wrap)
+  .todoseq-embedded-task-text {
+  flex: 0 3 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todoseq-embedded-task-text-container:not(.todoseq-embedded-task-text-wrap)
+  .todoseq-task-description {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 1.2em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-left: var(--size-2-2);
+}
+
+.todoseq-embedded-task-text-container:not(.todoseq-embedded-task-text-wrap)
+  .todoseq-task-description-icon {
+  flex-shrink: 0;
+}
+
+.todoseq-embedded-task-text-container:not(.todoseq-embedded-task-text-wrap)
+  .todoseq-task-description-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.todoseq-embedded-task-text-container:not(.todoseq-embedded-task-text-wrap)
+  .todoseq-embedded-task-file-info {
+  flex: 0 4 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wrap content mode - file info on new row without truncation */
+.todoseq-embedded-task-file-info-wrap {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-monospace);
+  opacity: 0.7;
+  margin-left: 0;
+  max-width: unset;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+/* Wrap content mode - file info row (holds file path and urgency aligned right) */
+.todoseq-embedded-task-file-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+/* Dynamic mode - file info row inline on wide screens */
+.todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-file-info-row {
+  display: none;
+}
+
+/* Dynamic mode - inline file info shown on wide screens */
+.todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-file-info {
+  display: inline;
+  margin-left: auto;
+}
+
+/* Wrap content mode - urgency value */
+.todoseq-embedded-task-urgency-wrap {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-monospace);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+/* Dynamic mode - urgency value (inline on wide screens) */
+.todoseq-embedded-task-urgency-dynamic {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-family: var(--font-monospace);
+  opacity: 0.7;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Dynamic mode - floating indicators position depends on viewport */
+.todoseq-embedded-task-item-wrap-dynamic
+  .todoseq-embedded-task-floating-indicators {
+  align-self: center;
+}
+
+/* Dynamic wrap mode - default to truncated on wide screens, wrap on narrow */
+/* Override base wrap styles for dynamic mode on wide screens */
+.todoseq-embedded-task-item-wrap-dynamic {
+  align-items: center;
+}
+
+.todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-checkbox {
+  margin-top: 0;
+}
+
+/* Override content wrapper to row layout on wide screens */
+.todoseq-embedded-task-item-wrap-dynamic
+  .todoseq-embedded-task-content-wrapper {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.todoseq-embedded-task-text-wrap-dynamic {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  overflow: hidden;
+}
+
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-state,
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-text {
+  display: inline-block;
+}
+
+/* Priority badge needs inline-block to maintain dimensions */
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-priority-badge {
+  display: inline-block;
+}
+
+.todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+/* File info inline on wide screens */
+.todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-file-info-wrap {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Switch to wrap mode on narrow screens (mobile: iPhone ~375-430px, Pixel ~360-412px) */
+@media (max-width: 480px) {
+  .todoseq-embedded-task-item-wrap-dynamic {
+    align-items: flex-start;
+  }
+
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-checkbox {
+    margin-top: var(--size-4-1);
+  }
+
+  /* Text row fills available space on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-text-row {
+    width: 100%;
+  }
+
+  /* Switch dynamic mode to wrap-like layout on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-content-wrapper {
+    flex-direction: column;
+  }
+
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-wrap-dynamic {
+    display: block;
+    overflow: visible;
+  }
+
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-wrap-dynamic
+    .todoseq-embedded-task-state,
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-wrap-dynamic
+    .todoseq-embedded-task-text {
+    display: inline;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
+  }
+
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-wrap-dynamic
+    .todoseq-task-description-text {
+    overflow: visible;
+    text-overflow: unset;
+    min-width: unset;
+  }
+
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-wrap-dynamic
+    .todoseq-task-description {
+    display: block;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    max-width: 100%;
+    flex: none;
+    margin-left: 0;
+  }
+
+  /* Floating indicators align to right on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-floating-indicators {
+    display: flex;
+    align-self: flex-start;
+    margin-top: var(--size-2-1);
+    margin-left: auto;
+  }
+
+  /* Switch to column layout on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-content-wrapper {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+
+  .todoseq-embedded-task-text-wrap-dynamic {
+    display: inline;
+  }
+
+  .todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-state,
+  .todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-text {
+    display: inline;
+  }
+
+  .todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-text {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+    word-break: break-word;
+  }
+
+  /* Show file info row on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-file-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+
+  /* Hide inline file info on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-file-info {
+    display: none;
+  }
+
+  /* Hide inline subtask and repeat indicators on narrow screens, show floating at top-right */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-container
+    .todoseq-subtask-indicator,
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-text-container
+    .todoseq-task-date-repeat-icon {
+    display: none;
+  }
+
+  /* File info on new row on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-file-info-wrap {
+    max-width: unset;
+    overflow: visible;
+    text-overflow: unset;
+    white-space: normal;
+  }
+
+  /* Hide inline urgency on narrow screens (urgency already shown in file-info-row) */
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-urgency {
+    display: none;
+  }
+
+  /* Dynamic mode - show date info rows on narrow screens */
+  .todoseq-embedded-task-item-wrap-dynamic
+    .todoseq-embedded-task-date-info-dynamic-wrap {
+    display: block;
+  }
+
+  /* Dynamic mode - hide inline date badge on narrow screens */
+  .todoseq-embedded-task-text-wrap-dynamic .todoseq-embedded-task-date-badge {
+    display: none;
+  }
+}
+
+/* ============================================================================
+   Floating Indicators - Subtask count and repeat icon on top-right
+   ============================================================================ */
+
+/* Floating indicators container - positioned at top-right of task line */
+.todoseq-embedded-task-floating-indicators {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  /* Position at top-right of the content wrapper */
+  margin-left: auto;
+}
+
+/* Wrap mode - position floating indicators at top-right */
+.todoseq-embedded-task-item-wrap .todoseq-embedded-task-floating-indicators {
+  align-self: flex-start;
+  margin-top: var(--size-2-1);
+}
+
+/* Ensure subtask indicator in floating div has correct styling */
+.todoseq-embedded-task-floating-indicators .todoseq-subtask-indicator {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+/* Ensure repeat icon in floating div has correct styling */
+.todoseq-embedded-task-floating-indicators .todoseq-task-date-repeat-icon {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.8;
+}
+
+.todoseq-embedded-task-floating-indicators .todoseq-task-date-repeat-icon svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+/* Completed task styling - target completed (x) and canceled (-) states */
+.todoseq-embedded-task-item.todoseq-embedded-task-completed {
+  opacity: 0.6;
+}
+
+.todoseq-embedded-task-completed .todoseq-embedded-task-text {
+  text-decoration: line-through;
+}
+
+/* Empty state */
+.todoseq-embedded-task-list-empty {
+  padding: var(--size-4-4);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.todoseq-embedded-task-list-empty-title {
+  font-weight: var(--font-semibold);
+  margin-bottom: var(--size-4-1);
+  font-size: 0.95rem;
+}
+
+.todoseq-embedded-task-list-empty-subtitle {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+/* Error state */
+.todoseq-embedded-task-list-error {
+  padding: var(--size-4-3);
+  background-color: var(--background-modifier-error);
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.todoseq-embedded-task-list-error-title {
+  font-weight: var(--font-semibold);
+  color: var(--text-error);
+  margin-bottom: var(--size-4-1);
+  font-size: 0.95rem;
+}
+
+.todoseq-embedded-task-list-error-message {
+  font-family: var(--font-monospace);
+  font-size: 0.85rem;
+  margin-bottom: var(--size-4-2);
+  color: var(--text-normal);
+}
+
+.todoseq-embedded-task-list-error-help {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .todoseq-embedded-task-file-info {
+    display: none; /* Hide file info on mobile */
+  }
+
+  /* Dynamic mode - hide inline file info at <=768px (same as wrap-content:false) */
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-file-info {
+    display: none;
+  }
+
+  /* Right-align inline urgency in 480-768px range when file info is hidden */
+  .todoseq-embedded-task-item-wrap-dynamic .todoseq-embedded-task-urgency {
+    margin-left: auto;
+  }
+}
+
+/* Focus styles for accessibility */
+.todoseq-embedded-task-item:focus-within {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.todoseq-embedded-task-checkbox:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* Animation for task updates */
+@keyframes task-update {
+  0% {
+    background-color: var(--background-modifier-selection);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.todoseq-embedded-task-item.updating {
+  animation: task-update 0.5s ease;
+}
+
+/* Embedded Task List Date Background Styling (consolidated) */
+.todoseq-embedded-task-item-date-overdue,
+.todoseq-embedded-task-item-date-today,
+.todoseq-embedded-task-item-date-soon,
+.todoseq-embedded-task-item-date-later {
+  padding-left: 5px;
+  border-left: 3px solid;
+}
+
+.todoseq-embedded-task-item-date-overdue {
+  background-color: color-mix(in srgb, var(--color-red) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-red) 50%, transparent);
+}
+
+.todoseq-embedded-task-item-date-today {
+  background-color: color-mix(in srgb, var(--color-orange) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-orange) 50%, transparent);
+}
+
+/* Footnote task keyword styling */
+.cm-editor .todoseq-footnote-task-keyword {
+  font-weight: var(--font-bold);
+  color: var(--interactive-accent);
+  font-size: 0.9em; /* use em for relative its immediate parent */
+  border-radius: 2px;
+}
+
+/* Nested quote task keyword styling - consolidated using attribute selector */
+.cm-editor [class^='todoseq-quote-block-task-keyword-'] {
+  font-weight: var(--font-bold);
+  color: var(--interactive-accent);
+  font-size: 0.9rem;
+  border-radius: 2px;
+}
+
+.todoseq-embedded-task-item-date-soon {
+  background-color: color-mix(in srgb, var(--color-green) 5%, transparent);
+  border-left-color: color-mix(in srgb, var(--color-green) 50%, transparent);
+}
+
+.todoseq-embedded-task-item-date-later {
+  background-color: color-mix(
+    in srgb,
+    var(--background-modifier-accent) 5%,
+    transparent
+  );
+  border-left-color: color-mix(
+    in srgb,
+    var(--interactive-accent) 50%,
+    transparent
+  );
+}
+
+/* ============================================================================
+   Collapsible Embedded Task List Styles
+   ============================================================================ */
+
+/* Title styling when used as collapsible toggle */
+.todoseq-embedded-task-list-title[role='button'] {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-s);
+  margin: -2px -6px 0 -6px;
+  padding: var(--size-2-1) var(--size-2-3) var(--size-2-3) var(--size-2-3);
+}
+
+.todoseq-embedded-task-list-title[role='button']:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.todoseq-embedded-task-list-title[role='button']:focus-visible {
+  outline: 2px solid var(--interactive-accent, #7f6df2);
+  outline-offset: 2px;
+}
+
+/* When expanded, keep the border on title for full-width underline */
+.todoseq-embedded-task-list-expanded
+  .todoseq-embedded-task-list-title[role='button'] {
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: var(--size-4-2);
+}
+
+/* When todoseq-embedded-task-list-header is used as collapsible toggle (no title case) */
+.todoseq-embedded-task-list-header[role='button'] {
+  cursor: pointer;
+  user-select: none;
+  border-radius: var(--radius-s);
+}
+
+.todoseq-embedded-task-list-header[role='button']:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.todoseq-embedded-task-list-header[role='button']:focus-visible {
+  outline: 2px solid var(--interactive-accent, #7f6df2);
+  outline-offset: 2px;
+}
+
+/* Chevron icon container */
+.todoseq-collapse-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-s);
+  height: var(--icon-s);
+  color: var(--text-muted);
+  transition: transform 0.15s ease-out;
+  margin-left: var(--size-2-3);
+  flex-shrink: 0;
+}
+
+.todoseq-collapse-toggle-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
+/* When icon is inside title, adjust margin */
+.todoseq-embedded-task-list-title .todoseq-collapse-toggle-icon {
+  margin-left: var(--size-2-3);
+}
+
+/* When icon is in todoseq-embedded-task-list-header (no title case), use same margin as title */
+.todoseq-embedded-task-list-header .todoseq-collapse-toggle-icon {
+  margin-left: -10px;
+  margin-top: var(--size-2-1);
+}
+
+/* Query summary in collapsed header */
+.todoseq-query-summary {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Result count footer (shown when collapsed) - no border, just text */
+.todoseq-result-count-footer {
+  text-align: center;
+  padding: var(--size-4-2) 0 var(--size-4-1) 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+/* Expanded content animation */
+/* Note: Exclude header[role="button"] as it's the toggle in no-title case and shouldn't animate */
+.todoseq-embedded-task-list-expanded
+  .todoseq-embedded-task-list-header:not([role='button']),
+.todoseq-embedded-task-list-expanded .todoseq-embedded-task-list,
+.todoseq-embedded-task-list-expanded .todoseq-embedded-task-list-truncated {
+  animation: todoseqFadeIn 0.15s ease-out;
+}
+
+@keyframes todoseqFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================
+   Task Context Menu
+   ============================================================ */
+
+.todoseq-task-context-menu {
+  min-width: 200px;
+  max-width: 280px;
+  padding: var(--menu-padding);
+}
+
+/* Backdrop for mobile dialogs */
+.todoseq-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: calc(var(--layer-menu) - 1);
+}
+
+/* ============================================================================
+   Shared Menu Row Patterns - Hover, Focus, Icons, Labels
+   ============================================================================ */
+
+/* Hover states for all menu items (mouse interaction) */
+.menu-item.todoseq-context-menu-row:not(.is-label):not(.is-disabled):hover,
+.menu-item.todoseq-date-picker-quick-select-row:not(.is-label):not(
+    .is-disabled
+  ):hover,
+.menu-item.todoseq-date-picker-menu-row:not(.is-label):not(.is-disabled):hover,
+.menu-item.todoseq-date-picker-submenu-row:not(.is-label):not(
+    .is-disabled
+  ):hover {
+  background-color: var(--background-modifier-hover);
+}
+
+/* Focus states for all menu rows (custom keyboard navigation) */
+.todoseq-context-menu-row:focus-visible,
+.todoseq-date-picker-quick-select-row:focus-visible,
+.todoseq-date-picker-menu-row:focus-visible,
+.todoseq-date-picker-submenu-row:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+  border-radius: var(--radius-s);
+}
+
+/* Keyboard navigation focus states */
+.todoseq-context-menu-row.is-focused,
+.todoseq-date-picker-quick-select-row.is-focused,
+.todoseq-date-picker-menu-row.is-focused,
+.todoseq-date-picker-submenu-row.is-selected {
+  background: var(--background-modifier-hover);
+}
+
+/* Icon SVG sizing (custom) */
+.todoseq-context-menu-row-icon svg,
+.todoseq-date-picker-quick-select-icon svg,
+.todoseq-date-picker-menu-row-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+/* Section headers (Scheduled, Priority) - custom enhancements */
+.todoseq-context-menu-header {
+  font-weight: var(--font-semibold);
+}
+
+/* Icon rows (date shortcuts, priority flags) */
+.todoseq-context-menu-icon-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: var(--size-4-1) var(--size-4-3);
+}
+
+.menu .todoseq-context-menu-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+  transition: background-color 100ms ease;
+  background-color: var(--menu-background);
+  box-shadow: none;
+}
+
+/* force mobile to use default background colors */
+@media (max-width: 480px) {
+  .is-mobile .menu .todoseq-context-menu-header,
+  .is-mobile .menu .todoseq-context-menu-row,
+  .is-mobile .menu .todoseq-context-menu-icon-row,
+  .is-mobile .menu .todoseq-context-menu-icon-btn {
+    background-color: inherit;
+    background: inherit;
+  }
+}
+
+.menu .todoseq-context-menu-icon-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-context-menu-icon-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.todoseq-context-menu-icon-btn.is-focused {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-context-menu-icon-btn.is-active {
+  background: var(--background-modifier-hover);
+  border-radius: var(--radius-s);
+  box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+}
+
+.todoseq-context-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--icon-m + 2));
+  height: calc(var(--icon-m + 2));
+}
+
+.todoseq-context-menu-icon svg {
+  width: var(--icon-m);
+  height: var(--icon-m);
+}
+
+/* Priority flag colors */
+.todoseq-context-menu-icon-btn.todoseq-priority-high {
+  color: var(--color-red);
+}
+
+.todoseq-context-menu-icon-btn.todoseq-priority-med {
+  color: var(--interactive-accent);
+}
+
+.todoseq-context-menu-icon-btn.todoseq-priority-low {
+  color: var(--text-faint);
+}
+
+.todoseq-context-menu-icon-btn.todoseq-priority-none {
+  color: var(--text-faint);
+}
+
+/* ============================================================================
+   Date Picker
+   ============================================================================ */
+
+.todoseq-date-picker {
+  min-width: 300px;
+  max-width: 320px;
+  padding: var(--menu-padding);
+}
+
+/* Date Picker Header - custom enhancements */
+.todoseq-date-picker-header {
+  font-weight: var(--font-semibold);
+}
+
+/* Quick Select Section */
+.todoseq-date-picker-quick-select-date {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+/* Calendar Section */
+.todoseq-date-picker-calendar {
+  padding: var(--size-4-1) var(--size-4-2);
+}
+
+.todoseq-date-picker-calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--size-4-1) 0;
+  margin-bottom: var(--size-4-1);
+}
+
+.todoseq-date-picker-calendar-month {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-small);
+}
+
+.todoseq-date-picker-calendar-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+}
+
+.todoseq-date-picker-calendar-nav:hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-date-picker-calendar-nav:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.todoseq-date-picker-calendar-nav svg {
+  width: 16px;
+  height: 16px;
+}
+
+.todoseq-date-picker-calendar-nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.todoseq-date-picker-calendar-nav-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.todoseq-date-picker-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: var(--size-4-1);
+}
+
+.todoseq-date-picker-calendar-weekday {
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  font-weight: var(--font-semibold);
+  padding: var(--size-4-1) 0;
+}
+
+.todoseq-date-picker-calendar-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.todoseq-date-picker-calendar-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  transition: background-color 100ms ease;
+}
+
+.todoseq-date-picker-calendar-day.empty {
+  cursor: default;
+}
+
+.todoseq-date-picker-calendar-day:not(.empty):hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-date-picker-calendar-day.today {
+  font-weight: var(--font-semibold);
+  color: var(--interactive-accent);
+}
+
+.todoseq-date-picker-calendar-day.selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.todoseq-date-picker-calendar-day:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.todoseq-date-picker-calendar-day.is-focused {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-date-picker-menu-row-label.is-selected {
+  color: var(--interactive-accent);
+}
+
+/* Clear button */
+.todoseq-date-picker-clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3em;
+  height: 1.3em;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.todoseq-date-picker-clear-btn:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.todoseq-date-picker-clear-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.todoseq-date-picker-clear-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.todoseq-date-picker-clear-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.todoseq-date-picker-clear-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Submenu - custom positioning and sizing */
+.todoseq-date-picker-submenu {
+  position: absolute;
+  min-width: 150px;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: calc(var(--layer-menu) + 1);
+  padding: var(--size-4-1) 0;
+}
+
+.todoseq-date-picker-submenu-row {
+  justify-content: space-between;
+}
+
+.todoseq-date-picker-submenu-value {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+
+/* Custom Repeat Dialog */
+.todoseq-date-picker-custom-repeat {
+  position: absolute;
+  min-width: 280px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-l);
+  z-index: calc(var(--layer-menu) + 2);
+  padding: var(--size-4-4);
+}
+
+.todoseq-date-picker-custom-repeat-header {
+  font-weight: var(--font-semibold);
+  font-size: var(--font-ui-small);
+  margin-bottom: var(--size-4-3);
+  padding-bottom: var(--size-4-2);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.todoseq-date-picker-custom-repeat-label {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin-bottom: var(--size-4-1);
+}
+
+.todoseq-date-picker-custom-repeat-type-options {
+  display: flex;
+  gap: var(--size-4-1);
+  margin-bottom: var(--size-4-3);
+  flex-wrap: wrap;
+}
+
+.todoseq-date-picker-custom-repeat-type-btn {
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.todoseq-date-picker-custom-repeat-type-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-date-picker-custom-repeat-type-btn.is-selected {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.todoseq-date-picker-custom-repeat-value-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.todoseq-date-picker-custom-repeat-value-input {
+  width: 60px;
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.todoseq-date-picker-custom-repeat-value-input:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+
+.todoseq-date-picker-custom-repeat-unit-select {
+  flex: 1;
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.todoseq-date-picker-custom-repeat-unit-select:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+
+.todoseq-date-picker-custom-repeat-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
+  padding-top: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.todoseq-date-picker-custom-repeat-cancel {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.todoseq-date-picker-custom-repeat-cancel:hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-date-picker-custom-repeat-save {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: none;
+  border-radius: var(--radius-s);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.todoseq-date-picker-custom-repeat-save:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 85%, white);
+}
+
+/* force mobile to use default background colors */
+@media (max-width: 480px) {
+  .is-mobile .menu .todoseq-date-picker-header,
+  .is-mobile .menu .todoseq-date-picker-menu-row,
+  .is-mobile .menu .todoseq-date-picker-quick-select-row {
+    background-color: inherit;
+    background: inherit;
+  }
+}
+
+/* Off-screen positioning for measurement */
+.menu.todoseq-dialog-offscreen {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+}
+
+/* Submenu measurement state - hidden off-screen */
+.todoseq-date-picker-submenu-measuring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+}
+
+/* Submenu visible state */
+.todoseq-date-picker-submenu-visible {
+  position: absolute;
+  top: var(--todoseq-submenu-top);
+  visibility: visible;
+  z-index: 1000;
+}
+
+/* Centered dialog positioning */
+.todoseq-date-picker-custom-repeat-centered {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+/* Settings section toggle visibility */
+.todoseq-settings-section-hidden {
+  display: none;
+}
+
+.todoseq-settings-section-visible {
+  display: block;
+}
+
+/* Generic hidden helper (avoids inline style.display assignments) */
+.todoseq-panel .todoseq-hidden {
+  display: none;
+}
+
+/* ============================================================================
+   Saved Searches
+   ============================================================================ */
+
+/* Save/bookmark button in search bar */
+.todoseq-save-search-btn {
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.todoseq-save-search-btn:hover {
+  opacity: 1;
+}
+
+/* Active saved search - filled/highlighted bookmark */
+.todoseq-save-search-btn-active {
+  opacity: 1;
+  color: var(--interactive-accent);
+}
+
+/* Header row icons (Search options, Saved Searches, History headers) */
+.todoseq-dropdown .mod-group .suggestion-aux {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.todoseq-dropdown .mod-group .search-suggest-icon svg {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+/* Entry row icons (saved search items, history items) - compact size */
+.todoseq-dropdown .search-suggest-saved-item .search-suggest-icon svg,
+.todoseq-dropdown .search-suggest-history-item .search-suggest-icon svg {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+}
+
+/* Saved search item in dropdown - match row height of other suggestion items */
+.todoseq-dropdown .search-suggest-saved-item {
+  cursor: pointer;
+  align-items: center;
+}
+
+.todoseq-dropdown .search-suggest-saved-item .suggestion-content {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.todoseq-dropdown .search-suggest-saved-item .suggestion-aux {
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.todoseq-dropdown
+  .search-suggest-saved-item
+  .suggestion-aux
+  .search-suggest-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.todoseq-dropdown .search-suggest-saved-item:hover,
+.todoseq-dropdown .search-suggest-saved-item.is-selected {
+  background-color: var(--background-modifier-hover);
+}
+
+/* Saved search title - single line with truncation (matches search option rows) */
+.todoseq-dropdown .search-suggest-saved-item .suggestion-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Saved search query (dimmed like search-suggest-info-text) */
+.todoseq-dropdown .search-suggest-saved-query {
+  color: var(--text-muted);
+}
+
+/* History item - match saved search row height */
+.todoseq-dropdown .search-suggest-history-item {
+  align-items: center;
+}
+
+.todoseq-dropdown .search-suggest-history-item .suggestion-content {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.todoseq-dropdown .search-suggest-history-item .suggestion-aux {
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.todoseq-dropdown
+  .search-suggest-history-item
+  .suggestion-aux
+  .search-suggest-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* History query text - single line with truncation */
+.todoseq-dropdown .search-suggest-history-item .suggestion-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.todoseq-dropdown .search-suggest-history-query {
+  font-weight: var(--font-normal);
+}
+
+/* History match case indicator (Aa) */
+.todoseq-dropdown .search-suggest-history-matchcase {
+  color: var(--interactive-accent);
+  font-weight: var(--font-semibold);
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+/* Hover action icons (edit/delete) - hidden by default, shown on hover */
+.todoseq-dropdown .search-suggest-saved-item .suggestion-aux {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  max-height: 1em;
+}
+
+.todoseq-dropdown .search-suggest-saved-item:hover .suggestion-aux,
+.todoseq-dropdown .search-suggest-saved-item.is-selected .suggestion-aux {
+  opacity: 1;
+}
+
+/* ============================================================================
+   Saved Search Dialog (Modal)
+   ============================================================================ */
+
+.todoseq-saved-search-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: var(--layer-modal, 100);
+}
+
+.todoseq-saved-search-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: calc(var(--layer-modal, 100) + 1);
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-l);
+  min-width: 380px;
+  max-width: 480px;
+  width: 90vw;
+  padding: 0;
+}
+
+.todoseq-saved-search-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--size-4-3) var(--size-4-4);
+  font-weight: var(--font-semibold);
+  font-size: 1rem;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.todoseq-saved-search-close {
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--text-muted);
+  line-height: 1;
+  padding: var(--size-2-1);
+  border-radius: var(--radius-s);
+}
+
+.todoseq-saved-search-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.todoseq-saved-search-form {
+  padding: var(--size-4-3) var(--size-4-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+}
+
+.todoseq-saved-search-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-2-2);
+}
+
+.todoseq-saved-search-field label {
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  color: var(--text-muted);
+}
+
+.todoseq-saved-search-field input,
+.todoseq-saved-search-field select {
+  width: 100%;
+  padding: var(--size-4-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.todoseq-saved-search-field input:focus,
+.todoseq-saved-search-field select:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -1px;
+}
+
+.todoseq-saved-search-field input.todoseq-saved-search-input-error {
+  border-color: var(--error-color, #ff0000);
+  border-width: 2px;
+}
+
+.todoseq-saved-search-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
+  padding-top: var(--size-4-2);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.todoseq-saved-search-btn-cancel {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.todoseq-saved-search-btn-cancel:hover {
+  background: var(--background-modifier-hover);
+}
+
+.todoseq-saved-search-btn-save {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: none;
+  border-radius: var(--radius-s);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+
+.todoseq-saved-search-btn-save:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 85%, white);
+}
+
+/* Delete button - positioned left of Cancel/Save */
+.todoseq-saved-search-btn-delete {
+  padding: var(--size-4-1) var(--size-4-3);
+  border: 1px solid var(--color-red);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--color-red);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.todoseq-saved-search-btn-delete:hover {
+  background: color-mix(in srgb, var(--color-red) 10%, transparent);
+}
+
+/* History item save icon - hidden by default, shown on hover */
+.todoseq-dropdown .search-suggest-history-item .suggestion-aux {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+  max-height: 1em;
+}
+
+.todoseq-dropdown .search-suggest-history-item:hover .suggestion-aux {
+  opacity: 1;
+}

@@ -1,0 +1,9 @@
+{
+	"id": "close-sidebar-files",
+	"name": "Close Sidebar Files",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

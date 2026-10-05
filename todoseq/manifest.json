@@ -1,0 +1,12 @@
+{
+	"id": "todoseq",
+	"name": "TODOseq",
+	"version": "9999.0.0",
+	"minAppVersion": "1.13.0",
+	"description": "Lightweight keyword-based task tracker using Logseq style keywords.",
+	"author": "马自立（改自 Stephen Cross）",
+	"authorUrl": "https://stephencross.site/",
+	"isDesktopOnly": false,
+	"pinnedFrom": "0.20.1",
+	"localPatch": "⌘/ (toggle-task-state) 在没有任务关键字的普通条目上直接加 TODO（__plainToTodo）。更新插件会丢补丁。"
+}

@@ -1,0 +1,9 @@
+{
+	"id": "done-to-top",
+	"name": "Done To Top",
+	"version": "1.1.0",
+	"minAppVersion": "1.0.0",
+	"description": "按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

@@ -1,0 +1,136 @@
+/* ---------- 组色块（嵌在组内第一个标签页左侧） ---------- */
+.workspace-tab-header .ctg-chip {
+	flex: 0 0 auto;
+	align-self: center;
+	margin: 0 2px 0 6px;
+	padding: 0 8px;
+	height: 18px;
+	line-height: 18px;
+	border-radius: 9px;
+	background: var(--ctg-color);
+	color: var(--ctg-fg);
+	font-size: 11px;
+	font-weight: 600;
+	max-width: 110px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+}
+.workspace-tab-header .ctg-chip.is-empty {
+	width: 12px;
+	height: 12px;
+	padding: 0;
+	border-radius: 50%;
+}
+
+/* 组内标签页底部的颜色线 */
+.workspace-tab-header.ctg-member > .workspace-tab-header-inner {
+	box-shadow: inset 0 -2px 0 var(--ctg-color);
+}
+
+/* 折叠：只留色块 */
+.workspace-tab-header.ctg-hidden {
+	display: none !important;
+}
+.workspace-tab-header.ctg-collapsed > .workspace-tab-header-inner {
+	display: none !important;
+}
+.workspace-tab-header.ctg-collapsed {
+	container-type: normal !important;   /* Obsidian 给标签页开了 inline-size 容器查询，宽度不随内容撑开 */
+	flex: 0 0 auto !important;
+	width: auto !important;
+	min-width: 0 !important;
+	max-width: none !important;
+	padding-right: 4px;
+}
+
+/* ---------- 拖色块移动整组 ---------- */
+.ctg-drop-indicator {
+	position: fixed;
+	width: 3px;
+	margin-left: -2px;
+	border-radius: 2px;
+	background: var(--interactive-accent);
+	z-index: var(--layer-dragged-item, 1000);
+	pointer-events: none;
+}
+body.ctg-dragging,
+body.ctg-dragging * {
+	cursor: grabbing !important;
+}
+
+/* ---------- 组编辑面板（右键色块） ---------- */
+.ctg-editor {
+	position: fixed;
+	z-index: var(--layer-menu, 60);
+	width: 240px;
+	padding: 10px;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	box-shadow: var(--shadow-l);
+	font-size: var(--font-ui-small);
+}
+.ctg-editor input[type="text"] {
+	width: 100%;
+}
+.ctg-swatches {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 7px;
+	margin: 10px 2px;
+}
+.ctg-swatch {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	cursor: pointer;
+}
+.ctg-swatch.is-selected {
+	box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--ctg-swatch);
+}
+.ctg-actions {
+	border-top: 1px solid var(--background-modifier-border);
+	margin-top: 4px;
+	padding-top: 6px;
+}
+.ctg-action {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 6px;
+	border-radius: 4px;
+	cursor: pointer;
+}
+.ctg-action:hover {
+	background: var(--background-modifier-hover);
+}
+.ctg-action svg {
+	width: 16px;
+	height: 16px;
+	color: var(--text-muted);
+}
+
+/* ---------- 菜单和搜索里的小色点 ---------- */
+.ctg-dot {
+	display: inline-block;
+	flex-shrink: 0;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	vertical-align: middle;
+}
+.ctg-dot.is-none {
+	visibility: hidden;
+}
+.ctg-suggest {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.ctg-suggest-sub {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}

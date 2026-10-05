@@ -1,0 +1,9 @@
+{
+  "id": "nautilus-spiral",
+  "name": "螺旋日程",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "仿 Roam 的 Nautilus：把今天日记里的事件和待办画成螺旋日程，未完成的任务从「现在」往后流，带容量条。只读日记不写日记，日记可以在 Bike 里写。",
+  "author": "马自立",
+  "isDesktopOnly": false
+}

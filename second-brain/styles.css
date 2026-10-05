@@ -1,0 +1,17 @@
+.sb-view { padding: 8px 10px; font-size: var(--font-ui-small); }
+.sb-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
+.sb-head button, .sb-tools button, .sb-actions button, .sb-rel-row button { font-size: .8em; padding: 2px 8px; height: auto; }
+.sb-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.sb-hint { color: var(--text-muted); font-size: .85em; }
+.sb-sec { margin: 10px 0 14px; }
+.sb-sec-h { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 3px; margin-bottom: 6px; }
+.sb-year-h { color: var(--text-muted); font-size: .85em; margin: 6px 0 3px; }
+.sb-card { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 8px; margin: 5px 0; cursor: pointer; }
+.sb-card:hover { border-color: var(--interactive-accent); }
+.sb-meta { color: var(--text-muted); font-size: .8em; margin-bottom: 2px; }
+.sb-text { line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.sb-actions { display: flex; gap: 6px; margin-top: 5px; }
+.sb-rel { margin-top: 4px; }
+.sb-rel-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 3px 0; }
+.sb-modal-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.sb-status { cursor: pointer; color: var(--text-accent); }

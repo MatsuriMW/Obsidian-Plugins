@@ -1,0 +1,90 @@
+.naut-root {
+  --naut-event: #e3b341;
+  --naut-task: #4c8bf5;
+  --naut-prio: #e5534b;
+  --naut-done: var(--text-faint);
+  padding: 10px 12px 24px;
+}
+.naut-head { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.naut-head button { padding: 2px 8px; font-size: var(--font-ui-small); }
+.naut-date { flex: 1; text-align: center; font-weight: 600; }
+.naut-empty { color: var(--text-muted); text-align: center; margin-top: 40px; }
+
+/* 容量条 */
+.naut-cap { margin-bottom: 6px; }
+.naut-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--background-modifier-border); }
+.naut-bar-task { background: var(--naut-task); }
+.naut-bar-free { background: var(--background-modifier-border); }
+.naut-bar-over { background: var(--naut-prio); }
+.naut-cap-text { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-top: 4px; }
+.naut-over-text { color: var(--naut-prio); font-weight: 600; }
+.naut-muted { color: var(--text-faint); }
+
+/* 螺旋 */
+.naut-svg { width: 100%; max-width: 340px; display: block; margin: 0 auto; }
+.naut-track { fill: none; stroke: var(--background-modifier-border); stroke-width: 14; stroke-linecap: round; }
+.naut-seg { fill: none; stroke-width: 14; stroke-linecap: butt; cursor: pointer; }
+.naut-seg:hover { stroke-width: 17; }
+.naut-event { stroke: var(--naut-event); }
+.naut-task { stroke: var(--naut-task); }
+.naut-prio { stroke: var(--naut-prio); }
+.naut-done { stroke: var(--naut-done); }
+.naut-done-event { opacity: 0.45; }
+.naut-hour { font-size: 8px; fill: var(--text-faint); text-anchor: middle; dominant-baseline: middle; }
+.naut-log { fill: var(--text-normal); opacity: 0.7; }
+.naut-now { stroke: var(--naut-prio); stroke-width: 1.5; opacity: 0.8; }
+.naut-now-dot { fill: var(--naut-prio); }
+.naut-center { font-size: 15px; font-weight: 600; fill: var(--text-muted); text-anchor: middle; }
+
+/* 列表 */
+.naut-list { margin-top: 8px; font-size: var(--font-ui-small); }
+.naut-sec { margin: 10px 0 4px; font-size: var(--font-ui-smaller); color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.naut-row { display: flex; gap: 8px; padding: 3px 6px; border-radius: 4px; border-left: 3px solid transparent; cursor: pointer; }
+.naut-row:hover { background: var(--background-modifier-hover); }
+.naut-time { min-width: 3.6em; flex: none; white-space: nowrap; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.naut-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.naut-dur { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.naut-row.is-event { border-left-color: var(--naut-event); }
+.naut-row.is-task { border-left-color: var(--naut-task); }
+.naut-row.is-prio { border-left-color: var(--naut-prio); }
+.naut-row.is-over { border-left-color: var(--naut-prio); color: var(--naut-prio); }
+.naut-row.is-done { border-left-color: var(--naut-done); color: var(--text-faint); }
+
+/* 长期项目 · 该推一把 */
+.naut-proj-head { cursor: pointer; user-select: none; }
+.naut-proj-note { font-size: .78em; color: var(--text-muted); padding: 2px 4px 4px; }
+.naut-link { cursor: pointer; color: var(--text-accent); }
+.naut-proj .naut-proj-why { width: auto; min-width: 5.5em; font-size: .85em; color: var(--text-muted); }
+.naut-proj .naut-proj-why.is-late { color: var(--color-red); }
+.naut-proj .naut-proj-why.is-soon { color: var(--color-orange); }
+.naut-proj-add { flex: none; font-size: .8em; padding: 0 7px; height: 20px; margin-left: 4px; }
+
+/* 🤖 人机协作 */
+.naut-root { --naut-ai: #a371f7; }
+.naut-ai { fill: none; stroke: var(--naut-ai); stroke-width: 3; stroke-linecap: round; opacity: 0.85; }
+.naut-ai:hover { stroke-width: 5; }
+.naut-ai-line { font-size: var(--font-ui-smaller); color: var(--naut-ai); margin-top: 2px; cursor: help; }
+.naut-row.naut-ai-row { border-left-color: var(--naut-ai); cursor: default; }
+.naut-ai-week { display: flex; gap: 4px; height: 44px; margin: 6px 4px 2px; }
+.naut-ai-col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; }
+.naut-ai-bar { background: var(--naut-ai); opacity: 0.45; border-radius: 2px 2px 0 0; }
+.naut-ai-col.is-cur .naut-ai-bar { opacity: 1; }
+.naut-ai-day { font-size: 9px; text-align: center; color: var(--text-faint); margin-top: 2px; }
+
+/* 这天实际开始之前 / 结束之后 */
+.naut-off { fill: none; stroke: var(--background-modifier-border); stroke-width: 3; stroke-dasharray: 2 5; stroke-linecap: round; }
+/* 起止把手 */
+.naut-handle { fill: var(--background-primary); stroke: var(--text-muted); stroke-width: 2; cursor: grab; touch-action: none; }
+.naut-handle:hover { stroke: var(--text-accent); }
+.naut-handle-start { stroke: var(--color-green); }
+.naut-handle-end { stroke: var(--naut-prio); }
+.naut-handle-label { font-size: 10px; font-weight: 600; fill: var(--text-normal); text-anchor: middle; pointer-events: none; }
+/* 🎮 游戏时间 */
+.naut-root { --naut-game: #3fb950; }
+.naut-game { fill: none; stroke: var(--naut-game); stroke-width: 3; stroke-linecap: round; opacity: 0.85; }
+.naut-game:hover { stroke-width: 5; }
+.naut-game-line { font-size: var(--font-ui-smaller); color: var(--naut-game); margin-top: 2px; cursor: help; }
+
+/* 做到一半：已经做过的几段画淡，后面排的画实 */
+.naut-seg.naut-worked { opacity: 0.45; }
+.naut-row.is-susp { border-left-color: var(--text-faint); color: var(--text-muted); }

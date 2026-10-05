@@ -1,0 +1,9 @@
+{
+  "id": "supertags-local",
+  "name": "SuperTags（自用）",
+  "version": "1.2.3-local",
+  "minAppVersion": "1.0.0",
+  "description": "Tana 式 supertag：日记里一行带 #标签 → 建成带属性的笔记。自用改版：边界匹配、字段、Bike 安全。",
+  "author": "马自立（改自 Daniele D'Amico）",
+  "isDesktopOnly": false
+}

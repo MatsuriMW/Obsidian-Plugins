@@ -1,0 +1,9 @@
+{
+  "id": "block-ref-plus",
+  "name": "块引用增强",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "仿思源：[[页#^id]] 显示被引用块的当前内容（动态锚文本）；被引用的块旁边显示引用次数，点开可跳到引用处。只改显示，不改文件。",
+  "author": "马自立",
+  "isDesktopOnly": false
+}

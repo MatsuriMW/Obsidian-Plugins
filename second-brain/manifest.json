@@ -1,0 +1,9 @@
+{
+  "id": "second-brain",
+  "name": "第二大脑（自用）",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "每日回顾（那年今日 / 随机旧块 / 孤岛笔记）、写作模式（相关笔记 + Claudian）、库周报。",
+  "author": "马自立",
+  "isDesktopOnly": true
+}

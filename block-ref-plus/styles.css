@@ -1,0 +1,28 @@
+/* 动态锚文本：虚下划线，和普通页面链接区分开（思源的块引用也是这样） */
+.brp-ref,
+.markdown-rendered a.internal-link.brp-ref {
+  color: var(--link-color);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--link-color);
+  cursor: pointer;
+}
+.brp-ref:hover { border-bottom-style: solid; }
+
+/* 被引用次数角标 */
+.brp-count {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0 0.45em;
+  min-width: 1.4em;
+  font-size: 0.72em;
+  line-height: 1.5;
+  text-align: center;
+  vertical-align: 0.1em;
+  border-radius: 0.8em;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  opacity: 0.8;
+  cursor: pointer;
+  user-select: none;
+}
+.brp-count:hover { opacity: 1; }

@@ -1,0 +1,9 @@
+{
+	"id": "journal-edit-mode",
+	"name": "Journal Edit Mode",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "日记类命名（YYYY_MM_DD）的笔记始终以编辑模式打开。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

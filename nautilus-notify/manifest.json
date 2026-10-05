@@ -1,0 +1,9 @@
+{
+  "id": "nautilus-notify",
+  "name": "任务提醒",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "用 macOS 通知横幅提醒今天日记里的任务：快开始的事件、过点没做的待办、做太久的 DOING、完成时的祝贺、排不下的容量预警、下一件该做什么、今日简报和收尾提醒。分析全部来自螺旋日程插件。",
+  "author": "马自立",
+  "isDesktopOnly": true
+}

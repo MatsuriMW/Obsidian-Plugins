@@ -1,0 +1,9 @@
+{
+	"id": "outline-block",
+	"name": "Outline Block",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "⌘⌥L：把光标所在的那一个长段落块，整理成层级列表并给核心概念加双链，层级按反链面板来定：引出 [[X]] 的那一项，展开讲 X 的内容都挂成它的子项（调用本机 Claude）。先预览再替换。",
+	"author": "马自立",
+	"isDesktopOnly": true
+}

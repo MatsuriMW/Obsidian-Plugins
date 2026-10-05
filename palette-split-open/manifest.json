@@ -1,0 +1,9 @@
+{
+	"id": "palette-split-open",
+	"name": "Palette Enhancements",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选。",
+	"author": "马自立",
+	"isDesktopOnly": true
+}

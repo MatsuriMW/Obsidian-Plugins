@@ -1,0 +1,9 @@
+{
+  "id": "backlink-defaults",
+  "name": "Backlink Defaults",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "反向链接面板默认按修改时间从新到旧排序，并显示更多上下文。",
+  "author": "马自立",
+  "isDesktopOnly": false
+}

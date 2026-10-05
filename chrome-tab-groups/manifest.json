@@ -1,0 +1,9 @@
+{
+	"id": "chrome-tab-groups",
+	"name": "Chrome Tab Groups",
+	"version": "1.0.0",
+	"minAppVersion": "1.7.0",
+	"description": "仿 Chrome 的标签页管理：标签页分组（命名、颜色、折叠、拖色块移动整组、移至新窗口）、右键菜单（在右侧新建、向新拆分视图添加、添加到组、复制标签页）、搜索标签页。",
+	"author": "马自立",
+	"isDesktopOnly": true
+}
