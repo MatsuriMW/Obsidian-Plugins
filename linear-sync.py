@@ -9,7 +9,7 @@
 #   （Linear → Settings → Security & access → Personal API keys 生成，然后：
 #    security add-generic-password -a "$USER" -s linear-api-key -w '粘贴 key'）
 # 用法：./linear-sync.py [提交，默认 HEAD] [--dry-run]
-import json, os, re, subprocess, sys, urllib.request
+import json, os, re, subprocess, sys, urllib.error, urllib.request
 
 TEAM_KEY = "MAT"
 PROJECT = "Obsidian-Plugins"
@@ -36,8 +36,14 @@ def gql(key, query, variables=None):
         data=json.dumps({"query": query, "variables": variables or {}}).encode(),
         headers={"Content-Type": "application/json", "Authorization": key},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        out = json.load(resp)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            out = json.load(resp)
+    except urllib.error.HTTPError as e:   # 查询写错时 Linear 回 400，错误原因在响应体里
+        try:
+            out = json.load(e)
+        except Exception:
+            raise RuntimeError(f"HTTP {e.code}")
     if out.get("errors"):
         raise RuntimeError(out["errors"][0].get("message"))
     return out["data"]
@@ -74,14 +80,15 @@ def main():
         print("Linear：没找到 API key（LINEAR_API_KEY 或钥匙串 linear-api-key），跳过。说明见 linear-sync.py 开头")
         return
 
+    # 分几次查：一次查太多嵌套字段 Linear 会报「Query too complex」
     d = gql(key, """query($k:String!,$p:String!){
-      teams(filter:{key:{eq:$k}}){nodes{id states{nodes{id name}}
-        labels(first:250){nodes{id name isGroup parent{id}}}}}
+      teams(filter:{key:{eq:$k}}){nodes{id states{nodes{id name}}}}
       projects(filter:{name:{eq:$p}}){nodes{id}}}""", {"k": TEAM_KEY, "p": PROJECT})
     team = d["teams"]["nodes"][0]
     project_id = d["projects"]["nodes"][0]["id"]
     done_id = next(s["id"] for s in team["states"]["nodes"] if s["name"] == "Done")
-    labels = team["labels"]["nodes"]
+    # 标签：团队的和整个工作区的（Improvement 之类可能是工作区级）
+    labels = gql(key, "query{issueLabels(first:250){nodes{id name isGroup}}}")["issueLabels"]["nodes"]
     group = next((l for l in labels if l["isGroup"] and l["name"] == LABEL_GROUP), None)
     by_name = {l["name"]: l["id"] for l in labels if not l["isGroup"]}
 
