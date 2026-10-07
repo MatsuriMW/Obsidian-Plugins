@@ -48,7 +48,7 @@
 | **日记整理** ([`journal-tidy`](journal-tidy)) | 1.1.0 | 手动一键整理日记：任务按 DONE / DOING / TODO 分区；写了 [[菜谱]] 这类 SuperTag 的项下面补上它的字段（如「学会:: 否」）留给你填；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。 |
 | **任务提醒** ([`nautilus-notify`](nautilus-notify)) | 0.1.0 | 用 macOS 通知横幅提醒今天日记里的任务：快开始的事件、过点没做的待办、做太久的 DOING、完成时的祝贺、排不下的容量预警、下一件该做什么、今日简报和收尾提醒。分析全部来自螺旋日程插件。 |
 | **块引用增强** ([`block-ref-plus`](block-ref-plus)) | 0.1.0 | 仿思源：[[页#^id]] 显示被引用块的当前内容（动态锚文本）；被引用的块旁边显示引用次数，点开可跳到引用处。只改显示，不改文件。 |
-| **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.0.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。 |
+| **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.1.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索；⌘⇧O / ⌘⇧M / ⌘⇧K 一键只搜 Wiki 条目、书签里的笔记、#card 和挖空卡片。 |
 | **快捷键总览** ([`hotkey-atlas`](hotkey-atlas)) | 0.1.0 | 给「设置 → 快捷键」加按插件的聚类和透视：按插件分组，每组显示有几个快捷键、几个是我改过的、几处冲突，点标题折叠；按来源（自制 / 改版 / 社区 / 核心）和单个插件筛选；写死在插件里、只在某个场景生效的情境快捷键也按插件列出来，可搜索。改快捷键仍用原来的那一套。 |
 | **书签图标** ([`bookmark-icons`](bookmark-icons)) | 0.1.0 | 书签面板里每个笔记换成各自的图标（淡色底小方块），不再都是同一个文件图标；笔记属性 icon / icon-color 可以自己指定。只改显示。 |
 | **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |

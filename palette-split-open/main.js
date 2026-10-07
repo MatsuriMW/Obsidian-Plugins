@@ -12,7 +12,13 @@
 // Tab 递进加一层全文搜索（文件名有匹配时也能搜正文）：
 //   · 第一次按 Tab：文件名结果不动，正文命中接在下面（已经在文件名结果里的笔记不重复列）；之后继续改输入，这一层一直开着，直到面板关掉
 //   · 正文结果已经在面板里时再按 Tab：打开 Obsidian 自带的全局搜索（⌘⇧F）接着搜，面板关掉
-const { Plugin, Modal, MarkdownView } = require("obsidian");
+// 限定范围的搜索（三条命令，快捷键默认 ⌘⇧O / ⌘⇧M / ⌘⇧K，可在设置里改；面板开着时按同样的键切换范围，再按一次取消）：
+//   · Wiki 条目：只在 Wiki/ 下「（wiki）」页里搜，文件名 + 正文
+//   · 书签：只在书签里的笔记（含书签分组、书签文件夹里的笔记）里搜，文件名 + 正文
+//   · 卡片：搜 Flashcards 插件认作卡片的块：带 #card（含 -reverse、/reverse、-reminder）的，或有挖空（==高亮== / {{c1::…}}）的；
+//     规则照 Flashcards：列表项、段落、标题都算一块，引用块和代码块里的不算。没输入时按日期从新到旧列出；↵ 跳到那一块
+//   · 输入框前面有范围标签，点 × 或在空输入框里按 ⌫ 回到普通文件搜索
+const { Plugin, Modal, MarkdownView, Notice } = require("obsidian");
 
 const PALETTE_CLS = "better-command-palette";
 const HINT = "Open in split view";
@@ -23,6 +29,77 @@ const JOURNAL_RE = /^日记\/(\d{4})_(\d{2})_(\d{2})\.md$/;
 const SNIPPET_LEN = 90;
 // 和 journal-edit-mode 同一套日记命名：这些笔记直接以编辑模式打开，免得它再切模式、把光标恢复到上次的位置
 const JOURNAL_NAME_RE = /^\d{4}[_-]\d{1,2}[_-]\d{1,2}$/;
+const BCP_FILE_SEARCH = "obsidian-better-command-palette:open-better-commmand-palette-file-search";
+const WIKI_DIR = "Wiki/";
+const SCOPES = {
+	wiki: { label: "Wiki 条目", name: "文件搜索：Wiki 条目", hotkey: { modifiers: ["Mod", "Shift"], key: "O" }, empty: "Wiki 里没有匹配的条目", placeholder: "在 Wiki 条目里搜索（文件名和正文）" },
+	bookmarks: { label: "书签", name: "文件搜索：书签里的笔记", hotkey: { modifiers: ["Mod", "Shift"], key: "M" }, empty: "书签里没有匹配的笔记", placeholder: "在书签里的笔记里搜索（文件名和正文）" },
+	cards: { label: "卡片", name: "文件搜索：#card 和挖空卡片", hotkey: { modifiers: ["Mod", "Shift"], key: "K" }, empty: "没有匹配的卡片", placeholder: "搜索 #card 和挖空卡片（正面、答案、文件名）" },
+};
+const CARD_LIMIT = 50;
+const CARD_TAG_RE = /(?:^|\s)#card(-reminder|-reverse|\/reverse)?(?![\w\-\/])/;
+const CARD_TAG_ALL_RE = /(?:^|\s)#card(?:-reminder|-reverse|\/reverse)?(?![\w\-\/])/g;
+const CLOZE_RE = /==[^=\n]+==|\{\{c\d+::/;
+const CLOZE_SPLIT_RE = /(==[^=\n]+==|\{\{c\d+::[\s\S]*?\}\})/;
+const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(\[.\]\s+)?/;
+const ANCHOR_END_RE = /\s*\^[A-Za-z0-9-]+\s*$/;
+const SYNCED_RE = /\^(q-[a-z0-9]{4}|\d{13})\s*$/;
+const MOD_SYM = { Mod: "⌘", Ctrl: "⌃", Meta: "⌘", Alt: "⌥", Shift: "⇧" };
+const fmtHotkey = (h) => [...h.modifiers.map((m) => MOD_SYM[m] || m), h.key.length === 1 ? h.key.toUpperCase() : h.key].join("");
+// BCP 的文件条目：id 是路径，别名条目是「别名:路径」
+const itemPath = (it) => (it.id.includes(":") ? it.id.slice(it.id.lastIndexOf(":") + 1) : it.id);
+// 卡片预览去掉 Markdown 记号：[[页|别名]] → 别名，[字](网址) → 字，加粗 / 斜体记号去掉；==挖空== 留着
+const plainMd = (s) => s
+	.replace(/^#{1,6}\s+/, "")
+	.replace(/!?\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+	.replace(/!?\[\[([^\]]+)\]\]/g, (m, t) => t.replace(/#\^?/, " > "))
+	.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+	.replace(/(\*\*|__)(.+?)\1/g, "$2")
+	.replace(/\s+/g, " ")
+	.trim();
+
+// 按 Flashcards 插件的规则找卡片：列表项（连同它的续行）、段落、标题各算一块；引用块、代码块跳过
+function parseCards(text) {
+	const lines = text.split("\n");
+	let i = 0;
+	if (lines[0] === "---") { i = 1; while (i < lines.length && lines[i] !== "---") i++; i++; }
+	const units = [];
+	let cur = null, fence = false;
+	const indentOf = (s) => s.match(/^\s*/)[0].replace(/\t/g, "    ").length;
+	for (; i < lines.length; i++) {
+		const l = lines[i], t = l.trim();
+		if (/^(```|~~~)/.test(t)) { fence = !fence; cur = null; continue; }
+		if (fence) continue;
+		if (!t) { cur = null; continue; }
+		// 单独一行的块 id：挂在上一块上（Obsidian 也是这么算的），^q-xxxx 说明已同步到 Anki
+		if (/^\^[A-Za-z0-9-]+$/.test(t)) { if (SYNCED_RE.test(t) && units.length) units[units.length - 1].synced = true; cur = null; continue; }
+		const m = l.match(LIST_RE);
+		if (m) { cur = { line: i, indent: indentOf(l), list: true, lines: [l.slice(m[0].length)] }; units.push(cur); continue; }
+		if (/^#{1,6}\s/.test(t)) { cur = null; units.push({ line: i, indent: 0, lines: [t.replace(/^#+\s+/, "")] }); continue; }
+		if (cur) { cur.lines.push(t); continue; }
+		cur = { line: i, indent: indentOf(l), lines: [t], quote: t.startsWith(">") };
+		units.push(cur);
+	}
+	const cards = [];
+	units.forEach((u, k) => {
+		if (u.quote) return;
+		const raw = u.lines.join("\n");
+		const bare = raw.replace(/`[^`\n]*`/g, "");
+		const tag = bare.match(CARD_TAG_RE);
+		if (!tag && !CLOZE_RE.test(bare)) return;
+		const kind = tag ? ({ "-reverse": "反转", "/reverse": "反转", "-reminder": "提醒" }[tag[1]] || "#card") : "挖空";
+		const synced = !!u.synced || u.lines.some((x) => SYNCED_RE.test(x));
+		const clean = (ls) => plainMd(ls.map((x) => x.replace(ANCHOR_END_RE, "").replace(CARD_TAG_ALL_RE, "")).join(" "));
+		const front = clean(u.lines);
+		// 答案预览：#card 列表项的前两个子项
+		const kids = [];
+		if (u.list) for (let j = k + 1; j < units.length && units[j].indent > u.indent && kids.length < 2; j++) {
+			if (units[j].list) kids.push(clean(units[j].lines));
+		}
+		cards.push({ line: u.line, kind, synced, front, answer: kids.join("；") });
+	});
+	return cards;
+}
 
 // 和 leaf 同一个窗口里现在有几栏，以及最右边一栏的标签栏（那一栏上下又分过的，取最近用过的那格）
 function columnsOf(ws, leaf) {
@@ -41,15 +118,19 @@ function columnsOf(ws, leaf) {
 module.exports = class PaletteSplitOpen extends Plugin {
 	onload() {
 		const plugin = this;
-		this.textCache = new Map();   // path → { mtime, size, low }
+		this.textCache = new Map();   // path → { mtime, size, low, cards }
+		this.pendingScope = null;
 		this.app.workspace.onLayoutReady(() => { this.warmTimer = window.setTimeout(() => this.fillCache(), 8000); });
 		this.register(() => window.clearTimeout(this.warmTimer));
+		for (const [key, s] of Object.entries(SCOPES)) {
+			this.addCommand({ id: `search-${key}`, name: s.name, hotkeys: [s.hotkey], callback: () => this.openScoped(key) });
+		}
 		const orig = Modal.prototype.open;
 		const patched = function (...args) {
 			if (this.modalEl?.hasClass(PALETTE_CLS)) {
 				if (!this.__splitOpen) plugin.enhance(this);
-				this.__csLayer = false;   // 每次打开面板都从只搜文件名开始
-				this.__csShown = false;
+				plugin.setScope(this, plugin.pendingScope, false);   // 每次打开面板都从只搜文件名开始（除非是范围搜索命令打开的）
+				plugin.pendingScope = null;
 			}
 			return orig.apply(this, args);
 		};
@@ -58,6 +139,7 @@ module.exports = class PaletteSplitOpen extends Plugin {
 	}
 
 	enhance(palette) {
+		const plugin = this;
 		palette.__splitOpen = true;
 		const isFiles = () => palette.currentAdapter && palette.currentAdapter === palette.fileAdapter;
 
@@ -76,9 +158,9 @@ module.exports = class PaletteSplitOpen extends Plugin {
 			evt.preventDefault();
 			const q = this.queryOf(palette);
 			if (!q) return false;
-			if (palette.__csShown) {
+			if (palette.__csShown || palette.__scope === "cards") {
 				palette.close();
-				this.openGlobalSearch(q);
+				this.openGlobalSearch(this.globalQuery(palette, q));
 			} else {
 				palette.__csLayer = true;
 				this.scheduleContentSearch(palette, 0);
@@ -101,12 +183,119 @@ module.exports = class PaletteSplitOpen extends Plugin {
 					tab.createSpan({ cls: "prompt-instruction-command", text: "⇥" });
 					tab.createSpan({ text: CS_HINT });
 					box.insertBefore(tab, item.nextSibling);
+					const keys = Object.keys(SCOPES).map((k) => plugin.scopeHotkeys(k)[0]).filter(Boolean);
+					if (keys.length) {
+						const sc = box.createDiv({ cls: "prompt-instruction pso-hint" });
+						sc.createSpan({ cls: "prompt-instruction-command", text: keys.map(fmtHotkey).join(" ") });
+						sc.createSpan({ text: Object.values(SCOPES).map((s) => s.label).join(" / ") });
+						box.insertBefore(sc, tab.nextSibling);
+					}
 				}
 			}
+			plugin.renderScope(this);
 			return r;
 		};
+
+		// 范围标签：放在输入框前面
+		const chip = createDiv({ cls: "pso-scope" });
+		chip.createSpan({ cls: "pso-scope-label" });
+		const x = chip.createSpan({ cls: "pso-scope-x", text: "×" });
+		x.addEventListener("mousedown", (e) => { e.preventDefault(); this.setScope(palette, null); });
+		palette.inputEl.parentElement.insertBefore(chip, palette.inputEl);
+		palette.__scopeEl = chip;
+
+		// 面板里按范围命令的快捷键：切到这个范围，已经是这个范围就取消
+		for (const key of Object.keys(SCOPES)) {
+			for (const h of this.scopeHotkeys(key)) {
+				palette.scope.register(h.modifiers, h.key, (evt) => {
+					evt.preventDefault();
+					this.setScope(palette, palette.__scope === key ? null : key);
+					return false;
+				});
+			}
+		}
+		// 空输入框里按 ⌫：先退出范围，不删前缀、不关面板
+		palette.inputEl.addEventListener("keydown", (evt) => {
+			if (evt.key !== "Backspace" || !palette.__scope || evt.metaKey || evt.altKey) return;
+			if (!isFiles() || this.queryOf(palette) !== "" || palette.inputEl.selectionStart !== palette.inputEl.value.length) return;
+			evt.preventDefault();
+			evt.stopPropagation();
+			this.setScope(palette, null);
+		});
+
+		// 文件名候选只留范围里的笔记；卡片范围不要文件名候选（结果全是卡片）
+		const adapter = palette.fileAdapter;
+		const origSorted = adapter.getSortedItems;
+		adapter.getSortedItems = function (...args) {
+			const items = origSorted.apply(this, args);
+			if (!palette.__scope) return items;
+			if (palette.__scope === "cards") return [];
+			return items.filter((it) => palette.__scopePaths.has(itemPath(it)));
+		};
+
 		palette.updateInstructions();
 		this.hookContentSearch(palette, isFiles);
+	}
+
+	// ---------- 限定范围 ----------
+	scopeHotkeys(key) {
+		const id = `${this.manifest.id}:search-${key}`;
+		const hm = this.app.hotkeyManager;
+		return (hm.getHotkeys(id) || hm.getDefaultHotkeys(id) || []).filter((h) => h && h.key);
+	}
+
+	openScoped(key) {
+		if (!this.app.commands.findCommand(BCP_FILE_SEARCH)) { new Notice("需要先启用 Better Command Palette"); return; }
+		this.pendingScope = key;
+		try { this.app.commands.executeCommandById(BCP_FILE_SEARCH); } finally { this.pendingScope = null; }
+	}
+
+	scopePaths(key) {
+		const files = this.app.vault.getMarkdownFiles();
+		if (key === "wiki") return new Set(files.filter((f) => f.path.startsWith(WIKI_DIR) && f.basename.endsWith("（wiki）")).map((f) => f.path));
+		if (key === "bookmarks") {
+			const out = new Set();
+			const bm = this.app.internalPlugins.getPluginById("bookmarks");
+			const walk = (items) => {
+				for (const it of items || []) {
+					if (it.type === "file" && it.path) out.add(it.path);
+					else if (it.type === "folder" && it.path) files.forEach((f) => { if (f.path.startsWith(it.path + "/")) out.add(f.path); });
+					else if (it.type === "group") walk(it.items);
+				}
+			};
+			walk(bm && bm.enabled && bm.instance ? bm.instance.items : []);
+			return out;
+		}
+		return null;
+	}
+
+	// refresh = false：面板还没打开（open 之前调用），交给面板自己的 onOpen 去搜
+	setScope(palette, key, refresh = true) {
+		key = key && SCOPES[key] ? key : null;
+		palette.__scope = key;
+		palette.__scopePaths = key ? this.scopePaths(key) : null;
+		palette.__csLayer = !!key && key !== "cards";   // Wiki 和书签：文件名和正文一起搜
+		palette.__csShown = false;
+		palette.__csEmpty = key ? SCOPES[key].empty : (palette.fileAdapter.emptyStateText || "No matching files.");
+		if (refresh) palette.emptyStateText = key === "cards" ? "正在读取卡片…" : palette.__csEmpty;
+		palette.setPlaceholder(key ? SCOPES[key].placeholder : "Select a command");
+		this.renderScope(palette);
+		if (!refresh) return;
+		const prefix = palette.plugin.settings.fileSearchPrefix;
+		const q = palette.inputEl.value;
+		if (!q.startsWith(prefix)) palette.inputEl.value = prefix + palette.currentAdapter.cleanQuery(q);
+		palette.lastQuery = null;   // 输入没变也让面板重新搜一遍
+		palette.currentSuggestions = [];
+		palette.updateSuggestions();
+		palette.inputEl.focus();
+	}
+
+	renderScope(palette) {
+		const chip = palette.__scopeEl;
+		if (!chip) return;
+		const on = !!palette.__scope && palette.currentAdapter === palette.fileAdapter;
+		chip.toggleClass("is-shown", on);
+		if (on) chip.querySelector(".pso-scope-label").setText(SCOPES[palette.__scope].label);
 	}
 
 	// ---------- 文件名没匹配 → 全库内容搜索 ----------
@@ -118,13 +307,16 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		const origReceived = palette.receivedSuggestions;
 		palette.receivedSuggestions = function (...args) {
 			origReceived.apply(this, args);
-			if (isFiles()) plugin.scheduleContentSearch(palette);
+			if (!isFiles()) return;
+			if (palette.__scope === "cards") plugin.scheduleCardSearch(palette);
+			else plugin.scheduleContentSearch(palette);
 		};
 
 		const origRender = adapter.renderSuggestion;
 		adapter.renderSuggestion = function (item, content, aux) {
 			if (!item || !item.__cs) return origRender.call(this, item, content, aux);
-			plugin.renderHit(item, content, aux);
+			if (item.__cs.card) plugin.renderCard(item, content, aux);
+			else plugin.renderHit(item, content, aux);
 		};
 
 		const origChoose = adapter.onChooseSuggestion;
@@ -152,14 +344,14 @@ module.exports = class PaletteSplitOpen extends Plugin {
 			palette.updateSuggestions();
 		}
 		palette.__csTimer = window.setTimeout(async () => {
-			const hits = await this.contentSearch(q, new Set(files.map((x) => x.id)));
+			const hits = await this.contentSearch(q, new Set(files.map((x) => x.id)), palette.__scopePaths);
 			if (token !== palette.__csToken || !palette.modalEl.isConnected) return;   // 期间又改了输入，或面板关了
 			const Item = palette.fileAdapter.allItems[0] && palette.fileAdapter.allItems[0].constructor;
 			if (!Item) return;
 			const found = hits.map((h) => Object.assign(new Item(h.path, h.path, []), { __cs: h }));
 			if (found.length && files.length) found[0].__cs.section = q;   // 文件名结果下面的第一条正文结果带一个小标题
 			const items = [...files, ...found];
-			if (items.length) items.push(Object.assign(new Item("__pso_global_search__", "", []), { __cs: { panel: true, q, none: !found.length } }));
+			if (items.length) items.push(Object.assign(new Item("__pso_global_search__", "", []), { __cs: { panel: true, q, gq: this.globalQuery(palette, q), none: !found.length } }));
 			const sel = palette.chooser?.selectedItem ?? 0;
 			palette.currentSuggestions = items;
 			palette.limit = items.length;
@@ -178,16 +370,19 @@ module.exports = class PaletteSplitOpen extends Plugin {
 			await Promise.all(todo.slice(i, i + 100).map(async (f) => {
 				try {
 					const text = await this.app.vault.cachedRead(f);
-					this.textCache.set(f.path, { mtime: f.stat.mtime, size: f.stat.size, low: text.toLowerCase() });
+					let cards = [];
+					try { cards = parseCards(text); } catch (e) { /* 解析不了的当作没有卡片 */ }
+					this.textCache.set(f.path, { mtime: f.stat.mtime, size: f.stat.size, low: text.toLowerCase(), cards });
 				} catch (e) { /* 读不了的跳过 */ }
 			}));
 		}
 	}
 
-	async contentSearch(q, exclude) {
+	async contentSearch(q, exclude, only) {
 		const terms = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
 		if (!terms.length) return [];
-		const files = this.app.vault.getMarkdownFiles();
+		let files = this.app.vault.getMarkdownFiles();
+		if (only) files = files.filter((f) => only.has(f.path));
 		await this.fillCache(files);
 		const hits = [];
 		for (const f of files) {
@@ -215,12 +410,101 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		return top;
 	}
 
+	// ---------- 卡片 ----------
+	scheduleCardSearch(palette, delay = 120) {
+		window.clearTimeout(palette.__csTimer);
+		const token = ++palette.__csToken;
+		const q = this.queryOf(palette);
+		palette.__csShown = false;
+		palette.__csTimer = window.setTimeout(async () => {
+			const res = await this.cardSearch(q);
+			if (token !== palette.__csToken || !palette.modalEl.isConnected || palette.__scope !== "cards") return;
+			const Item = palette.fileAdapter.allItems[0] && palette.fileAdapter.allItems[0].constructor;
+			if (!Item) return;
+			const items = res.list.map((h) => Object.assign(new Item(`${h.path}#L${h.line}`, h.path, []), { __cs: h }));
+			if (items.length) {
+				const more = res.total > items.length ? `，先列 ${items.length} 张` : "";
+				items[0].__cs.section = q ? `${res.total} 张卡片含「${q}」${more}` : `共 ${res.total} 张卡片，新的在前${more}`;
+			}
+			palette.currentSuggestions = items;
+			palette.limit = items.length;
+			palette.emptyStateText = q ? `没有含「${q}」的卡片` : "库里还没有卡片";
+			palette.__csShown = !!q;
+			palette.updateSuggestions();
+		}, delay);
+	}
+
+	async cardSearch(q) {
+		const terms = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
+		const files = this.app.vault.getMarkdownFiles();
+		await this.fillCache(files);
+		const hits = [];
+		for (const f of files) {
+			const c = this.textCache.get(f.path);
+			if (!c || !c.cards || !c.cards.length) continue;
+			const m = f.path.match(JOURNAL_RE);
+			const time = m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : f.stat.ctime;
+			for (const card of c.cards) {
+				let inFront = true;
+				if (terms.length) {
+					const front = card.front.toLowerCase();
+					const hay = `${front}\n${card.answer.toLowerCase()}\n${f.path.toLowerCase()}`;
+					if (!terms.every((t) => hay.includes(t))) continue;
+					inFront = terms.every((t) => front.includes(t));
+				}
+				hits.push(Object.assign({ card: true, path: f.path, file: f, terms, inFront, time }, card));
+			}
+		}
+		hits.sort((a, b) => (b.inFront - a.inFront) || (b.time - a.time) || a.path.localeCompare(b.path, "zh") || (a.line - b.line));
+		return { total: hits.length, list: hits.slice(0, CARD_LIMIT) };
+	}
+
+	renderCard(item, content, aux) {
+		const h = item.__cs;
+		aux.empty();
+		if (h.section) content.createDiv({ cls: "suggestion-note pso-section", text: `── ${h.section} ──` });
+		const title = content.createDiv({ cls: "suggestion-title pso-card-front" });
+		// 挖空的部分单独标出来；被截断成半个的挖空就照原样显示
+		for (const part of this.snippet(h.front, h.terms).split(CLOZE_SPLIT_RE)) {
+			if (!part) continue;
+			if (CLOZE_SPLIT_RE.test(part) && (part.startsWith("==") ? part.endsWith("==") : part.endsWith("}}"))) {
+				const inner = part.startsWith("==") ? part.slice(2, -2) : part.replace(/^\{\{c\d+::/, "").replace(/(::[\s\S]*)?\}\}$/, "");
+				this.appendMarked(title.createSpan({ cls: "pso-cloze" }), inner, h.terms);
+			} else this.appendMarked(title, part.replace(/==/g, ""), h.terms);
+		}
+		const note = content.createDiv({ cls: "suggestion-note pso-snippet" });
+		if (h.answer) { this.appendMarked(note, this.snippet(h.answer, h.terms), h.terms); note.createSpan({ cls: "pso-card-sep", text: " · " }); }
+		note.createSpan({ cls: "pso-card-file", text: h.file.basename });
+		aux.createSpan({
+			cls: "suggestion-flair pso-card-kind" + (h.synced ? "" : " is-unsynced"),
+			text: h.kind,
+			attr: { "aria-label": h.synced ? "已同步到 Anki" : "还没同步到 Anki" },
+		});
+	}
+
+	// 把 s 写进 el，terms 里的词加高亮
+	appendMarked(el, s, terms) {
+		const low = s.toLowerCase();
+		const marks = [];
+		for (const t of terms) for (let i = low.indexOf(t); i >= 0; i = low.indexOf(t, i + t.length)) marks.push([i, i + t.length]);
+		marks.sort((a, b) => a[0] - b[0]);
+		let pos = 0;
+		for (const [a, b] of marks) {
+			if (a < pos) continue;
+			if (a > pos) el.appendText(s.slice(pos, a));
+			el.createSpan({ cls: "suggestion-highlight", text: s.slice(a, b) });
+			pos = b;
+		}
+		el.appendText(s.slice(pos));
+	}
+
 	// 一行摘要：去掉列表记号，太长就以第一个命中词为中心截一段
 	snippet(line, terms) {
 		line = line.replace(/^([-*+]|\d+[.)])\s+(\[.\]\s+)?/, "");
 		if (line.length <= SNIPPET_LEN) return line;
 		const low = line.toLowerCase();
-		const at = Math.max(0, Math.min(...terms.map((t) => { const i = low.indexOf(t); return i < 0 ? Infinity : i; })));
+		const first = Math.min(...terms.map((t) => { const i = low.indexOf(t); return i < 0 ? Infinity : i; }));
+		const at = Number.isFinite(first) ? first : 0;   // 没有命中词（或没输入）就从头显示
 		const start = Math.max(0, Math.min(at - 20, line.length - SNIPPET_LEN));
 		return (start > 0 ? "…" : "") + line.slice(start, start + SNIPPET_LEN) + (start + SNIPPET_LEN < line.length ? "…" : "");
 	}
@@ -236,25 +520,13 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		}
 		if (h.section) content.createDiv({ cls: "suggestion-note pso-section", text: `── 正文里含「${h.section}」的笔记 ──` });
 		content.createDiv({ cls: "suggestion-title", text: h.path.replace(/\.md$/, "") });
-		const note = content.createDiv({ cls: "suggestion-note pso-snippet" });
-		const s = h.snippet || "", low = s.toLowerCase();
-		const marks = [];
-		for (const t of h.terms) for (let i = low.indexOf(t); i >= 0; i = low.indexOf(t, i + t.length)) marks.push([i, i + t.length]);
-		marks.sort((a, b) => a[0] - b[0]);
-		let pos = 0;
-		for (const [a, b] of marks) {
-			if (a < pos) continue;
-			if (a > pos) note.appendText(s.slice(pos, a));
-			note.createSpan({ cls: "suggestion-highlight", text: s.slice(a, b) });
-			pos = b;
-		}
-		note.appendText(s.slice(pos));
+		this.appendMarked(content.createDiv({ cls: "suggestion-note pso-snippet" }), h.snippet || "", h.terms);
 		aux.createSpan({ cls: "suggestion-flair", text: `L${h.line + 1}` });
 	}
 
 	async openHit(palette, item, evt) {
 		const h = item.__cs;
-		if (h.panel) return this.openGlobalSearch(h.q);
+		if (h.panel) return this.openGlobalSearch(h.gq || h.q);
 		const mod = palette.plugin && palette.plugin.settings && palette.plugin.settings.openInNewTabMod;
 		const newLeaf = !!evt && (mod === "Shift" ? evt.shiftKey : (evt.metaKey || evt.ctrlKey));
 		const ws = this.app.workspace;
@@ -282,6 +554,11 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		const ed = place();
 		// 别的插件切模式时可能把光标恢复到上次的位置：过一会儿看一眼，被挪走了就再放回来
 		if (ed) window.setTimeout(() => { const e = leaf.view && leaf.view.editor; if (e && e.getCursor("from").line !== h.line && !e.somethingSelected()) place(); }, 250);
+	}
+
+	// 交给全局搜索时带上范围：Wiki 能用 path: 表达；书签和卡片没法用搜索语法表达，只带关键词
+	globalQuery(palette, q) {
+		return palette.__scope === "wiki" ? `path:"${WIKI_DIR}" ${q}` : q;
 	}
 
 	openGlobalSearch(q) {

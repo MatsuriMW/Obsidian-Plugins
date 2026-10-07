@@ -40,6 +40,8 @@ const CONTEXT = {
 	"palette-split-open": [
 		{ keys: ["Mod+Alt+Enter"], name: "在右侧拆分打开（最多 3 栏）", when: "⌘O 文件搜索面板里" },
 		{ keys: ["Tab"], name: "加一层全文搜索；再按一次打开全局搜索", when: "⌘O 文件搜索面板里" },
+		{ keys: ["Mod+Shift+O", "Mod+Shift+M", "Mod+Shift+K"], name: "切换搜索范围：Wiki 条目 / 书签 / 卡片（再按一次取消；键位跟着同名命令改）", when: "Better Command Palette 面板里" },
+		{ keys: ["Backspace"], name: "退出搜索范围，回到普通文件搜索", when: "范围搜索、输入框为空时" },
 	],
 	"llm-wiki": [{ keys: ["Mod+Enter"], name: "提交问题", when: "Wiki 面板提问框里" }],
 	"done-to-top": [{ keys: ["/明天"], name: "把光标所在块发送到明天的日记", when: "编辑器里输入" }],

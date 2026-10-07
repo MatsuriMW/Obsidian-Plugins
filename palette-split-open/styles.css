@@ -1,0 +1,56 @@
+/* 范围标签：Wiki 条目 / 书签 / 卡片，放在输入框前面 */
+.better-command-palette .prompt-input-container:has(.pso-scope.is-shown) {
+	display: flex;
+	align-items: center;
+}
+.better-command-palette .pso-scope {
+	display: none;
+	flex: none;
+	align-items: center;
+	gap: 4px;
+	margin-left: var(--size-4-3);
+	padding: 2px 6px 2px 8px;
+	border-radius: var(--radius-s);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	font-size: var(--font-ui-small);
+	white-space: nowrap;
+}
+.better-command-palette .pso-scope.is-shown {
+	display: inline-flex;
+}
+.better-command-palette .pso-scope-x {
+	cursor: pointer;
+	opacity: 0.75;
+	padding: 0 2px;
+}
+.better-command-palette .pso-scope-x:hover {
+	opacity: 1;
+}
+.better-command-palette .prompt-input-container:has(.pso-scope.is-shown) .prompt-input {
+	flex: 1;
+	min-width: 0;
+}
+
+/* 卡片结果：标题不用 flex，挖空的字才能和前后文排在同一行里 */
+.better-command-palette .suggestion-title.pso-card-front {
+	display: block;
+}
+.better-command-palette .pso-cloze {
+	border-bottom: 1.5px solid var(--text-accent);
+	color: var(--text-accent);
+	padding: 0 1px;
+}
+.better-command-palette .pso-card-file {
+	color: var(--text-faint);
+}
+.better-command-palette .pso-card-sep {
+	color: var(--text-faint);
+}
+.better-command-palette .pso-card-kind {
+	white-space: nowrap;
+}
+.better-command-palette .pso-card-kind.is-unsynced {
+	opacity: 0.55;
+	font-style: italic;
+}

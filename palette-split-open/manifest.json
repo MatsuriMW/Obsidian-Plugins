@@ -1,9 +1,9 @@
 {
 	"id": "palette-split-open",
 	"name": "Palette Enhancements",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"minAppVersion": "1.0.0",
-	"description": "Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。",
+	"description": "Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索；⌘⇧O / ⌘⇧M / ⌘⇧K 一键只搜 Wiki 条目、书签里的笔记、#card 和挖空卡片。",
 	"author": "马自立",
 	"isDesktopOnly": true
 }
