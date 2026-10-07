@@ -15,7 +15,7 @@
 ### 知识库与写作
 
 - **第二大脑**（[`second-brain`](second-brain)）：每日回顾（那年今日 / 随机旧块 / 孤岛笔记）；写作模式按光标所在段落实时找库里意思相近的块（本机 Ollama 向量 + BM25 混合）；每周生成库周报。
-- **Backlink Defaults**（[`backlink-defaults`](backlink-defaults)）：反链面板按关系紧密度排页面，日记按日期分月 / 分年折叠，命中块带 Roam 式面包屑。
+- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：反链与导出增强。反链面板按关系紧密度排页面，日记按日期分月 / 分年折叠，命中块带 Roam 式面包屑；导出 PDF 时可以附上「链接到当前文件」的内容，并选字体、强调色。
 - **LLM Wiki**（[`llm-wiki`](llm-wiki)）：左侧栏的 Wiki 面板，按主题列页面、提示哪些新笔记还没摄入，一键让本机 Claude 摄入或回答问题。
 - **Outline Block**（[`outline-block`](outline-block)）：⌘⌥L 把一段长文整理成层级列表并加双链，层级按反链面板的逻辑来定；先预览再替换。
 - **块引用增强**（[`block-ref-plus`](block-ref-plus)）：仿思源，`[[页#^id]]` 显示被引用块的当前内容，被引用的块旁边显示引用次数。
