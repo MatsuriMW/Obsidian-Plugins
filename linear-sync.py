@@ -9,7 +9,7 @@
 #   （Linear → Settings → Security & access → Personal API keys 生成，然后：
 #    security add-generic-password -a "$USER" -s linear-api-key -w '粘贴 key'）
 # 用法：./linear-sync.py [提交，默认 HEAD] [--dry-run]
-import json, os, re, subprocess, sys, urllib.error, urllib.request
+import json, os, re, ssl, subprocess, sys, urllib.error, urllib.request
 
 TEAM_KEY = "MAT"
 PROJECT = "Obsidian-Plugins"
@@ -30,6 +30,25 @@ def api_key():
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def ssl_context():
+    # 根证书：sync.sh 是 zsh 脚本，找到的 python3 可能是 python.org 装的那个（/usr/local/bin/python3），
+    # 它不跑 Install Certificates.command 就没有根证书，连 HTTPS 会 CERTIFICATE_VERIFY_FAILED。
+    # 所以自己找：SSL_CERT_FILE > certifi > macOS 自带的 /etc/ssl/cert.pem > Python 默认
+    if os.environ.get("SSL_CERT_FILE"):
+        return ssl.create_default_context(cafile=os.environ["SSL_CERT_FILE"])
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    if os.path.exists("/etc/ssl/cert.pem"):
+        return ssl.create_default_context(cafile="/etc/ssl/cert.pem")
+    return ssl.create_default_context()
+
+
+SSL_CTX = ssl_context()
+
+
 def gql(key, query, variables=None):
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
@@ -37,7 +56,7 @@ def gql(key, query, variables=None):
         headers={"Content-Type": "application/json", "Authorization": key},
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=SSL_CTX) as resp:
             out = json.load(resp)
     except urllib.error.HTTPError as e:   # 查询写错时 Linear 回 400，错误原因在响应体里
         try:
