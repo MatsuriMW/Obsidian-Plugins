@@ -902,6 +902,15 @@ module.exports = class BacklinkDefaults extends Plugin {
       }
     });
     ta.addEventListener("input", grow);
+    // 长行会折行：面板宽度变了（拖侧栏、开关限制行宽）就重新算高度；编辑框移出页面后自动停掉
+    if (typeof ResizeObserver === "function") {
+      let lastW = 0;
+      const ro = new ResizeObserver(() => {
+        if (!ta.isConnected) { ro.disconnect(); return; }
+        if (ta.clientWidth !== lastW) { lastW = ta.clientWidth; grow(); }
+      });
+      ro.observe(ta);
+    }
     grow();
     ta.focus();
   }

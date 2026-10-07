@@ -7,6 +7,9 @@
 //   · 选中状态下按 ↑ / ↓：选中上一块 / 下一块，保持选中状态，不回到编辑（顺序和 Logseq 一样：
 //     ↓ 先进第一个子项，↑ 先到上面最近的那一块，可能是上一个兄弟的最后一个子项）；
 //     中间隔着普通段落、标题时跳过去，接着找下一个列表项
+//   · 选中状态很「粘」：选中后按 Tab / ⇧Tab 改层级、⌘⇧↑↓（Bullet）或 ⌥↑↓ 上下挪动，
+//     挪完仍然是整块选中（按块首行的内容重新找到它）；只有打字、删除、粘贴会替换掉这一块并退出
+//   · 选区是反向的（光标在块首行开头）：Bullet 等插件按光标所在的列表项操作，这样操作的就是选中的这一块
 //   · 方向键要用最高优先级：Obsidian 自己在实时预览里给 ↑↓ 挂了同级（high）的处理，
 //     有选区时会把选区收成光标并吞掉按键，插件的同级处理排在它后面，根本轮不到
 //   · 选中状态下按 ⇧↑ / ⇧↓：把上一块 / 下一块加进选区
@@ -28,7 +31,7 @@
 //   · 没有选中文字、或者选中的是 Esc 选出来的整块时，不接管
 const { Plugin } = require("obsidian");
 const { keymap, EditorView } = require("@codemirror/view");
-const { Prec, EditorSelection, EditorState } = require("@codemirror/state");
+const { Prec, EditorSelection, EditorState, StateField, StateEffect } = require("@codemirror/state");
 
 const ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])(?:[ \t]|$)/;
 const TAB_WIDTH = 4;
@@ -132,16 +135,36 @@ function nextItemAfter(getLine, lineCount, after) {
 	return -1;
 }
 
+// 列表项那一行的内容（去掉缩进、列表符号、编号、复选框），用来在改层级 / 挪动之后重新认出这一块
+const keyOf = (line) => line.replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]*(?:\[.\][ \t]+)?/, "").trim();
+
+// 第 start..end 行（从 0 开始）对应的字符范围：从首行开头到末行之后那一行的开头（带上换行）
+function rangeOf(doc, start, end) {
+	return { from: doc.line(start + 1).from, to: end + 1 < doc.lines ? doc.line(end + 2).from : doc.length };
+}
+// 选中整块用反向选区：光标（head）在块首行开头
+const blockSelection = (doc, start, end) => { const r = rangeOf(doc, start, end); return EditorSelection.single(r.to, r.from); };
+
+// 「Esc 选中整块」的状态放在编辑器状态里：{ start, end, key, multi, anchor, head, moved }
+//   start / end：块的首行和末行；key：首行内容；multi：⇧↑↓ 扩选过（不止一棵子树）
+//   anchor / head：按 Esc 之前原来的光标；moved：选中后有没有用方向键移动过
+const setBlock = StateEffect.define();
+const blockField = StateField.define({
+	create: () => null,
+	update(val, tr) {
+		for (const e of tr.effects) if (e.is(setBlock)) return e.value;
+		if (!val) return null;
+		if (!tr.docChanged && tr.selection === undefined) return val;   // 文档和选区都没动
+		return null;   // 别的操作改了选区或文档：先退出，能认回来的话 keepBlock 会重新设上
+	},
+});
+
 module.exports = class LogseqEditing extends Plugin {
 	onload() {
 		this.blockLines = blockLines;     // 方便在控制台里测试
-		// view → { from, to, start, end, anchor, head, moved }
-		//   from / to：当前选中的字符范围；start / end：选中的块的首行和末行（行号从 0 开始）
-		//   anchor / head：按 Esc 之前原来的光标；moved：选中后有没有用方向键移动过
-		this.saved = new WeakMap();
-		this.blockByDoc = new WeakMap();      // 文档 → Esc 选中的整块范围，给包裹逻辑判断「选中的是整块」
 		this.beforeCompose = new WeakMap();   // view → 输入法开始组字前的 state
 		this.registerEditorExtension([
+			blockField,
 			Prec.highest(keymap.of([
 				{ key: "Escape", run: (view) => this.onEsc(view) },
 				{ key: "ArrowUp", run: (view) => this.move(view, -1, false) },
@@ -150,6 +173,7 @@ module.exports = class LogseqEditing extends Plugin {
 				{ key: "Shift-ArrowDown", run: (view) => this.move(view, 1, true) },
 				{ key: "Enter", run: (view) => this.edit(view) },
 			])),
+			EditorState.transactionFilter.of((tr) => this.keepBlock(tr)),
 			EditorState.transactionFilter.of((tr) => this.wrapFilter(tr)),
 			EditorView.domEventHandlers({
 				compositionstart: (e, view) => { this.beforeCompose.set(view, view.state); },
@@ -160,24 +184,51 @@ module.exports = class LogseqEditing extends Plugin {
 
 	// ---------- 块选中 ----------
 
-	// 当前处在「Esc 选中整块」状态时返回保存的信息，否则 null
-	active(view) {
-		const s = this.saved.get(view);
-		if (!s) return null;
-		const sel = view.state.selection;
-		if (sel.ranges.length === 1 && sel.main.from === s.from && sel.main.to === s.to) return s;
-		this.saved.delete(view);       // 选区已经被别的操作改了，退出选中状态
-		return null;
+	// state 处在「Esc 选中整块」状态时返回保存的信息，否则 null
+	activeIn(state) {
+		const val = state.field(blockField, false);
+		if (!val) return null;
+		const sel = state.selection, r = rangeOf(state.doc, val.start, val.end);
+		return sel.ranges.length === 1 && sel.main.from === r.from && sel.main.to === r.to ? val : null;
 	}
+	active(view) { return this.activeIn(view.state); }
 
 	// 选中第 start..end 行（行号从 0 开始），记下状态
 	selectLines(view, start, end, extra) {
-		const doc = view.state.doc;
-		const from = doc.line(start + 1).from;
-		const to = end + 1 < doc.lines ? doc.line(end + 2).from : doc.length;
-		this.saved.set(view, { ...extra, from, to, start, end });
-		this.blockByDoc.set(doc, { from, to });
-		view.dispatch({ selection: EditorSelection.single(from, to), scrollIntoView: true });
+		const doc = view.state.doc, getLine = (i) => doc.line(i + 1).text;
+		const multi = end > subtreeEnd(getLine, doc.lines, start);
+		view.dispatch({
+			selection: blockSelection(doc, start, end),
+			effects: setBlock.of({ ...extra, start, end, multi, key: keyOf(getLine(start)) }),
+			scrollIntoView: true,
+		});
+	}
+
+	// 选中状态下别的操作改了文档（改层级、上下挪动……）：按首行内容重新认出这一块，接着整块选中。
+	// 打字、删除、粘贴、拖放、补全 = 这一块被替换掉了，退出
+	keepBlock(tr) {
+		if (!tr.docChanged || tr.effects.some((e) => e.is(setBlock))) return tr;
+		const val = this.activeIn(tr.startState);
+		if (!val) return tr;
+		if (["input.type", "input.paste", "input.drop", "input.complete", "delete"].some((u) => tr.isUserEvent(u))) return tr;
+		const doc = tr.newDoc, getLine = (i) => doc.line(i + 1).text;
+		const old = rangeOf(tr.startState.doc, val.start, val.end);
+		// 先看操作自己设的光标（Bullet 挪动后光标跟着那一块走），再看原来块首在新文档里的位置
+		const cands = [];
+		if (tr.selection) { const m = tr.selection.main; cands.push(m.head, m.anchor); }
+		cands.push(tr.changes.mapPos(old.from, 1), tr.changes.mapPos(old.from, -1));
+		let start = -1;
+		for (const pos of cands) {
+			const it = itemLineFor(getLine, doc.lineAt(Math.max(0, Math.min(pos, doc.length))).number - 1);
+			if (it >= 0 && keyOf(getLine(it)) === val.key) { start = it; break; }
+		}
+		if (start < 0) return tr;
+		let end = subtreeEnd(getLine, doc.lines, start);
+		if (val.multi) {
+			const lastPos = Math.max(0, Math.min(doc.length, tr.changes.mapPos(old.to, -1) - 1));
+			end = Math.max(end, doc.lineAt(lastPos).number - 1);
+		}
+		return [tr, { selection: blockSelection(doc, start, end), effects: setBlock.of({ ...val, start, end }), sequential: true }];
 	}
 
 	onEsc(view) {
@@ -190,11 +241,10 @@ module.exports = class LogseqEditing extends Plugin {
 		// 第二次 Esc：取消选中
 		const prev = this.active(view);
 		if (prev) {
-			this.saved.delete(view);
 			const selection = prev.moved
 				? EditorSelection.cursor(doc.line(prev.start + 1).to)
-				: EditorSelection.single(prev.anchor, prev.head);
-			view.dispatch({ selection });
+				: EditorSelection.single(Math.min(prev.anchor, doc.length), Math.min(prev.head, doc.length));
+			view.dispatch({ selection, effects: setBlock.of(null) });
 			return true;
 		}
 
@@ -205,9 +255,8 @@ module.exports = class LogseqEditing extends Plugin {
 		const b = blockLines(getLine, doc.lines, fromLine, toLine);
 		if (!b) return false;
 
-		const from = doc.line(b.start + 1).from;
-		const to = b.end + 1 < doc.lines ? doc.line(b.end + 2).from : doc.length;
-		if (sel.from === from && sel.to === to) {
+		const r = rangeOf(doc, b.start, b.end);
+		if (sel.from === r.from && sel.to === r.to) {
 			// 已经正好选中这一块（比如别的方式选的）：取消选中，光标放到块首行末尾
 			view.dispatch({ selection: EditorSelection.cursor(doc.line(b.start + 1).to) });
 			return true;
@@ -244,17 +293,13 @@ module.exports = class LogseqEditing extends Plugin {
 	edit(view) {
 		const s = this.active(view);
 		if (!s) return false;
-		this.saved.delete(view);
-		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(s.start + 1).to) });
+		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(s.start + 1).to), effects: setBlock.of(null) });
 		return true;
 	}
 
 	// ---------- 成对符号包裹 ----------
 
-	isBlockSelection(state) {
-		const b = this.blockByDoc.get(state.doc), r = state.selection.main;
-		return !!b && state.selection.ranges.length === 1 && r.from === b.from && r.to === b.to;
-	}
+	isBlockSelection(state) { return !!this.activeIn(state); }
 
 	// 直接输入的字符（英文输入法、中文输入法直接上屏的标点）：在事务生效前改成包裹
 	wrapFilter(tr) {

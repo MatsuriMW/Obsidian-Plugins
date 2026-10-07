@@ -51,10 +51,12 @@
 .search-result-file-match:hover .bd-jump-btn { display: flex; }
 .search-result-file-match.bd-editing .bd-jump-btn { display: none; }
 .search-result-file-match.bd-editing { cursor: auto; white-space: normal; }
+/* 编辑框和渲染出来的那一块一样宽（跟随「限制行宽」），长行自动折行，不横向滚动；字体字号和正文一致 */
 .bd-edit-input {
-  width: 100%; min-height: 3em; resize: vertical;
-  font-family: var(--font-monospace); font-size: var(--font-ui-smaller);
-  line-height: 1.5; tab-size: 4; white-space: pre; overflow-x: auto;
+  display: block; box-sizing: border-box; width: 100%; max-width: 100%; min-height: 3em; resize: vertical;
+  font-family: var(--font-text); font-size: var(--font-text-size);
+  line-height: var(--line-height-normal); tab-size: 4;
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden;
 }
 .bd-edit-bar { display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .bd-edit-hint { margin-right: auto; color: var(--text-faint); font-size: var(--font-ui-smaller); }
