@@ -1,0 +1,9 @@
+{
+	"id": "list-outdent-plain",
+	"name": "List Outdent Plain",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "⌘[ 在已经顶格的列表项上再按一次：去掉列表符号（连同复选框），变成一段顶格的普通文字；它下面的子项跟着往前提一级。不是顶格列表项时照常减少缩进。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

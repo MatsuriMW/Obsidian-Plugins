@@ -52,11 +52,12 @@
 | **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |
 | **List Paste Merge** ([`list-paste-merge`](list-paste-merge)) | 1.0.0 | 在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。 |
 | **看板直达** ([`board-jump`](board-jump)) | 0.1.0 | 一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接 |
-| **Esc Select Block** ([`esc-select-block`](esc-select-block)) | 1.0.0 | 仿 Logseq：在列表里按 Esc 选中光标所在的整块（含所有子项），再按一次取消并回到原来的光标位置。 |
+| **编辑体验 Logseq 化** ([`esc-select-block`](esc-select-block)) | 2.0.0 | 仿 Logseq：Esc 选中光标所在的整块（含所有子项），选中后 ↑↓ 在块之间切换、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文）会把文字包起来而不是替换，连按两次 [ 就是双链。 |
 | **任务状态快切** ([`task-toggle`](task-toggle)) | 0.1.0 | ⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；不写文件、不等保存，可以连按 |
 | **Close Sidebar Files** ([`close-sidebar-files`](close-sidebar-files)) | 1.0.0 | 一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。 |
 | **看板聚焦** ([`board-zoom`](board-zoom)) | 0.1.0 | 从 DataView 看板点开某一条时，自动用 Bullet 插件 zoom in 聚焦到那个列表块。 |
 | **Journal Edit Mode** ([`journal-edit-mode`](journal-edit-mode)) | 1.0.0 | 日记类命名（YYYY_MM_DD）的笔记始终以编辑模式打开。 |
+| **List Outdent Plain** ([`list-outdent-plain`](list-outdent-plain)) | 1.0.0 | ⌘[ 在已经顶格的列表项上再按一次：去掉列表符号（连同复选框），变成一段顶格的普通文字；它下面的子项跟着往前提一级。不是顶格列表项时照常减少缩进。 |
 
 ### 改过的社区插件（改动从多到少）
 

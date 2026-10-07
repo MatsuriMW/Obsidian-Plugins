@@ -7,5 +7,5 @@
   "author": "马自立（改自 Onsi Fakhouri）",
   "isDesktopOnly": false,
   "pinnedFrom": "1.0.0",
-  "localPatch": "Expand Selection：整块列表项选中后继续向下选下一个列表块（nextBulletBlock）。更新插件会丢失这个改动。"
+  "localPatch": "Expand Selection：①整块列表项选中后继续向下选下一个列表块（nextBulletBlock）；②光标在列表块里没贴着字（行尾空格、缩进、列表符号）时直接选中这一块（cursorInBulletBlank）；③找最近的词认中文。更新插件会丢失这些改动。"
 }

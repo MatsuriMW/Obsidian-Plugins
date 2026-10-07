@@ -164,7 +164,8 @@ var Expandomatic = class extends import_obsidian.Plugin {
     const from = posMin(cur.anchor, cur.head);
     const to = posMax(cur.anchor, cur.head);
     if (posEq(from, to)) {
-      const target = (_a = this.nearestWord(editor, from)) != null ? _a : this.nearestSection(editor, from);
+      // 本地改动：光标在列表块里但没贴着字（行尾空格、缩进、列表符号上），直接选中这一块的内容
+      const target = (_a = this.cursorInBulletBlank(editor, from) || this.nearestWord(editor, from)) != null ? _a : this.nearestSection(editor, from);
       if (target) {
         this.selStack.push(cur);
         editor.setSelection(target.anchor, target.head);
@@ -309,20 +310,31 @@ var Expandomatic = class extends import_obsidian.Plugin {
     const r = editor.wordAt(pos);
     return r ? { anchor: r.from, head: r.to } : null;
   }
+  cursorInBulletBlank(editor, pos) {
+    const line = editor.getLine(pos.line);
+    const offset = bulletContentOffset(line);
+    if (offset < 0)
+      return null;
+    if (pos.ch >= offset && editor.wordAt(pos))
+      return null;
+    return this.bulletContent(editor, pos);
+  }
   nearestWord(editor, pos) {
     const w = editor.wordAt(pos);
     if (w)
       return { anchor: w.from, head: w.to };
     const line = editor.getLine(pos.line);
+    // 本地改动：原来是 /\w/，不认中文，光标离中文隔了空格就找不到词
+    const isWordCh = (c) => /[\p{L}\p{N}_]/u.test(c);
     for (let d = 1; d <= line.length; d++) {
       const li = pos.ch - d;
-      if (li >= 0 && /\w/.test(line[li])) {
+      if (li >= 0 && isWordCh(line[li])) {
         const hit = editor.wordAt(mk(pos.line, li));
         if (hit)
           return { anchor: hit.from, head: hit.to };
       }
       const ri = pos.ch + d;
-      if (ri < line.length && /\w/.test(line[ri])) {
+      if (ri < line.length && isWordCh(line[ri])) {
         const hit = editor.wordAt(mk(pos.line, ri));
         if (hit)
           return { anchor: hit.from, head: hit.to };
