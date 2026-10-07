@@ -67,7 +67,7 @@ def main():
     if dry:
         print(f"Linear（演练）：{short} {subject}\n  改到的插件：{', '.join(plugins)}")
         for kind, x in plan:
-            print(f"  {kind} {x}" + (f"（挂提交链接、补标签 {', '.join(plugins)}）" if kind == "关联" else f"：「[{x}] {subject}」Done"))
+            print(f"  {kind} {x}" + ("（挂提交链接、评论；补上标题里那个插件的标签）" if kind == "关联" else f"：「[{x}] {subject}」Done"))
         return
     key = api_key()
     if not key:
@@ -95,9 +95,10 @@ def main():
     link = """mutation($id:String!,$u:String!,$t:String){attachmentLinkURL(issueId:$id,url:$u,title:$t){success}}"""
     if refs:
         for ref in refs:
-            issue = gql(key, "query($id:String!){issue(id:$id){id identifier}}", {"id": ref})["issue"]
+            issue = gql(key, "query($id:String!){issue(id:$id){id identifier title}}", {"id": ref})["issue"]
             gql(key, link, {"id": issue["id"], "u": url, "t": f"{short} {subject}"})
-            for p in plugins:
+            # 一次提交改了好几个插件时，每张卡只补它标题里那个插件的标签
+            for p in [p for p in plugins if f"[{p}]" in issue["title"]]:
                 gql(key, "mutation($id:String!,$l:String!){issueAddLabel(id:$id,labelId:$l){success}}", {"id": issue["id"], "l": label_id(p)})
             gql(key, "mutation($i:CommentCreateInput!){commentCreate(input:$i){success}}",
                 {"i": {"issueId": issue["id"], "body": f"提交 [{short}]({url})：{subject}\n\n改到的插件：{'、'.join(f'`{p}`' for p in plugins)}"}})
