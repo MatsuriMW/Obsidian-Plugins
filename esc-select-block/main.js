@@ -13,14 +13,18 @@
 //   · 不接管：光标不在列表里、有弹出菜单或建议框（todoseq 等）、多光标、Vim 模式
 //   扩大 / 缩小选区交给 Expandomatic
 //
-// 二、选中文字后输入成对符号：包起来，不替换
+// 二、选中文字后输入成对符号：包起来，不替换（不管中文还是英文输入法）
 //   · 选中「文字」后输入 [ → 「[文字]」，选区仍在「文字」上，再按一次 [ → 「[[文字]]」，就是双链
+//   · 中文输入法下 [ 键打出来的是 【：第一次包成【文字】，再按一次同样变成 [[文字]]
+//     （外面已经是 [] 或 【】 时，再输入 [ 或 【 一律变成双链）
 //   · 适用于 () [] {} <> "" '' `` 和中文的 （） 【】 「」 『』 《》 〈〉 “” ‘’
 //   · 输入的是右半边也一样（中文输入法打引号时会在 “ 和 ” 之间轮换）
-//   · 没有选中文字时不接管，照常输入
+//   · 不管字符是怎么进来的（直接输入、输入法直接上屏、输入法选字上屏），都是事后看：
+//     「选中的文字被换成了一个成对符号」就改成包裹
+//   · 没有选中文字、或者选中的是 Esc 选出来的整块时，不接管
 const { Plugin } = require("obsidian");
 const { keymap, EditorView } = require("@codemirror/view");
-const { Prec, EditorSelection } = require("@codemirror/state");
+const { Prec, EditorSelection, EditorState } = require("@codemirror/state");
 
 const ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])(?:[ \t]|$)/;
 const TAB_WIDTH = 4;
@@ -33,6 +37,24 @@ const PAIRS = {
 // 右半边 → 左半边（不对称的才需要）
 const CLOSE_TO_OPEN = {};
 for (const [o, c] of Object.entries(PAIRS)) if (o !== c) CLOSE_TO_OPEN[c] = o;
+
+// 文档 doc（CodeMirror Text）里 from..to 是选中的文字，输入了字符 ch：
+// 返回要做的替换 { from, to, insert } 和替换后文字的位置 { selFrom, selTo }；ch 不是成对符号返回 null
+function wrapSpec(doc, from, to, ch) {
+	const open = PAIRS[ch] ? ch : CLOSE_TO_OPEN[ch];
+	if (!open) return null;
+	const text = doc.sliceString(from, to);
+	if (open === "[" || open === "【") {
+		const before = from > 0 ? doc.sliceString(from - 1, from) : "";
+		const after = doc.sliceString(to, to + 1);
+		if ((before === "[" && after === "]") || (before === "【" && after === "】")) {
+			// 第二次按：[文字] / 【文字】 → [[文字]]
+			return { from: from - 1, to: to + 1, insert: "[[" + text + "]]", selFrom: from + 1, selTo: to + 1 };
+		}
+	}
+	const close = PAIRS[open];
+	return { from, to, insert: open + text + close, selFrom: from + open.length, selTo: to + open.length };
+}
 
 function indentWidth(line) {
 	let w = 0;
@@ -115,6 +137,8 @@ module.exports = class LogseqEditing extends Plugin {
 		//   from / to：当前选中的字符范围；start / end：选中的块的首行和末行（行号从 0 开始）
 		//   anchor / head：按 Esc 之前原来的光标；moved：选中后有没有用方向键移动过
 		this.saved = new WeakMap();
+		this.blockByDoc = new WeakMap();      // 文档 → Esc 选中的整块范围，给包裹逻辑判断「选中的是整块」
+		this.beforeCompose = new WeakMap();   // view → 输入法开始组字前的 state
 		this.registerEditorExtension([
 			Prec.high(keymap.of([
 				{ key: "Escape", run: (view) => this.onEsc(view) },
@@ -124,7 +148,11 @@ module.exports = class LogseqEditing extends Plugin {
 				{ key: "Shift-ArrowDown", run: (view) => this.move(view, 1, true) },
 				{ key: "Enter", run: (view) => this.edit(view) },
 			])),
-			EditorView.inputHandler.of((view, from, to, text) => this.wrap(view, text)),
+			EditorState.transactionFilter.of((tr) => this.wrapFilter(tr)),
+			EditorView.domEventHandlers({
+				compositionstart: (e, view) => { this.beforeCompose.set(view, view.state); },
+				compositionend: (e, view) => { setTimeout(() => this.wrapAfterCompose(view), 0); },
+			}),
 		]);
 	}
 
@@ -146,6 +174,7 @@ module.exports = class LogseqEditing extends Plugin {
 		const from = doc.line(start + 1).from;
 		const to = end + 1 < doc.lines ? doc.line(end + 2).from : doc.length;
 		this.saved.set(view, { ...extra, from, to, start, end });
+		this.blockByDoc.set(doc, { from, to });
 		view.dispatch({ selection: EditorSelection.single(from, to), scrollIntoView: true });
 	}
 
@@ -220,19 +249,62 @@ module.exports = class LogseqEditing extends Plugin {
 
 	// ---------- 成对符号包裹 ----------
 
-	wrap(view, text) {
-		const open = PAIRS[text] ? text : CLOSE_TO_OPEN[text];
-		if (!open) return false;
-		const { state } = view;
-		if (state.selection.ranges.some((r) => r.empty)) return false;   // 有没选中文字的光标：照常输入
-		if (this.active(view)) return false;                             // 选中的是整块，不是一段文字
-		const close = PAIRS[open];
-		const tr = state.changeByRange((r) => ({
-			changes: [{ from: r.from, insert: open }, { from: r.to, insert: close }],
-			range: EditorSelection.range(r.anchor + open.length, r.head + open.length),
-		}));
-		this.saved.delete(view);
-		view.dispatch(tr, { scrollIntoView: true, userEvent: "input.type" });
-		return true;
+	isBlockSelection(state) {
+		const b = this.blockByDoc.get(state.doc), r = state.selection.main;
+		return !!b && state.selection.ranges.length === 1 && r.from === b.from && r.to === b.to;
+	}
+
+	// 直接输入的字符（英文输入法、中文输入法直接上屏的标点）：在事务生效前改成包裹
+	wrapFilter(tr) {
+		if (!tr.docChanged || !tr.isUserEvent("input.type") || tr.isUserEvent("input.type.compose")) return tr;
+		const start = tr.startState, ranges = start.selection.ranges;
+		if (ranges.some((r) => r.empty) || this.isBlockSelection(start)) return tr;
+		// 每个选区都正好被换成了同一个字符
+		const changes = [];
+		tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => changes.push({ fromA, toA, text: inserted.toString() }));
+		if (changes.length !== ranges.length) return tr;
+		const specs = [];
+		for (let k = 0; k < ranges.length; k++) {
+			const r = ranges[k], c = changes[k];
+			if (c.fromA !== r.from || c.toA !== r.to || [...c.text].length !== 1) return tr;
+			const w = wrapSpec(start.doc, r.from, r.to, c.text);
+			if (!w) return tr;
+			specs.push({ w, backward: r.anchor > r.head });
+		}
+		// 算出包裹后每个选区的新位置（前面的包裹会让后面的位置往后挪）
+		let shift = 0;
+		const sel = specs.map(({ w, backward }) => {
+			const a = w.selFrom + shift, b = w.selTo + shift;
+			shift += w.insert.length - (w.to - w.from);
+			return backward ? EditorSelection.range(b, a) : EditorSelection.range(a, b);
+		});
+		return {
+			changes: specs.map(({ w }) => ({ from: w.from, to: w.to, insert: w.insert })),
+			selection: EditorSelection.create(sel),
+			userEvent: "input.type",
+			scrollIntoView: true,
+		};
+	}
+
+	// 输入法组字上屏的字符：组字结束后再看一次，选中的文字被换成了一个成对符号就改回包裹
+	wrapAfterCompose(view) {
+		const before = this.beforeCompose.get(view);
+		this.beforeCompose.delete(view);
+		if (!before) return;
+		const r = before.selection.main;
+		if (before.selection.ranges.length !== 1 || r.empty || this.isBlockSelection(before)) return;
+		const oldDoc = before.doc, doc = view.state.doc;
+		if (doc.length !== oldDoc.length - (r.to - r.from) + 1) return;
+		if (doc.sliceString(0, r.from) !== oldDoc.sliceString(0, r.from)) return;
+		if (doc.sliceString(r.from + 1) !== oldDoc.sliceString(r.to)) return;
+		const w = wrapSpec(oldDoc, r.from, r.to, doc.sliceString(r.from, r.from + 1));
+		if (!w) return;
+		const removed = r.to - r.from - 1;    // 现在文档比原文档少的长度
+		view.dispatch({
+			changes: { from: w.from, to: w.to - removed, insert: w.insert },
+			selection: r.anchor > r.head ? EditorSelection.single(w.selTo, w.selFrom) : EditorSelection.single(w.selFrom, w.selTo),
+			userEvent: "input.type",
+			scrollIntoView: true,
+		});
 	}
 };
