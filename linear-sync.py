@@ -98,8 +98,12 @@ def main():
             issue = gql(key, "query($id:String!){issue(id:$id){id identifier title}}", {"id": ref})["issue"]
             gql(key, link, {"id": issue["id"], "u": url, "t": f"{short} {subject}"})
             # 一次提交改了好几个插件时，每张卡只补它标题里那个插件的标签
+            # 「插件」标签组一张卡只能挂一个标签：已经有了就会报错，跳过即可
             for p in [p for p in plugins if f"[{p}]" in issue["title"]]:
-                gql(key, "mutation($id:String!,$l:String!){issueAddLabel(id:$id,labelId:$l){success}}", {"id": issue["id"], "l": label_id(p)})
+                try:
+                    gql(key, "mutation($id:String!,$l:String!){issueAddLabel(id:$id,labelId:$l){success}}", {"id": issue["id"], "l": label_id(p)})
+                except RuntimeError:
+                    pass
             gql(key, "mutation($i:CommentCreateInput!){commentCreate(input:$i){success}}",
                 {"i": {"issueId": issue["id"], "body": f"提交 [{short}]({url})：{subject}\n\n改到的插件：{'、'.join(f'`{p}`' for p in plugins)}"}})
             print(f"Linear：{ref} 已关联 {short}")
