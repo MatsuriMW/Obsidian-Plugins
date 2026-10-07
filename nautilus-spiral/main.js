@@ -38,7 +38,9 @@ const DEFAULTS = {
   breakWords: "吃饭, 锻炼",   // 日记里新写一条只有这几个字的条目 = 去吃饭 / 锻炼了：所有 DOING 改成 PAUSED，计时停
   breakApps: "Obsidian, Claude, Terminal, iTerm2, Ghostty, Warp",
   breakMinAway: 20,     // 吃饭 / 锻炼至少多久（分钟）才开始判断「回来了」
-  parallelDoing: true,  // 几件 DOING 并行排：一起从现在开始，重叠在同一段时间里，只占最长那件的时间   // 在这些 App 里持续操作几分钟 = 回来了，问要不要切回 DOING
+  parallelDoing: true,
+  showReview: true,     // 列表底部「📏 预估 vs 实际」，容量条上「按以往约多久」
+  reviewDays: 30,       // 复盘看最近几天（计时记录保留 45 天）  // 几件 DOING 并行排：一起从现在开始，重叠在同一段时间里，只占最长那件的时间   // 在这些 App 里持续操作几分钟 = 回来了，问要不要切回 DOING
   breakState: null,     // { word, since, path, keys, labels, focus, active }：正在吃饭 / 锻炼
 };
 
@@ -177,7 +179,8 @@ function parseJournal(content, cfg) {
         const start = normalize(tokenMinutes(lr[1], lr[2], lr[3], lr[4]), cfg);
         let end = normalize(lr[5] !== undefined ? tokenMinutes(lr[5], lr[6], lr[7], lr[8]) : +lr[9] * 60, cfg);
         if (end <= start) end += 720;
-        items.push({ ...base, kind: "task", dur: end - start, explicitDur: true, doneAt: end, actual: [start, end] });
+        // est = 写着的预估（DONE 14:05-14:20 写周报 15分钟 里的 15 分钟），复盘「预估 vs 实际」用
+        items.push({ ...base, kind: "task", dur: end - start, explicitDur: true, doneAt: end, actual: [start, end], est: parseDuration(s.slice(lr[0].length)) });
         return;
       }
       // 「DONE 10-12 hsy」这种只写整点的时间段，只在紧跟关键词的位置认
@@ -186,9 +189,10 @@ function parseJournal(content, cfg) {
         const start = normalize(+br[1] * 60, cfg);
         let end = normalize(+br[2] * 60, cfg);
         if (end <= start) end += 720;
-        items.push({ ...base, kind: "task", dur: end - start, explicitDur: true, doneAt: end, actual: [start, end] });
+        items.push({ ...base, kind: "task", dur: end - start, explicitDur: true, doneAt: end, actual: [start, end], est: parseDuration(s.slice(br[0].length)) });
         return;
       }
+      // DONE 18:02 写稿 2h：这里的 2h 是做了多久（Telegram 的 done 写稿 2h），不是预估
       if (state === "done" && ls) {
         const at = normalize(tokenMinutes(ls[1], ls[2], ls[3], ls[4]), cfg);
         items.push({ ...base, kind: "task", dur: parseDuration(s.slice(ls[0].length)) ?? cfg.defaultDur, explicitDur: parseDuration(s.slice(ls[0].length)) != null, doneAt: at });
@@ -227,7 +231,7 @@ function parseJournal(content, cfg) {
       items.push({ ...base, kind: "event", start, end: start + dur, pinned: true });
       return;
     }
-    items.push({ ...base, kind: "task", dur, explicitDur: parseDuration(s) != null });
+    items.push({ ...base, kind: "task", dur, explicitDur: parseDuration(s) != null, est: state === "done" ? parseDuration(s) : null });
   });
   // 父任务下面还挂着子任务、自己又没写时长：时间算在子任务上，父任务不重复占
   items.forEach((t, i) => {
@@ -579,7 +583,7 @@ class MacCalendar {
 // Claude Code 默认 30 天删会话日志，所以汇总结果另存一份（ai-usage.json），日志删了历史还在。
 const AI_IDLE = 5;          // 同一会话两次活动间隔不超过 5 分钟，中间算在干活（跑长命令、等你确认都在内）
 const AI_FRESH_DAYS = 14;   // 最近这么多天的汇总会随日志重算，更早的定格不再改
-const AI_STORE_V = 2;       // ai-usage.json 的格式版本；升级时用现存日志把所有日子重算一遍（2 = 加了每个会话的明细 list）
+const AI_STORE_V = 4;       // ai-usage.json 的格式版本；升级时用现存日志把所有日子重算一遍（2 = 加了每个会话的明细 list，3 = 明细里加了工作目录 cwd，4 = 加了会话来自哪（Claude 桌面版 / 终端））
 
 const fmtKey = (d, cfg) => cfg.format.replace("YYYY", d.getFullYear()).replace("MM", pad(d.getMonth() + 1)).replace("DD", pad(d.getDate()));
 
@@ -675,7 +679,7 @@ class AiUsage {
     const proj = aiProject(d.cwd);
     const sid = d.sessionId || "?";
     let s = day.sess.get(sid);
-    if (!s) day.sess.set(sid, s = { proj, ts: [], text: "" });
+    if (!s) day.sess.set(sid, s = { proj, cwd: d.cwd || "", app: d.entrypoint || "", ts: [], text: "" });
     s.ts.push(t);
     if (d.type === "user") {
       const text = aiIsPrompt(d);
@@ -704,7 +708,7 @@ class AiUsage {
       for (const [sid, s] of day.sess) {
         const cur = sess.get(sid);
         if (cur) { cur.ts.push(...s.ts); if (cur.text.length < 300 && s.text) cur.text += " / " + s.text; }
-        else sess.set(sid, { proj: s.proj, ts: [...s.ts], text: s.text, segs: [], min: 0, out: 0 });
+        else sess.set(sid, { proj: s.proj, cwd: s.cwd, app: s.app, ts: [...s.ts], text: s.text, segs: [], min: 0, out: 0 });
       }
     }
     if (!sess.size) return null;
@@ -739,7 +743,7 @@ class AiUsage {
     res.segs = res.segs.map(([a, b]) => [Math.round(a), Math.round(b)]);
     for (const p of Object.values(res.proj)) p.min = Math.round(p.min);
     // 每个会话一行：长期项目按标题 / 指令 / 目录把它归到项目上（scripts/long-projects.js）
-    for (const [sid, s] of sess) res.list.push({ sid, dir: s.proj, title: titles.get(sid) || "", text: s.text.slice(0, 300),
+    for (const [sid, s] of sess) res.list.push({ sid, dir: s.proj, cwd: s.cwd || "", app: s.app || "", title: titles.get(sid) || "", text: s.text.slice(0, 300),
       min: Math.round(s.min), out: s.out, segs: s.segs.map(([a, b]) => [Math.round(a), Math.round(b)]) });
     return res;
   }
@@ -767,6 +771,105 @@ function unionMin(segs) {
 }
 
 const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n));
+
+// 一件任务做的那几段里，有哪些 Claude 会话在干活：会话的活跃时段和任务做的时段重叠 ≥ 2 分钟。
+// 几条线并行时，同一个会话会同时挂在几件任务上
+// 光看时间会把同时开着的无关会话也算进来，所以再看一眼内容：会话标题 / 你发的话里出现了任务名里的词（英文单词、中文两字词），就算「相关」，排在前面
+function aiFor(segs, list, label = "") {
+  const words = new Set([...(label.toLowerCase().match(/[a-z0-9][a-z0-9.+-]{2,}/g) || [])]);
+  for (const run of label.match(/\p{Script=Han}+/gu) || []) for (let i = 0; i + 1 < run.length; i++) words.add(run.slice(i, i + 2));
+  const out = [];
+  for (const x of list || []) {
+    let ov = 0;
+    for (const [a, b] of segs || []) for (const [c, d] of x.segs || []) ov += Math.max(0, Math.min(b, d) - Math.max(a, c));
+    if (ov < 2) continue;
+    const hay = `${x.title || ""} ${x.text || ""}`.toLowerCase();
+    let hit = 0;
+    for (const w of words) if (hay.includes(w)) hit++;
+    out.push({ ...x, overlap: Math.round(ov), related: words.size > 0 && hit >= Math.min(2, words.size) });
+  }
+  return out.sort((a, b) => b.related - a.related || b.overlap - a.overlap);
+}
+
+const shq = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`;
+
+// Claude 会话列表：看看那会儿 Claude 在做什么，一键回到那个会话。groups = [{ name, sub, list }]，一组一件任务
+class AiSessionsModal extends OB.Modal {
+  constructor(app, title, groups) { super(app); this.title = title; this.groups = groups; }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("naut-ai-modal");
+    contentEl.createEl("h3", { text: this.title });
+    contentEl.createDiv({ cls: "naut-proj-note", text: "「在 Claude 里打开」用 claude://resume 在 Claude 桌面版里打开那个会话；终端里开的会话，「在终端里继续」在它的工作目录里运行 claude --resume。" });
+    for (const g of this.groups) {
+      if (g.name) {
+        const h = contentEl.createDiv({ cls: "naut-ai-group" });
+        h.createSpan({ text: g.name });
+        if (g.sub) h.createSpan({ cls: "naut-muted", text: ` · ${g.sub}` });
+      }
+      const rel = g.list.filter((x) => x.related), weak = g.list.filter((x) => !x.related);
+      if (!rel.length) contentEl.createDiv({ cls: "naut-proj-note", text: weak.length ? "没有看起来相关的会话（标题和你发的话里都没有任务名里的词）" : "这段时间里没有 Claude 会话" });
+      for (const x of rel) this.session(contentEl, x);
+      // 只是时间重叠的会话收起来，要看再点开
+      if (weak.length) {
+        const more = contentEl.createEl("details", { cls: "naut-ai-more" });
+        more.createEl("summary", { text: `同一时段的其它会话（${weak.length}）` });
+        for (const x of weak) this.session(more, x);
+      }
+    }
+  }
+  session(parent, x) {
+    const box = parent.createDiv({ cls: "naut-ai-sess" + (x.related ? "" : " is-weak") });
+    const first = (x.text || "").split(" / ")[0];
+    box.createDiv({ cls: "naut-ai-sess-title", text: x.title || first.slice(0, 120) || "（没有标题）" });
+    if (x.title && first) box.createDiv({ cls: "naut-ai-sess-text", text: first.slice(0, 200) });
+    const cli = x.app === "cli";   // 终端里的 Claude Code；其余（claude-desktop 或者旧记录不知道来源的）按桌面版
+    const when = x.overlap != null ? `和这件重叠 ${dur(x.overlap)}` : `${clock(x.lastAt)} 还在动`;
+    box.createDiv({ cls: "naut-ai-sess-meta", text: `${cli ? "终端" : "Claude 桌面版"} · ${x.cwd || x.dir} · ${when} · 这个会话当天 ${dur(x.min)} · 产出 ${fmtTok(x.out)} tok` });
+    const cmd = (x.cwd ? `cd ${shq(x.cwd)} && ` : "") + `claude --resume ${x.sid}`;
+    const bar = box.createDiv({ cls: "naut-ai-sess-btns" });
+    const desk = bar.createEl("button", { cls: cli ? "" : "mod-cta", text: "在 Claude 里打开" });
+    desk.onclick = () => { require("child_process").execFile("/usr/bin/open", [`claude://resume?session=${x.sid}`], () => {}); this.close(); };
+    const term = bar.createEl("button", { cls: cli ? "mod-cta" : "", text: "在终端里继续" });
+    term.onclick = () => { run("/usr/bin/osascript", ["-e", `tell application "Terminal"\nactivate\ndo script ${asStr(cmd)}\nend tell`]); this.close(); };
+    bar.createEl("button", { text: "复制命令" }).onclick = async () => { await navigator.clipboard.writeText(cmd); new OB.Notice("已复制：" + cmd); };
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+// 一段文字 + 几个按钮（⌃⌥V 现在怎样）
+class TextModal extends OB.Modal {
+  constructor(app, title, text, buttons = []) { super(app); this.title = title; this.text = text; this.buttons = buttons; }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: this.title });
+    contentEl.createDiv({ cls: "naut-status-text", text: this.text });
+    if (this.buttons.length) {
+      const bar = contentEl.createDiv({ cls: "naut-ai-sess-btns" });
+      for (const [label, fn] of this.buttons) bar.createEl("button", { text: label }).onclick = () => { this.close(); fn(); };
+    }
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+// ⌃⌥S 快捷面板：螺旋日程的所有操作，打几个字就能找到，右边是各自的快捷键
+class QuickPanel extends OB.FuzzySuggestModal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.setPlaceholder("螺旋日程：要做什么？");
+    this.view = app.workspace.getActiveViewOfType(OB.MarkdownView);   // 打开面板前所在的编辑器（开始光标所在的任务要用）
+  }
+  getItems() { return this.plugin.actions().filter((a) => !a.hidden && (!a.when || a.when()) && (!a.editor || this.view)); }
+  getItemText(a) { return a.name; }
+  renderSuggestion(m, el) {
+    el.addClass("naut-quick-item");
+    el.createSpan({ text: m.item.name });
+    const k = this.plugin.hotkeyText(m.item.id);
+    if (k) el.createEl("kbd", { cls: "naut-kbd", text: k });
+  }
+  onChooseItem(a) { if (a.editor) a.run(this.view.editor, this.view); else a.run(); }
+}
 
 // ---------------- 视图 ----------------
 
@@ -863,6 +966,12 @@ class SpiralView extends ItemView {
     if (plan.overflow) info.createSpan({ cls: "naut-over-text", text: ` · 超出 ${dur(plan.overflow)}` });
     else info.createSpan({ text: ` · 富余 ${dur(plan.available - plan.demand)}` });
     if (plan.eventLeft) info.createSpan({ cls: "naut-muted", text: ` · 事件占 ${dur(plan.eventLeft)}` });
+    // 按以往预估的准头校准一下：近 30 天整体多用 / 少用了多少
+    const rv = cfg.showReview !== false && dayRel >= 0 ? this.plugin.reviewData() : null;
+    if (rv && rv.n >= 10 && Math.abs(rv.ratio - 1) >= 0.15 && plan.demand >= 15) {
+      info.createSpan({ cls: "naut-muted naut-calib", text: ` · 按以往约 ${dur(plan.demand * rv.ratio)}`,
+        attr: { title: `近 ${rv.days} 天做完的 ${rv.n} 件里，实际用时是预估的 ${rv.ratio.toFixed(2)} 倍，待办 ${dur(plan.demand)} 按这个比例约 ${dur(plan.demand * rv.ratio)}` } });
+    }
     if (bounds.start != null || bounds.end != null) info.createSpan({ cls: "naut-muted", text: ` · ${clock(S1)}–${clock(E1)}` });
 
     // 人机协作：这一天 Claude 干了多少（数据见上面「人机协作」一节的口径）
@@ -948,6 +1057,17 @@ class SpiralView extends ItemView {
       const d = arc(a, Math.max(b, a + 3), -16);
       if (d) svgEl("title", {}, svgEl("path", { d, class: "naut-game" }, svg)).textContent = `${clock(a)}–${clock(b)} 🎮 ${n}（${dur(b - a)}）`;
     }
+    // 这件任务做过的那几段里，Claude 在干什么
+    const aiMemo = new Map();
+    const aiOf = (item) => {
+      if (!ai || !ai.list || item.kind === "event" || item.cal) return [];
+      if (!aiMemo.has(item)) {
+        const segs = item.segs || (item.state === "done" ? item.segments : item.workedN != null ? item.segments.slice(0, item.workedN) : item.worked);
+        aiMemo.set(item, aiFor(segs, ai.list, item.label));
+      }
+      return aiMemo.get(item);
+    };
+    const aiName = (x) => x.title || (x.text || "").split(" / ")[0].slice(0, 40) || x.dir;
     const LANE = [0, 5, -5, 9, -9, 13];   // 并行的几件 DOING 各画一条线，沿螺旋错开一点
     const drawSeg = (a, b, cls, item) => {
       const d = arc(a, b, LANE[item.lane || 0] ?? 0);
@@ -955,7 +1075,7 @@ class SpiralView extends ItemView {
       const p = svgEl("path", { d, class: `naut-seg ${cls}` }, svg);
       if (item.cal && item.cal.color) p.style.stroke = item.cal.color;   // 日历事件用日历自己的颜色
       const title = svgEl("title", {}, p);
-      title.textContent = `${clock(a)}–${clock(b)} ${item.label}` + (item.cal ? `（📅 ${item.cal.calendar}）` : "");
+      title.textContent = `${clock(a)}–${clock(b)} ${item.label}` + (item.cal ? `（📅 ${item.cal.calendar}）` : "") + aiOf(item).filter((x) => x.related).map((x) => `\n🤖 ${aiName(x)}（${dur(x.overlap)}）`).join("");
       p.addEventListener("click", () => this.plugin.openItem(file, item));
     };
     for (const e of items.filter((i) => i.kind === "event")) drawSeg(e.start, e.end, e.state === "done" ? "naut-event naut-done-event" : e.prio ? "naut-prio" : "naut-event", e);
@@ -1027,6 +1147,13 @@ class SpiralView extends ItemView {
         const proj = projOf.get(r.item.line);
         row.createSpan({ cls: "naut-label", text: (r.item.paused ? "⏸ " : "") + (r.item.cal ? "📅 " : r.item.projRef || proj ? "🧭 " : "") + r.item.label,
           attr: proj ? { title: "算进长期项目：" + proj.short } : r.item.cal ? { title: `日历：${r.item.cal.calendar}${r.item.cal.location ? " · " + r.item.cal.location : ""}` } : {} });
+        const sess = aiOf(r.item);
+        if (sess.length) {
+          const rel = sess.filter((x) => x.related).length;
+          const badge = row.createSpan({ cls: "naut-ai-badge" + (rel ? "" : " is-weak"), text: `🤖${rel || sess.length}`,
+            attr: { title: `这件做的时候 Claude 在：\n${sess.map((x) => `${x.related ? "· " : "  （同时段）"}${aiName(x)}（${dur(x.overlap)}）`).join("\n")}\n点开看详情、接着那个会话做` } });
+          badge.onclick = (e) => { e.stopPropagation(); new AiSessionsModal(this.app, `「${r.item.label}」期间的 Claude 会话`, [{ list: sess }]).open(); };
+        }
         row.createSpan({ cls: "naut-dur", text: r.dur, attr: r.tip ? { title: r.tip } : {} });
         if (r.play) {
           const t = r.item;
@@ -1063,6 +1190,7 @@ class SpiralView extends ItemView {
     })));
 
     if (ai || aiStore && dayRel === 0) this.renderAi(list, aiStore, date, ai);
+    if (cfg.showReview !== false && dayRel === 0) this.renderReview(list);
 
     // 长期项目：该推一把（数据来自 scripts/long-projects.js，和「长期项目」看板同一份）
     if (cfg.showProjects && dayRel === 0) await this.renderProjects(list, file);
@@ -1096,6 +1224,33 @@ class SpiralView extends ItemView {
     }
     const sum = (k) => had.reduce((n, x) => n + x.s[k], 0);
     list.createDiv({ cls: "naut-proj-note", text: had.length ? `近 7 天：${had.length} 天在用 · 协作 ${dur(sum("wall"))} · 产出 ${fmtTok(sum("out"))} tok · 日均 ${dur(sum("wall") / 7)}` : "近 7 天还没有 Claude Code 记录" });
+  }
+
+  // 📏 预估 vs 实际：近 30 天做完的、写了预估、也记到了实际用时的任务
+  renderReview(list) {
+    const r = this.plugin.reviewData();
+    if (!r || !r.n) return;
+    const cfg = this.plugin.settings;
+    const open = !cfg.reviewFolded;
+    const head = list.createDiv({ cls: "naut-sec naut-proj-head naut-review-head", text: `${open ? "▾" : "▸"} 📏 预估 vs 实际 · 近 ${r.days} 天` });
+    head.onclick = () => { cfg.reviewFolded = open; this.plugin.saveSoon(); this.render(); };
+    if (!open) return;
+    const how = (x) => (Math.abs(x - 1) < 0.05 ? "基本准" : `${x > 1 ? "多用" : "少用"} ${Math.round(Math.abs(x - 1) * 100)}%`);
+    list.createDiv({ cls: "naut-proj-note", text: `${r.n} 件：预估 ${dur(r.sumE)} · 实际 ${dur(r.sumA)} · 整体${how(r.ratio)}` });
+    list.createDiv({ cls: "naut-proj-note", text: `估短 ${r.over} 件 · 估长 ${r.under} 件 · 差不多 ${r.n - r.over - r.under} 件（±20% 以内）· 一件一般是预估的 ${r.median.toFixed(1)} 倍`,
+      attr: { title: "只算做完的、写了预估时长、也记到了实际用时（DONE 开始-结束，或者 DOING 时的计时）的任务" } });
+    const row = (time, label, durText, tip, onclick) => {
+      const el = list.createDiv({ cls: "naut-row naut-review-row" });
+      el.createSpan({ cls: "naut-time", text: time });
+      el.createSpan({ cls: "naut-label", text: label });
+      el.createSpan({ cls: "naut-dur", text: durText, attr: tip ? { title: tip } : {} });
+      if (onclick) el.onclick = onclick;
+    };
+    if (r.cats.length) list.createDiv({ cls: "naut-proj-note", text: "按标签 / 链接分：" });
+    for (const c of r.cats) row(`×${c.ratio.toFixed(1)}`, c.cat, `${c.n} 件`, `预估 ${dur(c.e)} · 实际 ${dur(c.a)} · ${how(c.ratio)}`);
+    if (r.worst.length) list.createDiv({ cls: "naut-proj-note", text: "估得最短的几件：" });
+    for (const w of r.worst) row(`×${(w.actual / w.est).toFixed(1)}`, w.label, `${dur(w.est)}→${dur(w.actual)}`, `${w.day} · 预估 ${dur(w.est)}，实际 ${dur(w.actual)}`,
+      () => { const f = this.app.vault.getAbstractFileByPath(w.path); if (f instanceof TFile) this.plugin.openLine(f, w.line); });
   }
 
   async renderProjects(list, file) {
@@ -1152,16 +1307,15 @@ module.exports = class NautilusSpiral extends Plugin {
 
     this.registerView(VIEW_TYPE, (leaf) => new SpiralView(leaf, this));
     this.addRibbonIcon("orbit", "螺旋日程", () => this.activate());
-    this.addCommand({ id: "open", name: "打开螺旋日程", callback: () => this.activate() });
-    this.addCommand({ id: "open-today", name: "打开今天的日记（凌晨按日界算前一天）", callback: () => this.openToday() });
-    this.addCommand({ id: "start-here", name: "开始光标所在的任务（改成 DOING + 专注）", hotkeys: [{ modifiers: ["Mod", "Shift"], key: "Enter" }],
-      editorCallback: (editor, view) => this.startAtCursor(editor, view) });
-    this.addCommand({ id: "start-next", name: "开始下一件（改成 DOING + 专注）", callback: () => this.startNext() });
-    this.addCommand({ id: "focus-end", name: "结束这一轮专注（问做完了没有）", checkCallback: (check) => {
-      if (!this.settings.focusSession) return false;
-      if (!check) this.askDone(this.session());
-      return true;
-    } });
+    // 命令和快捷面板（⌃⌥S）都从这张表来；默认快捷键都在 ⌃⌥ 下面，Obsidian 设置 → 快捷键里可以改
+    for (const a of this.actions()) {
+      const cmd = { id: a.id, name: a.name };
+      if (a.key) cmd.hotkeys = [a.key];
+      if (a.editor) cmd.editorCallback = (editor, view) => a.run(editor, view);
+      else if (a.when) cmd.checkCallback = (check) => { if (!a.when()) return false; if (!check) a.run(); return true; };
+      else cmd.callback = () => a.run();
+      this.addCommand(cmd);
+    }
     // 专注到点了没有：每 10 秒看一眼（用时间戳比，电脑睡眠醒来也不会漏）；上次没回答就关了 Obsidian 的，重新问
     if (this.session()) { const s = this.settings.focusSession; s.asked = false; s.noPanel = true; for (const t of s.tasks) t.asked = false; }   // 重启后不再看悬浮窗，到点照样问
     if (this.settings.breakState) this.settings.breakState.asking = false;
@@ -1171,14 +1325,6 @@ module.exports = class NautilusSpiral extends Plugin {
     // 外部脚本（~/bin/app-idle-focus.sh：在同一个 App 里待久了）叫螺旋日程来问：这一轮专注做哪几件
     //   open -g "obsidian://nautilus-focus?app=Obsidian&stay=300"
     this.registerObsidianProtocolHandler("nautilus-focus", (p) => this.suggestFocus(p.app || "", +p.stay || 0).catch((e) => console.error("[螺旋日程] 专注提议失败", e)));
-    this.addCommand({ id: "suggest-focus", name: "开一轮专注（勾选这一轮做哪几件）", callback: () => this.suggestFocus("", 0) });
-    this.addCommand({ id: "break-back", name: "吃饭 / 锻炼回来了（问要不要切回 DOING）", checkCallback: (check) => {
-      const b = this.settings.breakState;
-      if (!b) return false;
-      if (!check) { b.asking = false; this.askBack(b); }
-      return true;
-    } });
-    this.addCommand({ id: "calendar-refresh", name: "重新读取 macOS 日历", callback: () => { this.cal.cache.clear(); this.refresh(); } });
     this.addSettingTab(new SpiralSettings(this.app, this));
 
     // 在日历里点某一天（或打开任何一篇日记），螺旋跟着切到那一天
@@ -1309,6 +1455,160 @@ module.exports = class NautilusSpiral extends Plugin {
     const items = file instanceof TFile ? parseJournal(await this.app.vault.read(file), cfg) : [];
     const b = cfg.dayBounds[dayKey] || {};
     return [`🌙 ${clock(t)} 收工 · 今天 ${clock(b.start ?? S)}–${clock(t)}`, ...(await this.dayTail(dayKey, items))].join("\n");
+  }
+
+  // ---- 快捷操作：命令、默认快捷键、快捷面板共用一张表 ----
+  actions() {
+    const ca = (key) => ({ modifiers: ["Ctrl", "Alt"], key });
+    return [
+      { id: "quick-panel", name: "快捷面板（螺旋日程的所有操作）", key: ca("S"), run: () => new QuickPanel(this.app, this).open(), hidden: true },
+      { id: "status", name: "现在怎样：专注、在做的、容量、接下来", key: ca("V"), run: () => this.showStatus() },
+      { id: "doing-ai", name: "正在做的事的 Claude 会话", key: ca("C"), run: () => this.showDoingAi() },
+      { id: "start-here", name: "开始光标所在的任务（改成 DOING + 专注）", key: { modifiers: ["Mod", "Shift"], key: "Enter" }, editor: true, run: (editor, view) => this.startAtCursor(editor, view) },
+      { id: "start-next", name: "开始下一件（改成 DOING + 专注）", key: ca("N"), run: () => this.startNext() },
+      { id: "suggest-focus", name: "开一轮专注（勾选这一轮做哪几件）", key: ca("F"), run: () => this.suggestFocus("", 0) },
+      { id: "focus-end", name: "结束这一轮专注（问做完了没有）", key: ca("E"), when: () => !!this.session(), run: () => this.askDone(this.session()) },
+      { id: "break-back", name: "吃饭 / 锻炼回来了（问要不要切回 DOING）", key: ca("B"), when: () => !!this.settings.breakState, run: () => { this.settings.breakState.asking = false; this.askBack(this.settings.breakState); } },
+      { id: "review", name: "预估 vs 实际（复盘）", key: ca("R"), run: () => this.showReview() },
+      { id: "open", name: "打开螺旋日程", key: ca("O"), run: () => this.activate() },
+      { id: "open-today", name: "打开今天的日记（凌晨按日界算前一天）", run: () => this.openToday() },
+      { id: "calendar-refresh", name: "重新读取 macOS 日历", run: () => { this.cal.cache.clear(); this.refresh(); } },
+    ];
+  }
+
+  // 某条命令现在的快捷键（自己改过的优先），显示成 ⌃⌥C
+  hotkeyText(id) {
+    const hm = this.app.hotkeyManager;
+    const full = `${this.manifest.id}:${id}`;
+    const k = (hm?.customKeys?.[full] || hm?.getDefaultHotkeys?.(full) || [])[0];
+    if (!k) return "";
+    const mod = { Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Mod: "⌘", Meta: "⌘" };
+    const order = ["Ctrl", "Alt", "Shift", "Mod", "Meta"];
+    return [...k.modifiers].sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((m) => mod[m] || m).join("") + ({ Enter: "↵", " ": "Space" }[k.key] || k.key.toUpperCase());
+  }
+
+  // ⌃⌥V 现在怎样：这一轮专注每条线还剩多久、吃饭中、在做的、容量和接下来
+  async showStatus() {
+    const lines = [];
+    const s = this.session();
+    if (s) lines.push(`⏱ 专注中 · ${s.tasks.length} 条线`, ...s.tasks.map((t) => `   ${t.label} · ${Date.now() < t.end ? `还剩 ${dur(Math.ceil((t.end - Date.now()) / 60e3))}` : "到点了"}（${moment(t.end).format("HH:mm")} 到点）`), "");
+    const b = this.settings.breakState;
+    if (b) lines.push(`${breakIcon(b.word)} ${b.word}中 · ${moment(b.since).format("HH:mm")} 起 · ${dur(Math.max(1, Math.round((Date.now() - b.since) / 60e3)))}${b.keys.length ? ` · 暂停了 ${b.keys.length} 件` : ""}`, "");
+    const file = this.todayFile();
+    if (file) {
+      const items = parseJournal(await this.app.vault.cachedRead(file), this.settings);
+      const doing = items.filter((t) => t.kind === "task" && t.state === "open" && t.doing);
+      const paused = items.filter((t) => t.kind === "task" && t.state === "open" && t.paused);
+      if (doing.length) lines.push(`▶ 在做 ${doing.length} 件：${doing.map((t) => t.label).join("、")}`);
+      if (paused.length) lines.push(`⏸ 暂停 ${paused.length} 件：${paused.map((t) => t.label).join("、")}`);
+      if (doing.length || paused.length) lines.push("");
+    }
+    lines.push(await this.capacityText());
+    new TextModal(this.app, `现在 · ${moment().format("HH:mm")}`, lines.join("\n"), [
+      ["正在做的事的 Claude 会话", () => this.showDoingAi()],
+      ["打开螺旋日程", () => this.activate()],
+    ]).open();
+  }
+
+  // ⌃⌥C 正在做的事（DOING，加上这一轮专注里的）各自期间的 Claude 会话；再加上最近 15 分钟还在动、没对上任何一件的会话
+  async showDoingAi() {
+    const cfg = this.settings;
+    const file = this.todayFile();
+    if (!file) { new OB.Notice("今天还没有日记"); return; }
+    if (OB.Platform?.isDesktopApp && !this._aiBusy) await this.scanAi();   // 先读一遍最新的会话日志
+    const key = this.today().format(cfg.format);
+    const ai = (await this.aiUsage()).days[key];
+    const items = parseJournal(await this.app.vault.read(file), cfg);
+    const m = moment();
+    const now = normalize(m.hours() * 60 + m.minutes(), cfg);
+    applyWork(items, cfg, key, now, 0, (cfg.dayBounds || {})[key] || {});
+    const s = this.session();
+    const inFocus = new Set(s ? s.tasks.map((t) => t.key) : []);
+    const doing = items.filter((t) => t.kind === "task" && t.state === "open" && (t.doing || inFocus.has(workKey(t.label))));
+    const groups = [], matched = new Set();
+    for (const t of doing) {
+      const list = aiFor(t.worked, ai?.list, t.label);
+      for (const x of list) if (x.related) matched.add(x.sid);
+      groups.push({ name: `▶ ${t.label}`, sub: t.spentToday >= 1 ? `今天做了 ${dur(t.spentToday)}` : "", list });
+    }
+    const live = (ai?.list || []).filter((x) => !matched.has(x.sid) && (x.segs || []).some(([, b]) => b >= now - 15))
+      .map((x) => ({ ...x, related: true, lastAt: Math.max(...x.segs.map(([, b]) => b)) }));
+    if (live.length) {
+      const ids = new Set(live.map((x) => x.sid));
+      for (const g of groups) g.list = g.list.filter((x) => x.related || !ids.has(x.sid));
+      groups.push({ name: "🟢 现在还在跑、没对上哪件的会话", list: live });
+    }
+    if (!doing.length && !live.length) { new OB.Notice("现在没有在做的事，也没有在跑的 Claude 会话"); return; }
+    new AiSessionsModal(this.app, "正在做的事 · Claude 会话", groups).open();
+  }
+
+  // ⌃⌥R 打开螺旋，展开并滚到「📏 预估 vs 实际」
+  async showReview() {
+    await this.activate();
+    this.settings.reviewFolded = false;
+    this.saveSoon();
+    const v = this.views()[0];
+    if (!v) return;
+    v.offset = 0;
+    await v.render();
+    const head = v.containerEl.querySelector(".naut-review-head");
+    if (head) head.scrollIntoView({ block: "start", behavior: "smooth" });
+    else new OB.Notice("还没有够条件的任务：要做完、写了预估、也记到了实际用时");
+  }
+
+  // ---- 预估 vs 实际 ----
+
+  // 复盘数据：先交缓存（同步），过期（10 分钟）了在后台重算，算完有变化再重画
+  reviewData() {
+    if (!this._review || Date.now() - this._review.at > 600e3) {
+      if (!this._reviewBusy) {
+        this._reviewBusy = true;
+        this.computeReview(this.settings.reviewDays || 30)
+          .then((data) => { const changed = JSON.stringify(data) !== JSON.stringify(this._review?.data); this._review = { at: Date.now(), data }; if (changed) this.refresh(); })
+          .catch((e) => console.error("[螺旋日程] 预估复盘失败", e))
+          .finally(() => { this._reviewBusy = false; });
+      }
+    }
+    return this._review?.data || null;
+  }
+
+  // 近 days 天做完的任务里：写了预估（15分钟、2h）、也记到了实际用时的。实际 = DONE 开始-结束 和 DOING 时记的几段合起来（重叠只算一次），加上挪过来之前做掉的
+  async computeReview(days) {
+    const cfg = this.settings;
+    const rows = [];
+    for (let i = 0; i < days; i++) {
+      const d = this.today().subtract(i, "days");
+      const f = this.app.vault.getAbstractFileByPath(this.journalPath(d));
+      if (!(f instanceof TFile)) continue;
+      const text = await this.app.vault.cachedRead(f);
+      const lines = text.split("\n");
+      const key = d.format(cfg.format);
+      const items = parseJournal(text, cfg);
+      applyWork(items, cfg, key, 0, -1, {});
+      for (const t of items) {
+        if (t.kind !== "task" || t.state !== "done" || !(t.est > 0)) continue;
+        const segs = [...(t.worked || []), ...(t.actual ? [t.actual] : [])];
+        if (!segs.length) continue;
+        const actual = Math.round(unionMin(segs) + (t.spentBefore || 0));
+        if (actual < 1) continue;
+        const raw = lines[t.line] || "";
+        // 分类：行里的 #标签 和 [[链接]]（日记日期的链接不算）
+        const cats = [...raw.matchAll(/#([^\s#\[\],，。;；:：]+)/gu)].map((m) => "#" + m[1])
+          .concat([...raw.matchAll(/\[\[([^\]|#]+)/g)].map((m) => m[1].trim()).filter((x) => !/^\d{4}[-_]\d{2}[-_]\d{2}$/.test(x)));
+        rows.push({ day: key, path: f.path, line: t.line, label: t.label, est: t.est, actual, cats: [...new Set(cats)] });
+      }
+      if (i % 5 === 4) await new Promise((r) => setTimeout(r, 0));   // 别把界面卡住
+    }
+    if (!rows.length) return { n: 0, days };
+    const sumE = rows.reduce((n, r) => n + r.est, 0), sumA = rows.reduce((n, r) => n + r.actual, 0);
+    const ratios = rows.map((r) => r.actual / r.est).sort((a, b) => a - b);
+    const byCat = new Map();
+    for (const r of rows) for (const c of r.cats) { const v = byCat.get(c) || { n: 0, e: 0, a: 0 }; v.n++; v.e += r.est; v.a += r.actual; byCat.set(c, v); }
+    const cats = [...byCat].filter(([, v]) => v.n >= 2).map(([cat, v]) => ({ cat, ...v, ratio: v.a / v.e }))
+      .sort((x, y) => Math.abs(Math.log(y.ratio)) - Math.abs(Math.log(x.ratio))).slice(0, 5);
+    const worst = rows.filter((r) => r.actual > r.est * 1.2).sort((x, y) => (y.actual - y.est) - (x.actual - x.est)).slice(0, 3);
+    return { n: rows.length, days, sumE, sumA, ratio: sumA / sumE, median: ratios[Math.floor(ratios.length / 2)],
+      over: rows.filter((r) => r.actual > r.est * 1.2).length, under: rows.filter((r) => r.actual < r.est * 0.8).length, cats, worst };
   }
 
   // ---- macOS 日历 ----
@@ -2147,6 +2447,9 @@ class SpiralSettings extends PluginSettingTab {
     num("吃饭 / 锻炼至少多久（分钟）", "这么久以内不判断「回来了」，吃饭保守估计也得 20 分钟", "breakMinAway", 0, 240);
     text("回来了的判断：在这些 App 里持续操作", "吃饭 / 锻炼过了上面这个时间以后，在这些 App 里连续操作满 3 分钟就算回来了，弹窗问要不要切回 DOING", "breakApps");
     containerEl.createEl("h3", { text: "其它" });
+    new Setting(containerEl).setName("预估 vs 实际").setDesc("列表底部显示近一段时间预估准不准（按标签 / 链接分），容量条上按这个比例给一个「按以往约多久」")
+      .addToggle((t) => t.setValue(s.showReview !== false).onChange(async (v) => { s.showReview = v; await this.plugin.saveData(s); this.plugin.refresh(); }));
+    num("复盘看最近几天", "", "reviewDays", 7, 45);
     new Setting(containerEl).setName("启动时打开今天的日记").setDesc("按上面的「日记日期分界」算今天：已经开着就切过去，没开就开一个新标签，还没有这篇就新建")
       .addToggle((t) => t.setValue(s.openTodayOnStartup !== false).onChange(async (v) => { s.openTodayOnStartup = v; await this.plugin.saveData(s); }));
     new Setting(containerEl).setName("启动时左侧栏显示螺旋日程").setDesc("展开左侧栏并切到螺旋日程标签（Wiki、文件列表等标签还在，点图标切换）")

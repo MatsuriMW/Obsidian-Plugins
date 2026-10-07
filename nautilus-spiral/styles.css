@@ -102,3 +102,27 @@
 .naut-focus-line { display: flex; align-items: center; gap: 6px; font-size: var(--font-ui-smaller); color: var(--naut-prio); font-weight: 600; margin-top: 4px; }
 .naut-focus-line span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .naut-focus-stop { flex: none; font-size: .9em; padding: 0 8px; height: 20px; }
+
+/* 🤖 这件任务期间的 Claude 会话 */
+.naut-ai-badge { flex: none; font-size: .8em; color: var(--naut-ai); margin-left: 4px; cursor: pointer; }
+.naut-ai-badge:hover { text-decoration: underline; }
+.naut-ai-modal .naut-ai-sess { border-left: 3px solid var(--naut-ai, #a371f7); padding: 6px 10px; margin: 10px 0; }
+.naut-ai-sess-title { font-weight: 600; }
+.naut-ai-sess-text { color: var(--text-muted); font-size: var(--font-ui-small); margin-top: 2px; }
+.naut-ai-sess-meta { color: var(--text-faint); font-size: var(--font-ui-smaller); margin-top: 4px; word-break: break-all; }
+.naut-ai-sess-btns { display: flex; gap: 8px; margin-top: 6px; }
+.naut-ai-modal { --naut-ai: #a371f7; }
+
+/* 📏 预估 vs 实际 */
+.naut-review-row { border-left-color: var(--text-faint); }
+.naut-calib { cursor: help; }
+.naut-ai-badge.is-weak { opacity: .45; }
+.naut-ai-sess.is-weak { opacity: .65; border-left-color: var(--background-modifier-border); }
+
+/* 快捷操作 */
+.naut-ai-group { font-weight: 600; margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--background-modifier-border); }
+.naut-status-text { white-space: pre-wrap; font-size: var(--font-ui-small); line-height: 1.6; }
+.naut-quick-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.naut-kbd { flex: none; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.naut-ai-more { margin-top: 8px; }
+.naut-ai-more > summary { cursor: pointer; color: var(--text-muted); font-size: var(--font-ui-small); }
