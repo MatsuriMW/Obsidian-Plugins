@@ -6,6 +6,9 @@
  *    真问题整行从原处挪走（不是复制），集中到文件末尾的「问题汇总」块，回答写在各自下面。
  *    自言自语 / 感叹、游戏相关、提醒式、摘抄里的反问、一行里还有别的内容的，都不动。
  *
+ * 3. SuperTag 字段：列表项里写了 [[标签名]]（比如「- [[菜谱]]毛血旺」），而 SuperTags 插件给这个标签定义了字段，
+ *    就把还没有的字段作为子项「键:: 默认值」插在这一项下面（比如「学会:: 否」），留给你填。已经有的字段不重复插。
+ *
  * 每次改动前会备份原文，「撤销上一次日记整理」可以恢复。
  */
 const { Plugin, Modal, Notice, Setting, TFile, FuzzySuggestModal, PluginSettingTab, moment } = require("obsidian");
@@ -21,6 +24,7 @@ const DEFAULTS = {
     questionBlockTitle: "问题汇总｜[[等待尝试]]",
     moveTodos: true,
     answerQuestions: true,
+    fillFields: true,
     backups: [],
 };
 const MAX_BACKUPS = 5;
@@ -81,6 +85,45 @@ function moveTodos(text) {
     let result = out.join("\n").replace(/\n{3,}/g, "\n\n");
     if (text.endsWith("\n") && !result.endsWith("\n")) result += "\n";
     return { text: result, moved: todos.length };
+}
+
+// SuperTag 字段：defsOf(名字) 返回 [{ key, def }]（来自 SuperTags 插件），没有就是空数组
+function fillSupertagFields(text, defsOf) {
+    const lines = text.split("\n");
+    const fmLen = splitFrontmatter(text).fm.length;
+    // 缩进单位跟着这篇日记：有 Tab 缩进就用 Tab，否则用 4 个空格
+    const unit = lines.some(l => /^\t/.test(l)) || !lines.some(l => /^ {2,}\S/.test(l)) ? "\t" : "    ";
+    const out = [];
+    let inCode = false, added = 0, items = 0;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        out.push(line);
+        if (i < fmLen) continue;
+        if (/^\s*(```|~~~)/.test(line)) { inCode = !inCode; continue; }
+        if (inCode) continue;
+        const m = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])[ \t]/);
+        if (!m) continue;
+        let defs = null;
+        for (const mm of line.matchAll(/\[\[([^\]|#^]+)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]/g)) {
+            const d = defsOf(mm[1].trim());
+            if (d.length) { defs = d; break; }
+        }
+        if (!defs) continue;
+        // 这一项已经写了的字段：行内 [键:: 值] 和子项「键:: 值」
+        const have = new Set([...line.matchAll(/\[([^\[\]:]+?)::/g)].map(f => f[1].trim()));
+        const ind = indentOf(line);
+        for (let j = i + 1; j < lines.length; j++) {
+            if (isBlank(lines[j])) continue;
+            if (indentOf(lines[j]) <= ind) break;
+            const f = lines[j].match(/^\s*(?:[-*+]\s+)?([^:：\s][^:：]*?)::/);
+            if (f) have.add(f[1].trim());
+        }
+        const miss = defs.filter(d => !have.has(d.key));
+        if (!miss.length) continue;
+        items++;
+        for (const d of miss) { out.push(`${m[1]}${unit}- ${d.key}:: ${d.def}`.replace(/\s+$/, " ")); added++; }
+    }
+    return { text: out.join("\n"), added, items };
 }
 
 // 问题汇总块的范围（顶格那行 + 子块）
@@ -239,6 +282,15 @@ module.exports = class JournalTidy extends Plugin {
         await this.backup(file, original);
         const report = [];
         try {
+            // 0. SuperTag 字段（纯本地）：[[菜谱]] 之类的项下面补上字段，让你填
+            if (opt.fillFields) {
+                const st = this.app.plugins.plugins["supertags-local"];
+                if (st && typeof st.fieldDefs === "function") {
+                    let r = null;
+                    await this.app.vault.process(file, (data) => { r = fillSupertagFields(data, (n) => st.fieldDefs(n)); return r.text; });
+                    if (r.added) report.push(`${r.items} 处 SuperTag（如 [[菜谱]]）下面补了 ${r.added} 个字段，记得去填`);
+                }
+            }
             // 1. 任务分区（纯本地，马上完成）
             if (opt.moveTodos) {
                 const dtt = this.app.plugins.plugins["done-to-top"];
@@ -347,7 +399,9 @@ class TidyModal extends Modal {
                 }).open();
             });
         });
-        const opt = { moveTodos: s.moveTodos, answerQuestions: s.answerQuestions };
+        const opt = { moveTodos: s.moveTodos, answerQuestions: s.answerQuestions, fillFields: s.fillFields };
+        new Setting(this.contentEl).setName("补 SuperTag 字段").setDesc("写了 [[菜谱]] 这类 SuperTag 的项，下面插上还没有的字段（如「学会:: 否」），留给你填")
+            .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
         new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 其它，区之间用「- ---」隔开")
             .addToggle(t => t.setValue(opt.moveTodos).onChange(v => { opt.moveTodos = v; }));
         new Setting(this.contentEl).setName("汇总问题并用 AI 回答").setDesc("问句挪到文末「问题汇总」，Claude 联网查证后写回答；自言自语、游戏相关的不动")

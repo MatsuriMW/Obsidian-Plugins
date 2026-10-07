@@ -45,7 +45,7 @@
 | **LLM Wiki** ([`llm-wiki`](llm-wiki)) | 0.1.0 | 左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面，提示哪些新笔记还没摄入，一键让本机 Claude 摄入 / 回答问题，本地体检 wiki 规则。 |
 | **Outline Block** ([`outline-block`](outline-block)) | 1.1.0 | ⌘⌥L：把光标所在的那一个长段落块，整理成层级列表并给核心概念加双链，层级按反链面板来定：引出 [[X]] 的那一项，展开讲 X 的内容都挂成它的子项（调用本机 Claude）。⌘⌥⇧L：整篇笔记（或选中的部分）按同一套规则整理，自动按标题/段落分份并行处理再拼回。先预览再替换。 |
 | **Done To Top** ([`done-to-top`](done-to-top)) | 1.2.0 | 按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急；「发送到明天」把光标所在块移到明天的日记（编辑器里打 /明天 也能叫出来）。 |
-| **日记整理** ([`journal-tidy`](journal-tidy)) | 1.0.0 | 手动一键整理日记：任务按 DONE / DOING / TODO 分区；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。 |
+| **日记整理** ([`journal-tidy`](journal-tidy)) | 1.1.0 | 手动一键整理日记：任务按 DONE / DOING / TODO 分区；写了 [[菜谱]] 这类 SuperTag 的项下面补上它的字段（如「学会:: 否」）留给你填；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。 |
 | **任务提醒** ([`nautilus-notify`](nautilus-notify)) | 0.1.0 | 用 macOS 通知横幅提醒今天日记里的任务：快开始的事件、过点没做的待办、做太久的 DOING、完成时的祝贺、排不下的容量预警、下一件该做什么、今日简报和收尾提醒。分析全部来自螺旋日程插件。 |
 | **块引用增强** ([`block-ref-plus`](block-ref-plus)) | 0.1.0 | 仿思源：[[页#^id]] 显示被引用块的当前内容（动态锚文本）；被引用的块旁边显示引用次数，点开可跳到引用处。只改显示，不改文件。 |
 | **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.0.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。 |
@@ -68,7 +68,7 @@
 | 插件 | 版本 | 说明 |
 |---|---|---|
 | **Telegram Inbox（自用）** ([`telegram-inbox-local`](telegram-inbox-local)) | 1.9.2 | Receive messages from Telegram bot and add them to daily note. |
-| **SuperTags（自用）** ([`supertags-local`](supertags-local)) | 1.2.3-local | Tana 式 supertag：日记里一行带 #标签 → 建成带属性的笔记。自用改版：边界匹配、字段、Bike 安全。 |
+| **SuperTags（自用）** ([`supertags-local`](supertags-local)) | 1.3.0-local | Tana 式 supertag：日记里一行带 #标签 → 建成带属性的笔记。自用改版：边界匹配、每个标签可定义字段（键 + 默认值，日记整理时自动插到 [[标签名]] 下面）、Bike 安全。 |
 | **Flashcards** ([`flashcards-obsidian`](flashcards-obsidian)) | 9999.0.0 | Create and sync Anki flashcards from your notes. |
 | **Expandomatic** ([`expandomatic`](expandomatic)) | 9999.0.0 | Expand selection outward through word, sentence, paragraph, section, document — like VSCode's expand selection. |
 | **MDFlow（自用）** ([`mdflow-local`](mdflow-local)) | 1.4.1-local | 把 Markdown 排成公众号、X Articles、小红书图片。本地自用版，不从插件市场更新。 |

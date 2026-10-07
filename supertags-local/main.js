@@ -160,6 +160,10 @@ var AtomCreatorSettingTab = class extends import_obsidian.PluginSettingTab {
         supertag.frontmatterTemplate = v;
         await this.plugin.saveSettings();
       });
+      this.inlineTextarea(card, "字段 Fields（键: 默认值，一行一个；新建页面写进属性，整理日记时插到 [[标签名]] 下面让你填）", supertag.fields || "", async (v) => {
+        supertag.fields = v;
+        await this.plugin.saveSettings();
+      });
       this.inlineTextarea(card, "Body template", supertag.bodyTemplate, async (v) => {
         supertag.bodyTemplate = v;
         await this.plugin.saveSettings();
@@ -207,6 +211,22 @@ function renderTemplate(template, vars) {
     return (_a = vars[key]) != null ? _a : "";
   });
 }
+// 字段（Field）：每个 supertag 可以单独定义一组「键: 默认值」（一行一个）。
+//   · 新建页面时和属性模板合在一起写进属性；已有页面缺的补上
+//   · 日记整理（journal-tidy）碰到写了 [[标签名]] 的列表项，会把这些字段作为子项「键:: 默认值」插在下面，让你填
+function fmTemplateOf(st) {
+  return st.fields && st.fields.trim() ? st.frontmatterTemplate.replace(/\s*$/, "") + "\n" + st.fields.trim() : st.frontmatterTemplate;
+}
+function parseFieldDefs(text) {
+  const out = [];
+  for (const line of String(text || "").split("\n")) {
+    const m = line.match(/^([^:#\s][^:]*?):\s*(.*)$/);
+    if (!m) continue;
+    const v = m[2].trim();
+    out.push({ key: m[1].trim(), def: /^\[\s*\]$/.test(v) ? "" : v.replace(/^\[|\]$/g, "").replace(/^"(.*)"$/, "$1") });
+  }
+  return out;
+}
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function tagRe(tag, flags) {
   return new RegExp(`(?<![\\w#/&])${escRe(tag)}(?![\\w/\\-\\u3400-\\u9fff])`, flags || "i");
@@ -242,7 +262,7 @@ function buildNote(supertag, title, subLines, fields, source) {
   const dateLink = `${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}`;
   const content = subLines.length ? subLines.map((l) => "- " + l).join("\n") + "\n\n" : "";
   const vars = { title, date, dateLink, content, source };
-  const frontmatter = applyFields(renderTemplate(supertag.frontmatterTemplate, vars), fields);
+  const frontmatter = applyFields(renderTemplate(fmTemplateOf(supertag), vars), fields);
   const body = renderTemplate(supertag.bodyTemplate, vars);
   return `---
 ${frontmatter}
@@ -400,7 +420,7 @@ async function processFile(file, settings, app, attempt = 0) {
         targetPath = existing.path;
         // 已有的页：模板里有值、页上还没有的属性补上（比如 #待读 的 清单 / 状态），显式写的字段覆盖
         let tpl = {};
-        try { tpl = (0, import_obsidian2.parseYaml)(renderTemplate(matchedTag.frontmatterTemplate, { title, source: file.basename, date: window.moment().format("YYYY-MM-DD") })) || {}; } catch (e) { tpl = {}; }
+        try { tpl = (0, import_obsidian2.parseYaml)(renderTemplate(fmTemplateOf(matchedTag), { title, source: file.basename, date: window.moment().format("YYYY-MM-DD") })) || {}; } catch (e) { tpl = {}; }
         await fileManager.processFrontMatter(existing, (fm) => {
           for (const [k, v] of Object.entries(tpl)) if (fm[k] == null && v != null && v !== "" && !(Array.isArray(v) && !v.length)) fm[k] = v;
           for (const [k, v] of Object.entries(fields)) fm[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
@@ -560,6 +580,12 @@ var AtomCreator = class extends import_obsidian3.Plugin {
   isWatched(path) {
     const folders = this.settings.watchFolders.split(",").map((f) => f.trim()).filter(Boolean);
     return folders.some((f) => path.startsWith(f));
+  }
+  // 给别的插件（日记整理）用：按名字找 supertag 的字段。名字可以是标签（#菜谱）、去掉 # 的标签（菜谱）或显示名
+  fieldDefs(name) {
+    const n = String(name || "").trim().toLowerCase();
+    const st = this.settings.supertags.find((t) => t.fields && t.fields.trim() && [t.tag, t.tag.replace(/^#/, ""), t.name].some((x) => String(x).toLowerCase() === n));
+    return st ? parseFieldDefs(st.fields) : [];
   }
   // Called from SettingTab when tag or color changes
   refreshDecorations() {
