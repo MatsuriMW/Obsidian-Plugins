@@ -16,6 +16,7 @@ block-ref-plus
 palette-split-open
 bookmark-icons
 qws-bridge
+draft-desk
 list-paste-merge
 board-jump
 esc-select-block

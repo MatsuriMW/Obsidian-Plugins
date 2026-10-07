@@ -50,6 +50,7 @@
 | **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.0.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。 |
 | **书签图标** ([`bookmark-icons`](bookmark-icons)) | 0.1.0 | 书签面板里每个笔记换成各自的图标（淡色底小方块），不再都是同一个文件图标；笔记属性 icon / icon-color 可以自己指定。只改显示。 |
 | **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |
+| **稿件台** ([`draft-desk`](draft-desk)) | 0.0.1 | 写稿时按步骤调用工具：① 脉络（grill-me 压测、方向发散）② 落实（填坑、概念锚点检索、QWS 补料）④ 扩写（扩写、正式化、文白交杂）⑤ 修整（规范排版、口癖计数、列表连成段落）。挂在写作模式面板上。设计中，还没有代码。 |
 | **List Paste Merge** ([`list-paste-merge`](list-paste-merge)) | 1.0.0 | 在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。 |
 | **看板直达** ([`board-jump`](board-jump)) | 0.1.0 | 一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接 |
 | **编辑体验 Logseq 化** ([`esc-select-block`](esc-select-block)) | 2.1.0 | 仿 Logseq：Esc 选中光标所在的整个列表块（含所有子项；普通段落不算块），选中后 ↑↓ 在列表块之间切换（跳过中间的段落和标题）、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文，不分输入法）会把文字包起来而不是替换，连按两次 [ 就是双链。 |
