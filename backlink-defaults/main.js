@@ -58,6 +58,54 @@ const CASE_KEYS = ["大小写敏感", "case-sensitive"];
 // 离开这一页再回来、或者重新打开这一页时，再整体重新读取
 const FREEZE_AFTER_LINK = true;
 
+// 反链里就地编辑（✎）时：选中文字后输入成对符号 = 包起来，不替换（中文、英文输入法都一样）。
+// 和「编辑体验 Logseq 化」插件、Keyboard Maestro 快速记录框同一套规则：
+// 选中「文字」输入 [ → [文字]，再输入 [ → [[文字]]；中文输入法下 【 也一样，【文字】 再输入 【 → [[文字]]
+const PAIR_WRAP = true;
+const PAIRS = { "(": ")", "[": "]", "{": "}", "<": ">", '"': '"', "'": "'", "`": "`",
+  "（": "）", "【": "】", "「": "」", "『": "』", "《": "》", "〈": "〉", "“": "”", "‘": "’" };
+const CLOSE_TO_OPEN = {};
+for (const o in PAIRS) if (o !== PAIRS[o]) CLOSE_TO_OPEN[PAIRS[o]] = o;
+
+// 给一个 textarea 装上「成对符号包裹」。不管字符是直接输入还是输入法上屏，都是事后看：
+// 「选中的文字被换成了一个成对符号」就改成包裹（走 execCommand，⌘Z 能撤销）
+function watchPairWrap(ta) {
+  const doc = ta.ownerDocument || document;
+  let snap = null, composing = false;
+  const takeSnap = () => { snap = { value: ta.value, s: ta.selectionStart, e: ta.selectionEnd, back: ta.selectionDirection === "backward" }; };
+  const snapNow = (e) => { if (!composing && !(e && e.isComposing)) takeSnap(); };
+  const wrapIfReplaced = (o) => {
+    takeSnap();
+    if (!o || o.s === o.e || !ta.isConnected) return;
+    const v = ta.value;
+    if (v.length !== o.value.length - (o.e - o.s) + 1) return;
+    if (v.slice(0, o.s) !== o.value.slice(0, o.s) || v.slice(o.s + 1) !== o.value.slice(o.e)) return;
+    const ch = v.charAt(o.s), open = PAIRS[ch] ? ch : CLOSE_TO_OPEN[ch];
+    if (!open) return;
+    const text = o.value.slice(o.s, o.e), before = o.value.charAt(o.s - 1), after = o.value.charAt(o.e);
+    let from = o.s, to = o.s + 1, ins, a;
+    if ((open === "[" || open === "【") && o.s > 0 && ((before === "[" && after === "]") || (before === "【" && after === "】"))) {
+      from = o.s - 1; to = o.s + 2; ins = "[[" + text + "]]"; a = o.s + 1;   // 第二次按：[文字] / 【文字】 → [[文字]]
+    } else {
+      ins = open + text + PAIRS[open]; a = o.s + open.length;
+    }
+    ta.setSelectionRange(from, to);
+    doc.execCommand("insertText", false, ins);
+    ta.setSelectionRange(a, a + text.length, o.back ? "backward" : "forward");
+    takeSnap();
+  };
+  // 「改动前」的快照：选区变了、按键前、输入前都记一次（WebKit 和 Chromium 触发的事件不完全一样）
+  const onSel = () => { if (!ta.isConnected) doc.removeEventListener("selectionchange", onSel); else if (doc.activeElement === ta) snapNow(); };
+  doc.addEventListener("selectionchange", onSel);
+  ta.addEventListener("keydown", snapNow);
+  ta.addEventListener("beforeinput", snapNow);
+  ta.addEventListener("compositionstart", () => { takeSnap(); composing = true; });
+  // 放到下一个时刻做：输入事件还在分发时调 execCommand 会被忽略
+  ta.addEventListener("input", (e) => { if (composing || e.isComposing) return; const o = snap; setTimeout(() => wrapIfReplaced(o), 0); });
+  ta.addEventListener("compositionend", () => { composing = false; const o = snap; setTimeout(() => wrapIfReplaced(o), 0); });
+  takeSnap();
+}
+
 module.exports = class BacklinkDefaults extends Plugin {
   onload() {
     // 每个面板只设置一次，之后你在该面板里手动切换的选项会保留
@@ -671,6 +719,7 @@ module.exports = class BacklinkDefaults extends Plugin {
     const ta = wrap.createEl("textarea", { cls: "bd-edit-input" });
     ta.value = shown;
     ta.spellcheck = false;
+    if (PAIR_WRAP) watchPairWrap(ta);
     const bar = wrap.createDiv({ cls: "bd-edit-bar" });
     bar.createSpan({ cls: "bd-edit-hint", text: "⌘↩/⌘S 保存 · Esc 取消 · ⌘B 粗 ⌘I 斜 ⌘E 码 ⌘⇧H 高亮" });
     const cancelBtn = bar.createEl("button", { text: "取消" });
