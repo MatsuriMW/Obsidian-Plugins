@@ -1,0 +1,29 @@
+/* 快捷键总览：筛选工具栏 */
+.ha-bar { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.ha-bar .ha-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ha-bar .ha-row-label { flex: 0 0 3.5em; color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.ha-bar .ha-row .setting-group-filters { flex: 1 1 auto; flex-wrap: wrap; justify-content: flex-start; align-items: center; }
+/* 插件下拉：按内容宽度、文字左对齐，和左边的「全部 / 自制…」对齐 */
+.ha-bar .ha-plugin-select { flex: 0 0 auto; width: auto; max-width: 22em; margin: 0; text-align: left; text-align-last: left; field-sizing: content; min-width: 0; font-size: var(--font-ui-smaller); }
+.ha-bar .ha-summary { color: var(--text-muted); font-size: var(--font-ui-smaller); padding: 2px 0 0 calc(3.5em + 8px); }
+
+/* 分组标题 */
+.ha-group-head {
+  display: flex; align-items: baseline; gap: 8px; cursor: var(--cursor-link, pointer);
+  padding: 10px var(--size-4-3, 12px) 6px; margin-top: 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: sticky; top: 0; z-index: 1; background: var(--background-primary);
+}
+.ha-group-head:hover .ha-group-name { color: var(--text-accent); }
+.ha-group-caret { color: var(--text-faint); width: 1em; }
+.ha-group-name { font-weight: var(--font-semibold); color: var(--text-normal); }
+.ha-group-stat { color: var(--text-faint); font-size: var(--font-ui-smaller); }
+.ha-tag { font-size: var(--font-ui-smaller); padding: 0 6px; border-radius: var(--radius-s); background: var(--background-modifier-hover); color: var(--text-muted); }
+.ha-tag.ha-src-mine { background: color-mix(in srgb, var(--interactive-accent) 18%, transparent); color: var(--text-accent); }
+.ha-tag.ha-src-mod { background: color-mix(in srgb, var(--color-orange) 15%, transparent); color: var(--color-orange); }
+.ha-tag.ha-conflict { background: color-mix(in srgb, var(--text-error) 15%, transparent); color: var(--text-error); }
+
+/* 我改过的命令：左边一道强调色；情境快捷键：淡一点、虚线框表示不能改 */
+.mod-hotkeys .setting-item.ha-mine { box-shadow: inset 2px 0 0 var(--interactive-accent); }
+.mod-hotkeys .setting-item.ha-context .setting-item-name { color: var(--text-muted); }
+.mod-hotkeys .setting-hotkey.ha-context-key { border: 1px dashed var(--background-modifier-border-hover); background: transparent; color: var(--text-muted); }

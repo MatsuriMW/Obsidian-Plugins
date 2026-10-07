@@ -14,7 +14,8 @@ const BACKLINK_COLLAPSED = false;
 const UNLINKED_COLLAPSED = true;
 // 这些文件夹里的笔记，正文底部不显示反链（给视图加 no-backlinks 类，样式在 styles.css）
 const NO_BACKLINK_FOLDERS = ["日记/"];
-// Roam 式面包屑：命中块上方一行灰字，列出它所在的完整路径（所属标题 › 各级母块），点任意一级跳到那一行
+// Roam 式面包屑：命中块上方一行灰字，列出它所在的完整路径（所属标题 › 各级母块）。
+// 点某一级 = 就地展开到那一级（连同和命中块并列的兄弟块一起显示），可以再点更外一级继续展开；⌘点 = 跳到原文；Shift 点 = 右侧栏打开
 const SHOW_BREADCRUMBS = true;
 // 面包屑里带上命中块所在的标题层级（Roam 没有标题，Obsidian 里标题就是块的上级）
 const CRUMB_HEADINGS = true;
@@ -434,6 +435,65 @@ module.exports = class BacklinkDefaults extends Plugin {
     return { start, end, heading };
   }
 
+  // 点面包屑展开到的那一级（m.__bdRoot = 那一级母块 / 标题的行号）：显示它连同全部子块，也就是命中块和它并列的兄弟块一起。
+  // 返回 { ctx, range }，ctx 换成以那一级为「命中项」的上下文，面包屑随之少掉这一级；原文变了对不上就退回默认显示
+  expandedView(m, ctx) {
+    const line = m.__bdRoot, c = m.content;
+    if (line == null) return null;
+    const trim = (start, end) => { while (end > start && /\s/.test(c[end - 1])) end--; return end; };
+    const i = ctx ? ctx.chain.findIndex((it) => it.position.start.line === line) : -1;
+    if (i >= 0) {
+      const root = ctx.chain[i], start = ctx.lineStart(root);
+      return {
+        ctx: { item: root, items: ctx.items, chain: ctx.chain.slice(0, i), lineStart: ctx.lineStart },
+        range: { start, end: trim(start, this.subtreeEnd(ctx.items, root)), heading: null },
+      };
+    }
+    const hs = (m.cache && m.cache.headings) || [];
+    const h = hs.find((x) => x.position.start.line === line);
+    if (h && h.position.start.offset <= m.start) {
+      const next = hs.slice(hs.indexOf(h) + 1).find((x) => x.level <= h.level);
+      const start = h.position.start.offset;
+      return { ctx: null, range: { start, end: trim(start, next ? next.position.start.offset : c.length), heading: h } };
+    }
+    m.__bdRoot = null;
+    return null;
+  }
+
+  // 列表项连同全部子块的结尾（列表项的 position 不含子块，要把后面挂在它下面的项都算上）
+  subtreeEnd(items, root) {
+    const rootLine = root.position.start.line;
+    const byLine = new Map();
+    for (const it of items) if (!byLine.has(it.position.start.line)) byLine.set(it.position.start.line, it);
+    const under = (it) => {
+      const seen = new Set();
+      for (let p = it.parent; p >= 0 && !seen.has(p); p = byLine.has(p) ? byLine.get(p).parent : -1) {
+        if (p === rootLine) return true;
+        seen.add(p);
+      }
+      return false;
+    };
+    let end = root.position.end.offset;
+    for (let i = items.indexOf(root) + 1; i < items.length; i++) {
+      const it = items[i];
+      // 「- 1. xxx」同一行解析出的内层项（parent 是负数）：这一行已经算进来了，跟着算
+      const sameLine = byLine.get(it.position.start.line) !== it;
+      if (!sameLine && it.position.start.line !== rootLine && !under(it)) break;
+      end = Math.max(end, it.position.end.offset);
+    }
+    return end;
+  }
+
+  // 展开 / 收起到某一级后，这一条和同一篇里排在后面的都重画：被展开范围包进去的后续命中会并进来，收起后再分出去
+  expandTo(m, line) {
+    m.__bdRoot = line;
+    if (line != null) m.__bdExpanded = true;   // 展开上下文就是为了看全，不再按行数折叠
+    const sibs = (m.parentDom && m.parentDom.vChildren && m.parentDom.vChildren._children) || [];
+    const at = sibs.indexOf(m);
+    m.render();
+    if (at >= 0) for (const s of sibs.slice(at + 1)) s.render();
+  }
+
   // Roam 式面包屑：所在的各级标题 + 各级母块，从外到内。每项 { line, text }
   breadcrumbs(m, ctx, range) {
     const content = m.content, crumbs = [];
@@ -542,10 +602,13 @@ module.exports = class BacklinkDefaults extends Plugin {
   decorate(m) {
     const content = m.content;
     if (typeof content !== "string") return;
-    const ctx = this.listContext(m);
-    const range = (m.__bdRange = this.displayRange(m, ctx));
-    const prev = this.prevShown(m);
+    let ctx = this.listContext(m);
+    let range = this.displayRange(m, ctx);
     m.__bdBlockKey = this.blockKey(m, ctx);
+    const ex = this.expandedView(m, ctx);
+    if (ex) ({ ctx, range } = ex);
+    m.__bdRange = range;
+    const prev = this.prevShown(m);
     const miss = this.caseMiss(m, m.parentDom);
     m.__bdDup = miss || this.isDup(m, prev, m.parentDom);
     m.el.toggleClass("bd-dup", m.__bdDup);
@@ -557,10 +620,11 @@ module.exports = class BacklinkDefaults extends Plugin {
     const crumbs = SHOW_BREADCRUMBS ? this.breadcrumbs(m, ctx, range) : [];
     // 和上一条的路径完全相同就不再重复显示面包屑，接在上一条下面
     const key = crumbs.map((c) => c.line).join(",");
-    const cont = !!(prev && crumbs.length && prev.__bdCrumbKey === key);
+    const expanded = m.__bdRoot != null;
+    const cont = !!(prev && crumbs.length && prev.__bdCrumbKey === key && !expanded);
     m.__bdCrumbKey = key;
     m.el.toggleClass("bd-cont", cont);
-    const crumbEl = crumbs.length && !cont ? this.renderCrumbs(m, crumbs) : null;
+    const crumbEl = (crumbs.length && !cont) || expanded ? this.renderCrumbs(m, crumbs) : null;
     if (RENDER_MARKDOWN) this.renderMarkdown(m, ctx, range, crumbEl);
     else if (crumbEl) m.el.insertBefore(crumbEl, m.el.firstChild);
     if (INLINE_EDIT) this.addEditButton(m, ctx);
@@ -660,18 +724,28 @@ module.exports = class BacklinkDefaults extends Plugin {
     const el = createDiv({ cls: "bd-crumbs" });
     // 面包屑行里点空白处什么也不做（不进编辑、不跳转）
     el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+    // 点 = 展开到这一级（连同它下面并列的子块一起显示，可以一级级往外点）· ⌘点 = 跳到原文 · Shift 点 = 在右侧栏打开
     crumbs.forEach((c, i) => {
       if (i) el.createSpan({ cls: "bd-crumb-sep", text: "›" });
-      const span = el.createSpan({ cls: "bd-crumb", attr: { "aria-label": "跳到这一行（⌘点 = 新标签）" } });
+      const span = el.createSpan({ cls: "bd-crumb" });   // 不加悬停提示
       this.inlineText(span, c.text);
-      span.title = span.textContent;
       span.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         if (SHIFT_STACK && e.shiftKey) this.openStackedFile(m.parentDom.file, c.line);
-        else this.openAt(m.parentDom.file, c.line, Keymap.isModEvent(e));
+        else if (e.metaKey || e.ctrlKey) this.openAt(m.parentDom.file, c.line, false);
+        else this.expandTo(m, c.line);
       });
     });
+    if (m.__bdRoot != null) {
+      const back = el.createSpan({ cls: "bd-crumb-reset", text: "收起" });
+      back.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        m.__bdExpanded = false;
+        this.expandTo(m, null);
+      });
+    }
     return el;
   }
 
@@ -720,7 +794,10 @@ module.exports = class BacklinkDefaults extends Plugin {
   editRange(m, ctx) {
     const c = m.content;
     let start, end;
-    if (ctx) {
+    if (m.__bdRoot != null && m.__bdRange) {
+      // 展开到上一级时，编辑的就是显示出来的整块
+      start = m.__bdRange.start; end = m.__bdRange.end;
+    } else if (ctx) {
       start = ctx.lineStart(ctx.item);
       end = Math.max(m.end, ctx.item.position.end.offset);
       if (m.start !== start) end = ctx.item.position.end.offset;   // 没开「更多上下文」：只编辑这一项自己
@@ -925,7 +1002,7 @@ module.exports = class BacklinkDefaults extends Plugin {
   renderMarkdown(m, ctx, range, crumbEl) {
     const content = m.content;
     let lines, folded = 0, foldable = false, line0 = -1;
-    if (ctx && m.start === ctx.lineStart(ctx.item)) {
+    if (ctx && (m.__bdRoot != null || m.start === ctx.lineStart(ctx.item))) {
       const indent = content.substring(ctx.lineStart(ctx.item), ctx.item.position.start.offset);
       lines = this.reindent(content.substring(range.start, range.end), indent, 0).split("\n");
       line0 = ctx.item.position.start.line;

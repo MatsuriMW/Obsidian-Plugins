@@ -14,6 +14,7 @@ journal-tidy
 nautilus-notify
 block-ref-plus
 palette-split-open
+hotkey-atlas
 bookmark-icons
 qws-bridge
 draft-desk
@@ -24,6 +25,7 @@ task-toggle
 close-sidebar-files
 board-zoom
 journal-edit-mode
+diary-nav
 
 ## 改过的社区插件（改动从多到少）
 telegram-inbox-local

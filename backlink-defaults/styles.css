@@ -16,6 +16,11 @@
 .search-result-file-match .bd-crumb-sep { color: var(--text-faint); opacity: 0.7; }
 .search-result-file-match .bd-crumb-link { color: var(--text-accent); opacity: 0.75; }
 .search-result-file-match .bd-crumb-tag { color: var(--tag-color, var(--text-accent)); opacity: 0.75; }
+/* 面包屑展开过上下文后，行尾的「收起」 */
+.search-result-file-match .bd-crumb-reset {
+  margin-left: 0.4em; color: var(--text-accent); opacity: 0.8; cursor: var(--cursor-link, pointer);
+}
+.search-result-file-match .bd-crumb-reset:hover { opacity: 1; text-decoration: underline; }
 /* 母块已经作为引用显示，子块里的引用并进去，不单独占一条 */
 .search-result-file-match.bd-dup { display: none; }
 

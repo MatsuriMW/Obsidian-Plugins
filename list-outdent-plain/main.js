@@ -1,10 +1,9 @@
 // 列表提到底（⌘[）：顶格的列表项再往前提，就取消列表格式，变成普通段落
 //   · 光标 / 选区碰到的行全是顶格列表项时才接管：去掉「- 」「1. 」和复选框，文字留在原处
 //   · 这一项下面的子项（缩进比它深的连续行）整体往前提一级，不会变成悬空的缩进
-//   · 只要有一行不是顶格列表项（有缩进、普通文字），就交回给默认的 ⌘[，照常减少缩进
+//   · 只要有一行不是顶格列表项（有缩进、普通文字），就照常减少缩进
+// 注册成 Obsidian 命令（默认 ⌘[），可以在「设置 → 快捷键」里搜到、改键
 const { Plugin } = require("obsidian");
-const { keymap } = require("@codemirror/view");
-const { Prec } = require("@codemirror/state");
 
 // 缩进 / 列表符号 / 空白 / 复选框
 const ITEM_RE = /^([ \t]*)([-*+]|\d+[.)])([ \t]+|$)(\[[^\]]\][ \t]+)?/;
@@ -51,6 +50,13 @@ function outdentToPlain(view) {
 
 module.exports = class ListOutdentPlain extends Plugin {
 	onload() {
-		this.registerEditorExtension(Prec.highest(keymap.of([{ key: "Mod-[", run: outdentToPlain }])));
+		this.addCommand({
+			id: "outdent",
+			name: "减少缩进（顶格列表项再按 = 变成普通文字）",
+			hotkeys: [{ modifiers: ["Mod"], key: "[" }],
+			editorCallback: (editor) => {
+				if (!(editor.cm && outdentToPlain(editor.cm))) editor.exec("indentLess");
+			},
+		});
 	}
 };

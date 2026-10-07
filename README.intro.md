@@ -15,7 +15,7 @@
 ### 知识库与写作
 
 - **第二大脑**（[`second-brain`](second-brain)）：每日回顾（那年今日 / 随机旧块 / 孤岛笔记）；写作模式按光标所在段落实时找库里意思相近的块（本机 Ollama 向量 + BM25 混合）；每周生成库周报。
-- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：反链与导出增强。反链面板按关系紧密度排页面，日记按日期分月 / 分年折叠，命中块带 Roam 式面包屑；导出 PDF 时可以附上「链接到当前文件」的内容，并选字体、强调色。
+- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：目标是提供和 Logseq / Roam Research 一样的反链面板体验，以及比 Logseq 更好的导出功能。反链以块为单位、按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文（⌘点跳原文、Shift 点侧栏打开），点块就地编辑；页面按关系紧密度排，日记按月 / 按年折叠，可以按共现页面筛选和分组。导出 PDF 时可以把「链接到当前文件」的全部内容一起带上，并选字体、字号、强调色。[完整说明 →](backlink-defaults/README.md)
 - **LLM Wiki**（[`llm-wiki`](llm-wiki)）：左侧栏的 Wiki 面板，按主题列页面、提示哪些新笔记还没摄入，一键让本机 Claude 摄入或回答问题。
 - **Outline Block**（[`outline-block`](outline-block)）：⌘⌥L 把一段长文整理成层级列表并加双链，层级按反链面板的逻辑来定；先预览再替换。
 - **块引用增强**（[`block-ref-plus`](block-ref-plus)）：仿思源，`[[页#^id]]` 显示被引用块的当前内容，被引用的块旁边显示引用次数。
@@ -25,6 +25,7 @@
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）：照 Chrome 做的标签页分组：命名、颜色、折叠、拖色块移动整组、移至新窗口，加上 Chrome 的右键菜单。
 - **书签图标**（[`bookmark-icons`](bookmark-icons)）：书签面板里每个看板换成各自的彩色图标，不再是一排一样的文件图标；笔记属性 `icon` / `icon-color` 可以自己指定。
 - **Palette Enhancements**（[`palette-split-open`](palette-split-open)）：Better Command Palette 文件搜索增强：⌘⌥↵ 右侧拆分打开；文件名搜不到时自动搜正文；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。
+- **快捷键总览**（[`hotkey-atlas`](hotkey-atlas)）：给「设置 → 快捷键」加按插件的聚类和透视：按插件分组，每组显示有几个快捷键、几个改过、几处冲突；按来源（自制 / 改版 / 社区 / 核心）和单个插件筛选；只在某个场景生效的情境快捷键也按插件列出来。
 
 ### 改得最多的社区插件
 

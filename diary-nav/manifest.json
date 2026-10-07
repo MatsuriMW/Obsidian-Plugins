@@ -1,0 +1,9 @@
+{
+  "id": "diary-nav",
+  "name": "日记翻页 + 刷新",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "⌘R 刷新当前页面；在日记里，前进/后退 = 后一天/前一天的日记，其他页面照常前进/后退",
+  "author": "马自立",
+  "isDesktopOnly": false
+}
