@@ -39,7 +39,7 @@
 |---|---|---|
 | **螺旋日程** ([`nautilus-spiral`](nautilus-spiral)) | 0.1.0 | 仿 Roam 的 Nautilus：把今天日记里的事件和待办画成螺旋日程，未完成的任务从「现在」往后流，带容量条。只读日记不写日记，日记可以在 Bike 里写。 |
 | **第二大脑（自用）** ([`second-brain`](second-brain)) | 0.2.0 | 每日回顾（那年今日 / 随机旧块 / 孤岛笔记）、写作模式（相关笔记 + Claudian）、库周报。 |
-| **Backlink Defaults** ([`backlink-defaults`](backlink-defaults)) | 0.1.0 | 反链面板重排：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑；未链接提及默认折叠。 |
+| **Backlinks and Export** ([`backlink-defaults`](backlink-defaults)) | 0.1.0 | 反链与导出增强。反链面板：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑，未链接提及默认折叠，「转为链接」后不打断阅读位置。导出 PDF：可附上「链接到当前文件」的内容，可选字体、字号、强调色和精致排版。 |
 | **Chrome Tab Groups** ([`chrome-tab-groups`](chrome-tab-groups)) | 1.0.0 | 仿 Chrome 的标签页管理：标签页分组（命名、颜色、折叠、拖色块移动整组、移至新窗口）、右键菜单（在右侧新建、向新拆分视图添加、添加到组、复制标签页）、搜索标签页。 |
 | **LLM Wiki** ([`llm-wiki`](llm-wiki)) | 0.1.0 | 左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面，提示哪些新笔记还没摄入，一键让本机 Claude 摄入 / 回答问题，本地体检 wiki 规则。 |
 | **Outline Block** ([`outline-block`](outline-block)) | 1.1.0 | ⌘⌥L：把光标所在的那一个长段落块，整理成层级列表并给核心概念加双链，层级按反链面板来定：引出 [[X]] 的那一项，展开讲 X 的内容都挂成它的子项（调用本机 Claude）。⌘⌥⇧L：整篇笔记（或选中的部分）按同一套规则整理，自动按标题/段落分份并行处理再拼回。先预览再替换。 |
@@ -52,7 +52,7 @@
 | **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |
 | **List Paste Merge** ([`list-paste-merge`](list-paste-merge)) | 1.0.0 | 在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。 |
 | **看板直达** ([`board-jump`](board-jump)) | 0.1.0 | 一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接 |
-| **编辑体验 Logseq 化** ([`esc-select-block`](esc-select-block)) | 2.0.0 | 仿 Logseq：Esc 选中光标所在的整块（含所有子项），选中后 ↑↓ 在块之间切换、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文）会把文字包起来而不是替换，连按两次 [ 就是双链。 |
+| **编辑体验 Logseq 化** ([`esc-select-block`](esc-select-block)) | 2.1.0 | 仿 Logseq：Esc 选中光标所在的整个列表块（含所有子项；普通段落不算块），选中后 ↑↓ 在列表块之间切换（跳过中间的段落和标题）、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文，不分输入法）会把文字包起来而不是替换，连按两次 [ 就是双链。 |
 | **任务状态快切** ([`task-toggle`](task-toggle)) | 0.1.0 | ⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；不写文件、不等保存，可以连按 |
 | **Close Sidebar Files** ([`close-sidebar-files`](close-sidebar-files)) | 1.0.0 | 一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。 |
 | **看板聚焦** ([`board-zoom`](board-zoom)) | 0.1.0 | 从 DataView 看板点开某一条时，自动用 Bullet 插件 zoom in 聚焦到那个列表块。 |

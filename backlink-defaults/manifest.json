@@ -1,9 +1,9 @@
 {
   "id": "backlink-defaults",
-  "name": "Backlink Defaults",
+  "name": "Backlinks and Export",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "反链面板重排：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑；未链接提及默认折叠。",
+  "description": "反链与导出增强。反链面板：页面按关系紧密度在前（互链 > 属性链接 > 提及次数），日记按日期在后、按月 / 按年折叠，命中块带 Roam 式面包屑，未链接提及默认折叠，「转为链接」后不打断阅读位置。导出 PDF：可附上「链接到当前文件」的内容，可选字体、字号、强调色和精致排版。",
   "author": "马自立",
   "isDesktopOnly": false
 }

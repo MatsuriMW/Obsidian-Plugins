@@ -3,8 +3,12 @@
 // 一、Esc 选中整块
 //   · 光标在列表里按 Esc：选中光标所在的列表项连同它所有子项 / 续行，从行首选到下一行开头
 //     （带上换行，⌘C 复制保留层级，⌘X / 删除能把整块干净拿掉）
+//   · 「块」只指无序 / 有序列表项（连同子项）。普通段落、标题不算块，按 Esc 不接管
 //   · 选中状态下按 ↑ / ↓：选中上一块 / 下一块，保持选中状态，不回到编辑（顺序和 Logseq 一样：
-//     ↓ 先进第一个子项，↑ 先到上面最近的那一块，可能是上一个兄弟的最后一个子项）
+//     ↓ 先进第一个子项，↑ 先到上面最近的那一块，可能是上一个兄弟的最后一个子项）；
+//     中间隔着普通段落、标题时跳过去，接着找下一个列表项
+//   · 方向键要用最高优先级：Obsidian 自己在实时预览里给 ↑↓ 挂了同级（high）的处理，
+//     有选区时会把选区收成光标并吞掉按键，插件的同级处理排在它后面，根本轮不到
 //   · 选中状态下按 ⇧↑ / ⇧↓：把上一块 / 下一块加进选区
 //   · 选中状态下按 Enter：回到编辑，光标放在当前块首行末尾
 //   · 再按一次 Esc：取消选中；没移动过就回到原来的光标位置，移动过就放在当前块首行末尾
@@ -110,22 +114,20 @@ function blockLines(getLine, lineCount, fromLine, toLine) {
 	return { start, end };
 }
 
-// 列表项 item 上面最近的一块（往上找第一个非空行所属的列表项）；没有返回 -1
+// 列表项 item 上面最近的一块（往上找第一个属于列表项的非空行，普通段落、标题跳过）；没有返回 -1
 function prevItem(getLine, item) {
 	for (let i = item - 1; i >= 0; i--) {
 		if (isBlank(getLine(i))) continue;
-		return itemLineFor(getLine, i);
+		const it = itemLineFor(getLine, i);
+		if (it >= 0) return it;
 	}
 	return -1;
 }
 
-// 行 after 之后的第一个列表项（中间只隔着空行和续行）；遇到列表外的内容或到底返回 -1
+// 行 after 之后的第一个列表项（空行、续行、普通段落、标题都跳过）；到底返回 -1
 function nextItemAfter(getLine, lineCount, after) {
 	for (let i = after + 1; i < lineCount; i++) {
-		const l = getLine(i);
-		if (isBlank(l)) continue;
-		if (isItem(l)) return i;
-		if (itemLineFor(getLine, i) < 0) return -1;
+		if (isItem(getLine(i))) return i;
 	}
 	return -1;
 }
@@ -140,7 +142,7 @@ module.exports = class LogseqEditing extends Plugin {
 		this.blockByDoc = new WeakMap();      // 文档 → Esc 选中的整块范围，给包裹逻辑判断「选中的是整块」
 		this.beforeCompose = new WeakMap();   // view → 输入法开始组字前的 state
 		this.registerEditorExtension([
-			Prec.high(keymap.of([
+			Prec.highest(keymap.of([
 				{ key: "Escape", run: (view) => this.onEsc(view) },
 				{ key: "ArrowUp", run: (view) => this.move(view, -1, false) },
 				{ key: "ArrowDown", run: (view) => this.move(view, 1, false) },

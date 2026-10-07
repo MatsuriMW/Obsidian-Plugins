@@ -1,9 +1,9 @@
 {
-	"id": "esc-select-block",
-	"name": "编辑体验 Logseq 化",
-	"version": "2.0.0",
-	"minAppVersion": "1.0.0",
-	"description": "仿 Logseq：Esc 选中光标所在的整块（含所有子项），选中后 ↑↓ 在块之间切换、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文）会把文字包起来而不是替换，连按两次 [ 就是双链。",
-	"author": "马自立",
-	"isDesktopOnly": false
+  "id": "esc-select-block",
+  "name": "编辑体验 Logseq 化",
+  "version": "2.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "仿 Logseq：Esc 选中光标所在的整个列表块（含所有子项；普通段落不算块），选中后 ↑↓ 在列表块之间切换（跳过中间的段落和标题）、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文，不分输入法）会把文字包起来而不是替换，连按两次 [ 就是双链。",
+  "author": "马自立",
+  "isDesktopOnly": false
 }
