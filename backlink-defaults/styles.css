@@ -222,3 +222,8 @@ body .backlink-pane .tree-item-self.is-clickable.bd-title-row:hover { background
   padding: 2px 4px; line-height: 1.4; text-align: left;
   white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
 }
+
+/* 导出 PDF 时接在正文后面的「链接到当前文件」 */
+.bd-print-backlinks { margin-top: 2em; }
+.bd-print-backlinks h3 { margin-top: 1.4em; padding-bottom: 0.2em; border-bottom: 1px solid #ddd; }
+.bd-print-backlinks .bd-print-crumbs { color: #888; font-size: 0.85em; margin: 0.8em 0 0.1em; }

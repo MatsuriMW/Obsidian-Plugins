@@ -1,4 +1,4 @@
-const { Plugin, MarkdownRenderer, Component, Notice, setIcon, Keymap, resolveSubpath } = require("obsidian");
+const { Plugin, MarkdownRenderer, Component, Notice, setIcon, Keymap, resolveSubpath, MarkdownView, Modal, Setting, getLinkpath } = require("obsidian");
 
 // 反链排序（2026-10-05 起取代原来的「按修改时间从新到旧」——迁移、挪文件夹、批量改属性把所有日记的修改时间都刷新了，
 // 按它排基本是乱序）：
@@ -57,6 +57,10 @@ const CASE_KEYS = ["大小写敏感", "case-sensitive"];
 // 按钮换成「已链接 ✓」，同一篇里再点别的也照样能转（位置按已经改过的地方顺延）。
 // 离开这一页再回来、或者重新打开这一页时，再整体重新读取
 const FREEZE_AFTER_LINK = true;
+// Obsidian 自带的「导出为 PDF」对话框里加一个开关「包含反链（链接到当前文件）」：
+// 打开时，正文后面接上「链接到当前文件」的全部内容，按来源笔记分组（顺序和反链面板一样：页面按关系紧密度在前，日记从新到旧在后），
+// 每一条是引用所在的整块（列表项连子块、标题连整节、其余是所在段落），上方一行灰字是它的面包屑路径
+const PDF_BACKLINKS = true;
 
 // 反链里就地编辑（✎）时：选中文字后输入成对符号 = 包起来，不替换（中文、英文输入法都一样）。
 // 和「编辑体验 Logseq 化」插件、Keyboard Maestro 快速记录框同一套规则：
@@ -107,7 +111,9 @@ function watchPairWrap(ta) {
 }
 
 module.exports = class BacklinkDefaults extends Plugin {
-  onload() {
+  async onload() {
+    this.settings = Object.assign({ pdfBacklinks: false }, await this.loadData());
+    if (PDF_BACKLINKS) this.patchPdfExport();
     // 每个面板只设置一次，之后你在该面板里手动切换的选项会保留
     this.applied = new WeakSet();
     this.openInit = new WeakSet();
@@ -1005,6 +1011,167 @@ module.exports = class BacklinkDefaults extends Plugin {
         cur = rest; text = rest.nodeValue;
       }
     }
+  }
+
+  // ---------- 导出 PDF 时带上「链接到当前文件」 ----------
+
+  // 自带的导出对话框是内部类，拿不到；在 MarkdownView.printToPdf 新建并打开它的那一刻接住这个实例
+  patchPdfExport() {
+    const proto = MarkdownView && MarkdownView.prototype;
+    if (!proto || typeof proto.printToPdf !== "function" || !Modal) return;
+    const plugin = this, orig = proto.printToPdf;
+    proto.printToPdf = function (...args) {
+      const origOpen = Modal.prototype.open;
+      Modal.prototype.open = function (...a) {
+        Modal.prototype.open = origOpen;
+        try { plugin.enhancePdfModal(this); } catch (e) { console.error("[backlink-defaults] pdf modal", e); }
+        return origOpen.apply(this, a);
+      };
+      try { return orig.apply(this, args); } finally { Modal.prototype.open = origOpen; }
+    };
+    this.register(() => { proto.printToPdf = orig; });
+  }
+
+  enhancePdfModal(modal) {
+    if (typeof modal.print !== "function" || !modal.file) return;   // 不是导出 PDF 的对话框
+    modal.__bdBacklinks = !!this.settings.pdfBacklinks;
+    const count = this.collectBacklinkFiles(modal.file).length;
+    new Setting(modal.contentEl)
+      .setName("包含反链（链接到当前文件）")
+      .setDesc(count ? `正文后面接上 ${count} 篇笔记里引用这一页的内容` : "没有笔记链接到这一页")
+      .addToggle((t) => t.setValue(modal.__bdBacklinks).setDisabled(!count).onChange((v) => {
+        modal.__bdBacklinks = v;
+        this.settings.pdfBacklinks = v;
+        this.saveData(this.settings);
+      }));
+    const origPrint = modal.print;
+    const plugin = this;
+    modal.print = async function (el, comp, includeName) {
+      const body = await origPrint.call(this, el, comp, includeName);
+      if (this.__bdBacklinks) {
+        try { await plugin.appendPrintBacklinks(body || el, this.file, comp); }
+        catch (e) { console.error("[backlink-defaults] pdf backlinks", e); new Notice("反链没能加进 PDF，只导出了正文"); }
+      }
+      return body;
+    };
+  }
+
+  // 链接到 target 的笔记，按反链面板的顺序
+  collectBacklinkFiles(target) {
+    const rl = this.app.metadataCache.resolvedLinks || {};
+    const files = [];
+    for (const src in rl) {
+      if (src === target.path || !rl[src][target.path]) continue;
+      if (WIKI_FOLDER && src.startsWith(WIKI_FOLDER)) continue;
+      const f = this.app.vault.getAbstractFileByPath(src);
+      if (f && f.extension === "md") files.push(f);
+    }
+    const rel = new Map();
+    const relOf = (f) => { if (!rel.has(f.path)) rel.set(f.path, this.relation(f, target.path)); return rel.get(f.path); };
+    return files.sort((a, b) => {
+      const da = this.journalDate(a), db = this.journalDate(b);
+      if (!da !== !db) return da ? 1 : -1;
+      if (da) return db.key - da.key;
+      return relOf(b).score - relOf(a).score || a.basename.localeCompare(b.basename, "zh");
+    });
+  }
+
+  // 一篇笔记里指向 target 的每一处引用所在的块：{ start, end, indent, crumbs }，按位置排好、去掉被别的块包住的
+  backlinkBlocks(content, cache, src, target) {
+    const mc = this.app.metadataCache;
+    const hits = [...(cache.links || []), ...(cache.embeds || [])]
+      .filter((l) => { const d = mc.getFirstLinkpathDest(getLinkpath(l.link), src.path); return d && d.path === target.path; })
+      .map((l) => l.position.start.offset)
+      .sort((a, b) => a - b);
+    const items = cache.listItems || [];
+    const lineStart = (it) => it.position.start.offset - it.position.start.col;
+    const byLine = new Map();
+    for (const it of items) if (!byLine.has(it.position.start.line)) byLine.set(it.position.start.line, it);
+    const firstLine = (it) => content.substring(it.position.start.offset, it.position.end.offset).split("\n")[0]
+      .replace(/^\s*([-*+]|\d+[.)])\s+(\[.\]\s+)?/, "");
+    const blocks = [];
+    for (const off of hits) {
+      let item = null;
+      for (const it of items) { if (lineStart(it) > off) break; if (off <= it.position.end.offset) item = it; }
+      let b;
+      if (item) {
+        item = byLine.get(item.position.start.line) || item;
+        // 子块：紧跟在后面、祖先里有它的列表项
+        const inTree = new Set([item.position.start.line]);
+        let end = item.position.end.offset;
+        for (const it of items) {
+          if (it.position.start.line <= item.position.start.line) continue;
+          if (!inTree.has(it.parent)) break;
+          inTree.add(it.position.start.line);
+          end = Math.max(end, it.position.end.offset);
+        }
+        const crumbs = [], seen = new Set([item.position.start.line]);
+        for (let p = item.parent; p >= 0 && byLine.has(p) && !seen.has(p); p = byLine.get(p).parent) { seen.add(p); crumbs.unshift(firstLine(byLine.get(p))); }
+        const start = lineStart(item);
+        b = { start, end, indent: content.substring(start, item.position.start.offset), crumbs };
+      } else {
+        const secs = cache.sections || [];
+        const sec = secs.find((x) => x.position.start.offset <= off && off <= x.position.end.offset);
+        if (!sec) continue;
+        let end = sec.position.end.offset;
+        if (sec.type === "heading") {
+          // 标题行：连同整节
+          const h = (cache.headings || []).find((x) => x.position.start.offset === sec.position.start.offset);
+          const next = h && (cache.headings || []).find((x) => x.position.start.offset > h.position.start.offset && x.level <= h.level);
+          end = next ? next.position.start.offset : content.length;
+        }
+        b = { start: sec.position.start.offset, end, indent: "", crumbs: [] };
+      }
+      if (sec0(cache, b.start)) b.crumbs.unshift(...sec0(cache, b.start));
+      const last = blocks[blocks.length - 1];
+      if (last && b.start >= last.start && b.end <= last.end) continue;   // 已经包在上一块里
+      blocks.push(b);
+    }
+    return blocks;
+    // 块所在的标题层级（面包屑最前面）
+    function sec0(cache, at) {
+      if (!CRUMB_HEADINGS) return null;
+      const stack = [];
+      for (const h of cache.headings || []) {
+        if (h.position.start.offset >= at) break;
+        while (stack.length && stack[stack.length - 1].level >= h.level) stack.pop();
+        stack.push(h);
+      }
+      return stack.length ? stack.map((h) => h.heading) : null;
+    }
+  }
+
+  async appendPrintBacklinks(el, target, comp) {
+    const files = this.collectBacklinkFiles(target);
+    if (!files.length) return;
+    const plain = (t) => t.replace(/\s\^[\w-]+\s*$/, "").replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, "$1")
+      .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/(\*\*|__|==|~~)/g, "").trim();
+    const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const parts = [];
+    for (const f of files) {
+      const cache = this.app.metadataCache.getFileCache(f);
+      if (!cache) continue;
+      const content = await this.app.vault.cachedRead(f);
+      const blocks = this.backlinkBlocks(content, cache, f, target);
+      const fm = this.relation(f, target.path).why.filter((w) => w.startsWith("属性"));
+      if (!blocks.length && !fm.length) continue;
+      parts.push(`### [[${f.path.replace(/\.md$/, "")}|${f.basename}]]`);
+      if (fm.length) parts.push(`<div class="bd-print-crumbs">${esc(fm.join(" · "))} 链接到这里</div>`);
+      for (const b of blocks) {
+        if (b.crumbs.length) parts.push(`<div class="bd-print-crumbs">${esc(b.crumbs.map(plain).join(" › "))}</div>`);
+        const text = this.reindent(content.substring(b.start, b.end), b.indent, 0)
+          .split("\n").map((l) => l.replace(/\s\^[\w-]+\s*$/, "")).join("\n").replace(/\s+$/, "");
+        parts.push(text);
+      }
+    }
+    if (!parts.length) return;
+    const n = files.length;
+    const md = `## 链接到当前文件（${n}）\n\n` + parts.join("\n\n");
+    const box = el.createDiv({ cls: "bd-print-backlinks markdown-preview-view markdown-rendered" });
+    box.createEl("hr");
+    await MarkdownRenderer.render(this.app, md, box, target.path, comp);
+    await new Promise((r) => setTimeout(r, 300));   // 等嵌入、图片之类的后处理
+    box.querySelectorAll("a.internal-link").forEach((a) => a.removeAttribute("href"));
   }
 
   // ---------- 排序：页面按关系紧密度，日记按日期并按月 / 年分段 ----------
