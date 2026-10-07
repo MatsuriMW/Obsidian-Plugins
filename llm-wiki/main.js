@@ -27,7 +27,7 @@ const FORBIDDEN_PROPS = ["def", "medium", "author", "category", "flashcards"];
 const FORBIDDEN_LINKS = ["小说选题", "视频选题", "toread"];
 const SKIP_PREFIX = ["Templates/"];
 
-const PREAMBLE = "你在维护这个 Obsidian 库里的 LLM Wiki。开始前先完整读 Wiki/CLAUDE.md 并严格遵守：只写 Wiki/ 文件夹，出处写成块链接，笔记之间有冲突就并列、不替用户下结论，不是来自笔记的内容要标明。";
+const PREAMBLE = "你在维护这个 Obsidian 库里的 LLM Wiki。开始前先完整读 Wiki/CLAUDE.md 并严格遵守：只写 Wiki/ 文件夹，出处写成块链接，笔记之间有冲突就并列、不替用户下结论，不是来自笔记的内容要标明；页面里标题下面的内容一律写成无序 / 有序列表块（不写段落、不用表格，缩进用 Tab），详见 CLAUDE.md「展现形式」。";
 
 function fmtElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -516,6 +516,11 @@ ${list}
       if (brokenBlocks) add(f.path, `${brokenBlocks} 个块链接跳不到块（如 [[${firstBroken.link}]]）`, firstBroken.position.start.line);
       if (!isPage) continue;
       if (!/（wiki）$/.test(f.basename)) add(f.path, "页面名没有「（wiki）」后缀（规则 2）");
+      // 展现形式：正文写成列表块；段落、表格都不行，引用块只许是第一个标题前的摘要
+      const firstHeading = (cache.sections || []).find((s) => s.type === "heading");
+      const loose = (cache.sections || []).filter((s) => s.type === "paragraph" || s.type === "table" ||
+        (s.type === "blockquote" && firstHeading && s.position.start.line > firstHeading.position.start.line));
+      if (loose.length && /（wiki）$/.test(f.basename)) add(f.path, `${loose.length} 处正文不是列表块（段落 / 表格），要改成无序或有序列表（CLAUDE.md「展现形式」）`, loose[0].position.start.line);
       for (const k of ["type", "topic", "summary", "updated", "sources"]) if (fm[k] == null) add(f.path, `缺属性 ${k}`, 0);
       if (idx && !idx.includes(`[[${f.basename}]]`)) add(f.path, "没有收进 index.md");
       const m = idx.match(new RegExp(`\\[\\[${esc(f.basename)}\\]\\][^\\n]*（(\\d+) 条来源笔记）`));
