@@ -61,6 +61,69 @@ const FREEZE_AFTER_LINK = true;
 // 打开时，正文后面接上「链接到当前文件」的全部内容，按来源笔记分组（顺序和反链面板一样：页面按关系紧密度在前，日记从新到旧在后），
 // 每一条是引用所在的整块（列表项连子块、标题连整节、其余是所在段落），上方一行灰字是它的面包屑路径
 const PDF_BACKLINKS = true;
+// 同一个对话框里再加「排版」：精致排版开关、正文字体、标题字体、字号、强调色。只作用于导出的 PDF，不改笔记和主题
+const PDF_STYLE = true;
+// 字体候选：[显示名, CSS 字体栈]。打开对话框时用画布量字宽，只列出本机装了的（按栈里第一个字体判断）
+const PDF_FONTS = [
+  ["宋体", '"Songti SC", "STSong", serif'],
+  ["思源宋体", '"Source Han Serif SC", "Noto Serif CJK SC", "Noto Serif SC", serif'],
+  ["霞鹜文楷", '"LXGW WenKai", "LXGW WenKai GB", serif'],
+  ["楷体", '"Kaiti SC", "STKaiti", serif'],
+  ["方正书宋", '"FZShuSong-Z01", "FZShuSong-Z01S", serif'],
+  ["苹方", '"PingFang SC", sans-serif'],
+  ["思源黑体", '"Source Han Sans SC", "Noto Sans CJK SC", "Noto Sans SC", sans-serif'],
+  ["冬青黑体", '"Hiragino Sans GB", sans-serif'],
+  ["Georgia + 宋体", 'Georgia, "Songti SC", serif'],
+  ["Charter + 宋体", 'Charter, "Songti SC", serif'],
+  ["Charter + 苹方", 'Charter, "PingFang SC", serif'],
+];
+const PDF_SIZES = { small: ["小", "13px"], medium: ["中", "14.5px"], large: ["大", "16px"] };
+// 精致排版的样式：只在导出窗口里生效（挂在 .print.bd-pdf 下面），颜色和字体走变量
+const PDF_CSS = `
+.print.bd-pdf { --bd-accent: #3a6ea5; --bd-ink: #1f2328; --bd-muted: #6b7280; --bd-line: #e5e7eb; --bd-soft: color-mix(in srgb, var(--bd-accent) 7%, white); }
+.print.bd-pdf .markdown-preview-view, .print.bd-pdf .markdown-rendered {
+  font-family: var(--bd-font, var(--font-text)); font-size: var(--bd-size, 14.5px); line-height: 1.8;
+  color: var(--bd-ink); letter-spacing: 0.01em; text-align: justify; -webkit-font-smoothing: antialiased;
+}
+.print.bd-pdf p { margin: 0 0 0.9em; orphans: 3; widows: 3; }
+.print.bd-pdf h1, .print.bd-pdf h2, .print.bd-pdf h3, .print.bd-pdf h4, .print.bd-pdf h5, .print.bd-pdf h6 {
+  font-family: var(--bd-head-font, var(--bd-font, var(--font-text))); color: var(--bd-ink);
+  line-height: 1.35; break-after: avoid; text-align: left;
+}
+.print.bd-pdf h1 { font-size: 1.95em; font-weight: 700; margin: 0 0 1.1em; padding-bottom: 0.35em; border-bottom: 2px solid var(--bd-accent); }
+.print.bd-pdf h2 { font-size: 1.45em; font-weight: 700; margin: 1.8em 0 0.7em; padding-left: 0.55em; border-left: 4px solid var(--bd-accent); }
+.print.bd-pdf h3 { font-size: 1.2em; font-weight: 650; margin: 1.5em 0 0.6em; color: var(--bd-accent); }
+.print.bd-pdf h4, .print.bd-pdf h5, .print.bd-pdf h6 { font-size: 1.05em; font-weight: 650; margin: 1.2em 0 0.5em; color: #374151; }
+.print.bd-pdf a, .print.bd-pdf .internal-link, .print.bd-pdf .external-link { color: var(--bd-accent); text-decoration: none; }
+.print.bd-pdf strong { color: #111; font-weight: 700; }
+.print.bd-pdf em { color: #374151; }
+.print.bd-pdf mark { background: color-mix(in srgb, var(--bd-accent) 18%, white); color: inherit; padding: 0 0.15em; border-radius: 3px; }
+.print.bd-pdf ul, .print.bd-pdf ol { padding-left: 1.4em; margin: 0.3em 0 0.9em; }
+.print.bd-pdf li { margin: 0.2em 0; }
+.print.bd-pdf li::marker { color: var(--bd-accent); }
+.print.bd-pdf .list-bullet::after { background-color: var(--bd-accent); }
+.print.bd-pdf input[type=checkbox] { accent-color: var(--bd-accent); }
+.print.bd-pdf blockquote {
+  margin: 1em 0; padding: 0.6em 1em; color: #4b5563; background: var(--bd-soft);
+  border-left: 3px solid var(--bd-accent); border-radius: 0 6px 6px 0; break-inside: avoid;
+}
+.print.bd-pdf blockquote > :last-child { margin-bottom: 0; }
+.print.bd-pdf code { font-size: 0.86em; padding: 0.12em 0.38em; border-radius: 4px; background: #f3f4f6; color: #be185d; }
+.print.bd-pdf pre { background: #f8f9fa; border: 1px solid var(--bd-line); border-radius: 8px; padding: 0.9em 1.1em; break-inside: avoid; }
+.print.bd-pdf pre code { background: none; color: inherit; padding: 0; font-size: 0.84em; }
+.print.bd-pdf table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.93em; break-inside: avoid; }
+.print.bd-pdf th { background: color-mix(in srgb, var(--bd-accent) 10%, white); color: var(--bd-ink); font-weight: 650; }
+.print.bd-pdf th, .print.bd-pdf td { border: 1px solid var(--bd-line); padding: 0.45em 0.7em; text-align: left; }
+.print.bd-pdf hr { border: none; border-top: 1px solid var(--bd-line); margin: 2em 0; }
+.print.bd-pdf img { max-width: 100%; border-radius: 6px; break-inside: avoid; }
+.print.bd-pdf .tag { background: color-mix(in srgb, var(--bd-accent) 12%, white); color: var(--bd-accent); border: none; border-radius: 999px; padding: 0.05em 0.55em; font-size: 0.85em; }
+.print.bd-pdf .callout { border-radius: 8px; break-inside: avoid; }
+.print.bd-pdf .bd-print-backlinks { margin-top: 2.5em; }
+.print.bd-pdf .bd-print-backlinks > hr { border-top: 2px solid var(--bd-accent); margin: 0 0 1.2em; }
+.print.bd-pdf .bd-print-backlinks h3 { color: var(--bd-ink); border-bottom: 1px solid var(--bd-line); padding-bottom: 0.25em; }
+.print.bd-pdf .bd-print-backlinks h3 .internal-link { color: var(--bd-ink); }
+.print.bd-pdf .bd-print-crumbs { color: var(--bd-muted); font-size: 0.82em; margin: 0.9em 0 0.15em; padding-left: 0.6em; border-left: 2px solid color-mix(in srgb, var(--bd-accent) 45%, white); }
+`;
 
 // 反链里就地编辑（✎）时：选中文字后输入成对符号 = 包起来，不替换（中文、英文输入法都一样）。
 // 和「编辑体验 Logseq 化」插件、Keyboard Maestro 快速记录框同一套规则：
@@ -112,7 +175,7 @@ function watchPairWrap(ta) {
 
 module.exports = class BacklinkDefaults extends Plugin {
   async onload() {
-    this.settings = Object.assign({ pdfBacklinks: false }, await this.loadData());
+    this.settings = Object.assign({ pdfBacklinks: false, pdfPretty: true, pdfFont: "", pdfHeadFont: "", pdfSize: "medium", pdfAccent: "#3a6ea5" }, await this.loadData());
     if (PDF_BACKLINKS) this.patchPdfExport();
     // 每个面板只设置一次，之后你在该面板里手动切换的选项会保留
     this.applied = new WeakSet();
@@ -1044,9 +1107,11 @@ module.exports = class BacklinkDefaults extends Plugin {
         this.settings.pdfBacklinks = v;
         this.saveData(this.settings);
       }));
+    if (PDF_STYLE) this.addPdfStyleSettings(modal);
     const origPrint = modal.print;
     const plugin = this;
     modal.print = async function (el, comp, includeName) {
+      if (PDF_STYLE) plugin.applyPdfStyle(el);
       const body = await origPrint.call(this, el, comp, includeName);
       if (this.__bdBacklinks) {
         try { await plugin.appendPrintBacklinks(body || el, this.file, comp); }
@@ -1054,6 +1119,62 @@ module.exports = class BacklinkDefaults extends Plugin {
       }
       return body;
     };
+  }
+
+  addPdfStyleSettings(modal) {
+    const st = this.settings, save = () => this.saveData(st);
+    const el = modal.contentEl;
+    new Setting(el).setName("排版").setHeading();
+    const rows = [];
+    new Setting(el)
+      .setName("精致排版")
+      .setDesc("关掉 = 和阅读视图一样，原样导出")
+      .addToggle((t) => t.setValue(st.pdfPretty).onChange((v) => { st.pdfPretty = v; save(); rows.forEach((r) => r.settingEl.toggle(v)); }));
+    const fonts = this.availablePdfFonts();
+    const fontDropdown = (key) => (d) => {
+      d.addOption("", "跟随 Obsidian");
+      for (const [name, stack] of fonts) d.addOption(stack, name);
+      if (st[key] && !fonts.some(([, s]) => s === st[key])) st[key] = "";   // 之前选的字体已经不在了
+      d.setValue(st[key]).onChange((v) => { st[key] = v; save(); });
+    };
+    rows.push(new Setting(el).setName("正文字体").addDropdown(fontDropdown("pdfFont")));
+    rows.push(new Setting(el).setName("标题字体").setDesc("不选 = 和正文一样").addDropdown(fontDropdown("pdfHeadFont")));
+    rows.push(new Setting(el).setName("字号").addDropdown((d) => {
+      for (const k in PDF_SIZES) d.addOption(k, PDF_SIZES[k][0] + "（" + PDF_SIZES[k][1] + "）");
+      d.setValue(st.pdfSize).onChange((v) => { st.pdfSize = v; save(); });
+    }));
+    rows.push(new Setting(el).setName("强调色").setDesc("标题装饰线、链接、列表符号、引用块、表头").addColorPicker((c) =>
+      c.setValue(st.pdfAccent).onChange((v) => { st.pdfAccent = v; save(); })));
+    rows.forEach((r) => r.settingEl.toggle(st.pdfPretty));
+  }
+
+  // 本机装了哪些候选字体：同一段文字，用「这个字体, 兜底字体」和只用兜底字体各量一次宽度，不一样就是装了
+  availablePdfFonts() {
+    if (this._pdfFonts) return this._pdfFonts;
+    const ctx = document.createElement("canvas").getContext("2d");
+    const sample = "永和九年岁在癸丑 The quick brown fox 0123";
+    const width = (font) => { ctx.font = "40px " + font; return ctx.measureText(sample).width; };
+    const has = (family) => ["monospace", "serif", "sans-serif"].some((fb) => width(`${family}, ${fb}`) !== width(fb));
+    this._pdfFonts = PDF_FONTS.filter(([, stack]) => has(stack.split(",")[0].trim()));
+    return this._pdfFonts;
+  }
+
+  // 导出窗口里的 .print 容器：挂上样式和变量（只影响这次导出的 PDF）
+  applyPdfStyle(el) {
+    const st = this.settings;
+    if (!st.pdfPretty) return;
+    const doc = el.ownerDocument;
+    if (!doc.getElementById("bd-pdf-style")) {
+      const style = doc.createElement("style");
+      style.id = "bd-pdf-style";
+      style.textContent = PDF_CSS;
+      doc.head.appendChild(style);
+    }
+    el.classList.add("bd-pdf");
+    el.style.setProperty("--bd-accent", st.pdfAccent || "#3a6ea5");
+    el.style.setProperty("--bd-size", (PDF_SIZES[st.pdfSize] || PDF_SIZES.medium)[1]);
+    if (st.pdfFont) el.style.setProperty("--bd-font", st.pdfFont);
+    if (st.pdfHeadFont) el.style.setProperty("--bd-head-font", st.pdfHeadFont);
   }
 
   // 链接到 target 的笔记，按反链面板的顺序
