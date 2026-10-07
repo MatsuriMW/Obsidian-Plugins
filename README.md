@@ -59,7 +59,6 @@
 | **任务状态快切** ([`task-toggle`](task-toggle)) | 0.1.0 | ⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；不写文件、不等保存，可以连按 |
 | **Close Sidebar Files** ([`close-sidebar-files`](close-sidebar-files)) | 1.0.0 | 一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。 |
 | **看板聚焦** ([`board-zoom`](board-zoom)) | 0.1.0 | 从 DataView 看板点开某一条时，自动用 Bullet 插件 zoom in 聚焦到那个列表块。 |
-| **Journal Edit Mode** ([`journal-edit-mode`](journal-edit-mode)) | 1.0.0 | 日记类命名（YYYY_MM_DD）的笔记始终以编辑模式打开。 |
 | **日记翻页 + 刷新** ([`diary-nav`](diary-nav)) | 0.1.0 | ⌘R 刷新当前页面；在日记里，前进/后退 = 后一天/前一天的日记，其他页面照常前进/后退 |
 | **List Outdent Plain** ([`list-outdent-plain`](list-outdent-plain)) | 1.1.0 | ⌘[ 在已经顶格的列表项上再按一次：去掉列表符号（连同复选框），变成一段顶格的普通文字；它下面的子项跟着往前提一级。不是顶格列表项时照常减少缩进。注册成命令，快捷键可以在设置里改。 |
 
@@ -69,6 +68,7 @@
 |---|---|---|
 | **Telegram Inbox（自用）** ([`telegram-inbox-local`](telegram-inbox-local)) | 1.9.2 | Receive messages from Telegram bot and add them to daily note. |
 | **SuperTags（自用）** ([`supertags-local`](supertags-local)) | 1.3.0-local | Tana 式 supertag：日记里一行带 #标签 → 建成带属性的笔记。自用改版：边界匹配、每个标签可定义字段（键 + 默认值，日记整理时自动插到 [[标签名]] 下面）、Bike 安全。 |
+| **Journals** ([`journals`](journals)) | 9999.0.0 | 日记、日历和周期笔记。自用补丁：日记始终以编辑模式打开（并入了原 Journal Edit Mode）；日历上标出每篇日记整理完没有（实心点 = 最后一条是分割线且没有没做完的任务，空心圈 = 没整理完）；侧栏日历去掉标签头、分割线和多余留白。 |
 | **Flashcards** ([`flashcards-obsidian`](flashcards-obsidian)) | 9999.0.0 | Create and sync Anki flashcards from your notes. |
 | **Expandomatic** ([`expandomatic`](expandomatic)) | 9999.0.0 | Expand selection outward through word, sentence, paragraph, section, document — like VSCode's expand selection. |
 | **MDFlow（自用）** ([`mdflow-local`](mdflow-local)) | 1.4.1-local | 把 Markdown 排成公众号、X Articles、小红书图片。本地自用版，不从插件市场更新。 |

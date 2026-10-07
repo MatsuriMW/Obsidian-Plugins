@@ -1,0 +1,12 @@
+{
+  "id": "journals",
+  "name": "Journals",
+  "version": "9999.0.0",
+  "minAppVersion": "1.8.7",
+  "description": "日记、日历和周期笔记。自用补丁：日记始终以编辑模式打开（并入了原 Journal Edit Mode）；日历上标出每篇日记整理完没有（实心点 = 最后一条是分割线且没有没做完的任务，空心圈 = 没整理完）；侧栏日历去掉标签头、分割线和多余留白。",
+  "author": "马自立（改自 Sergii Kostyrko）",
+  "authorUrl": "https://github.com/srg-kostyrko",
+  "isDesktopOnly": false,
+  "pinnedFrom": "3.5.1",
+  "localPatch": "main.js 和 styles.css 末尾「马自立 本地补丁」两段；原版代码未改。更新 Journals 后把这两段接回去即可"
+}

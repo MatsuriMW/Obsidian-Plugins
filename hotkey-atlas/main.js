@@ -44,6 +44,7 @@ const CONTEXT = {
 		{ keys: ["Backspace"], name: "退出搜索范围，回到普通文件搜索", when: "范围搜索、输入框为空时" },
 	],
 	"llm-wiki": [{ keys: ["Mod+Enter"], name: "提交问题", when: "Wiki 面板提问框里" }],
+	journals: [{ keys: ["Mod+Enter"], name: "在新标签页打开这篇日记", when: "「没整理完的日记」列表里（⌘⇧J）" }],
 	"done-to-top": [{ keys: ["/明天"], name: "把光标所在块发送到明天的日记", when: "编辑器里输入" }],
 	"chrome-tab-groups": [{ keys: ["Enter", "Escape"], name: "结束编辑分组名", when: "编辑标签页分组名时" }],
 };

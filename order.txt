@@ -24,12 +24,12 @@ esc-select-block
 task-toggle
 close-sidebar-files
 board-zoom
-journal-edit-mode
 diary-nav
 
 ## 改过的社区插件（改动从多到少）
 telegram-inbox-local
 supertags-local
+journals
 flashcards-obsidian
 expandomatic
 mdflow-local

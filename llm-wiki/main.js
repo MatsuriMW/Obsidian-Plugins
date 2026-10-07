@@ -498,7 +498,7 @@ ${list}
       if (!f.path.startsWith(folder + "/")) continue;
       const cache = mc.getFileCache(f) || {};
       const fm = cache.frontmatter || {};
-      const isPage = !["index", "log", "CLAUDE"].includes(f.basename);
+      const isPage = !["index", "log", "CLAUDE", "体检报告"].includes(f.basename);   // 体检报告是体检自己写的报告，不是条目
       for (const k of FORBIDDEN_PROPS) if (k in fm) add(f.path, `属性里有 ${k}（规则 7）`, 0);
       for (const t of cache.tags || []) add(f.path, `有标签 ${t.tag}（规则 7）`, t.position.start.line);
       let brokenBlocks = 0, firstBroken = null;

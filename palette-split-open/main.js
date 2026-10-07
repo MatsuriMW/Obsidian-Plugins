@@ -27,7 +27,7 @@ const MAX_COLUMNS = 3;
 const CONTENT_LIMIT = 50;
 const JOURNAL_RE = /^日记\/(\d{4})_(\d{2})_(\d{2})\.md$/;
 const SNIPPET_LEN = 90;
-// 和 journal-edit-mode 同一套日记命名：这些笔记直接以编辑模式打开，免得它再切模式、把光标恢复到上次的位置
+// 和 Journals 补丁（原 Journal Edit Mode）同一套日记命名：这些笔记直接以编辑模式打开，免得它再切模式、把光标恢复到上次的位置
 const JOURNAL_NAME_RE = /^\d{4}[_-]\d{1,2}[_-]\d{1,2}$/;
 const BCP_FILE_SEARCH = "obsidian-better-command-palette:open-better-commmand-palette-file-search";
 const WIKI_DIR = "Wiki/";
