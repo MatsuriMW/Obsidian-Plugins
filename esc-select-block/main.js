@@ -8,7 +8,9 @@
 //     ↓ 先进第一个子项，↑ 先到上面最近的那一块，可能是上一个兄弟的最后一个子项）；
 //     中间隔着普通段落、标题时跳过去，接着找下一个列表项
 //   · 选中状态很「粘」：选中后按 Tab / ⇧Tab 改层级、⌘⇧↑↓（Bullet）或 ⌥↑↓ 上下挪动，
-//     挪完仍然是整块选中（按块首行的内容重新找到它）；只有打字、删除、粘贴会替换掉这一块并退出
+//     挪完仍然是整块选中（按块首行的内容重新找到它）
+//   · 删除（⌫ / ⌦ / ⌘X）也不退出：删掉这一块后，选中补上来的下一块；它是这一串里最后一块时，选中上一块
+//   · 只有打字、粘贴会替换掉这一块并退出
 //   · 选区是反向的（光标在块首行开头）：Bullet 等插件按光标所在的列表项操作，这样操作的就是选中的这一块
 //   · 方向键要用最高优先级：Obsidian 自己在实时预览里给 ↑↓ 挂了同级（high）的处理，
 //     有选区时会把选区收成光标并吞掉按键，插件的同级处理排在它后面，根本轮不到
@@ -205,14 +207,15 @@ module.exports = class LogseqEditing extends Plugin {
 	}
 
 	// 选中状态下别的操作改了文档（改层级、上下挪动……）：按首行内容重新认出这一块，接着整块选中。
-	// 打字、删除、粘贴、拖放、补全 = 这一块被替换掉了，退出
+	// 删除：选中补上来的那一块。打字、粘贴、拖放、补全 = 这一块被替换掉了，退出
 	keepBlock(tr) {
 		if (!tr.docChanged || tr.effects.some((e) => e.is(setBlock))) return tr;
 		const val = this.activeIn(tr.startState);
 		if (!val) return tr;
-		if (["input.type", "input.paste", "input.drop", "input.complete", "delete"].some((u) => tr.isUserEvent(u))) return tr;
+		if (["input.type", "input.paste", "input.drop", "input.complete"].some((u) => tr.isUserEvent(u))) return tr;
 		const doc = tr.newDoc, getLine = (i) => doc.line(i + 1).text;
 		const old = rangeOf(tr.startState.doc, val.start, val.end);
+		if (tr.isUserEvent("delete")) return this.afterDelete(tr, val, old);
 		// 先看操作自己设的光标（Bullet 挪动后光标跟着那一块走），再看原来块首在新文档里的位置
 		const cands = [];
 		if (tr.selection) { const m = tr.selection.main; cands.push(m.head, m.anchor); }
@@ -229,6 +232,21 @@ module.exports = class LogseqEditing extends Plugin {
 			end = Math.max(end, doc.lineAt(lastPos).number - 1);
 		}
 		return [tr, { selection: blockSelection(doc, start, end), effects: setBlock.of({ ...val, start, end }), sequential: true }];
+	}
+
+	// 整块删掉之后：原来位置上现在是列表项（下一块补上来了）就选它，否则选上面最近的一块，再没有就往下找；都没有才退出
+	afterDelete(tr, val, old) {
+		const doc = tr.newDoc, getLine = (i) => doc.line(i + 1).text;
+		const line = doc.lineAt(Math.min(tr.changes.mapPos(old.from, 1), doc.length)).number - 1;
+		let it = isItem(getLine(line)) ? line : prevItem(getLine, line + 1);
+		if (it < 0) it = nextItemAfter(getLine, doc.lines, line);
+		if (it < 0) return tr;
+		const end = subtreeEnd(getLine, doc.lines, it);
+		return [tr, {
+			selection: blockSelection(doc, it, end),
+			effects: setBlock.of({ ...val, start: it, end, multi: false, key: keyOf(getLine(it)), moved: true }),
+			sequential: true, scrollIntoView: true,
+		}];
 	}
 
 	onEsc(view) {
