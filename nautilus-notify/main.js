@@ -140,11 +140,13 @@ module.exports = class NautilusNotify extends Plugin {
     const content = await this.app.vault.cachedRead(file);
     const lines = content.split("\n");
     const items = core.parseJournal(content, cfg);
+    np.withCalendar?.(items, day);   // macOS 日历里的事件也算固定事件（螺旋日程设置里打开时）
     const plan = core.schedule(items, cfg, now, 0);
     const doneTimes = cfg.doneTimes?.[dayKey] || {};
     const tasks = items.filter((t) => stateOf(t) && (t.kind === "task" || t.pinned));
     const doneTasks = tasks.filter((t) => t.state === "done");
-    const nextUp = plan.queue.find((t) => t.segments.length && !t.doing);
+    // 下一件：排到的时间最早的（小任务会补位到前面的空档，不一定是列表里的下一行）
+    const nextUp = plan.queue.filter((t) => t.segments.length > t.workedN && !t.doing).sort((a, b) => a.segments[a.workedN][0] - b.segments[b.workedN][0])[0];
     const opts = (t) => ({ file, line: t?.line });
 
     // ---------- 状态变化：完成、开始做 ----------
@@ -200,7 +202,8 @@ module.exports = class NautilusNotify extends Plugin {
     }
 
     // ---------- 快开始的事件 / 钉了时间的待办 ----------
-    for (const e of items.filter((i) => i.kind === "event" && i.state !== "done")) {
+    // 日历事件不在这里提醒：「日历」App 自己有提醒
+    for (const e of items.filter((i) => i.kind === "event" && i.state !== "done" && !i.cal)) {
       const until = e.start - now;
       if (s.upcoming && until > 0 && until <= s.upcomingMin && once(`up|${e.start}|${keyOf(e.label)}`)) {
         const range = e.pinned ? clock(e.start) : `${clock(e.start)}–${clock(e.end)}`;

@@ -88,3 +88,17 @@
 /* 做到一半：已经做过的几段画淡，后面排的画实 */
 .naut-seg.naut-worked { opacity: 0.45; }
 .naut-row.is-susp { border-left-color: var(--text-faint); color: var(--text-muted); }
+
+/* ▶ 开始做（改 DOING + Raycast 专注） */
+.naut-play { flex: none; font-size: .75em; padding: 0 6px; height: 20px; margin-left: 4px; opacity: 0; transition: opacity .15s; }
+.naut-row:hover .naut-play, .naut-play:focus-visible { opacity: 1; }
+@media (hover: none) { .naut-play { opacity: 1; } }
+
+/* 📅 macOS 日历 */
+.naut-cal-line { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-top: 2px; cursor: help; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.naut-cal-line.is-error { color: var(--text-error); white-space: normal; }
+
+/* ⏱ 正在专注的这一轮 */
+.naut-focus-line { display: flex; align-items: center; gap: 6px; font-size: var(--font-ui-smaller); color: var(--naut-prio); font-weight: 600; margin-top: 4px; }
+.naut-focus-line span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.naut-focus-stop { flex: none; font-size: .9em; padding: 0 8px; height: 20px; }

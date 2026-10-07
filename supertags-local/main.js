@@ -231,7 +231,7 @@ const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function tagRe(tag, flags) {
   return new RegExp(`(?<![\\w#/&])${escRe(tag)}(?![\\w/\\-\\u3400-\\u9fff])`, flags || "i");
 }
-const PREFIX_RE = /^(\s*(?:[-*+]|\d+[.)])?\s*(?:\[.\]\s+)?(?:(?:TODO|DOING|DONE|NOW|LATER|WAITING|CANCELL?ED|FAILED)\s+)?)/;
+const PREFIX_RE = /^(\s*(?:[-*+]|\d+[.)])?\s*(?:\[.\]\s+)?(?:(?:TODO|DOING|DONE|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|CANCELL?ED|FAILED)\s+)?)/;
 const FIELD_RE = /\[([^\[\]:]+?)::\s*([^\]]*)\]/g;
 const CHILD_FIELD_RE = /^\s*(?:[-*+]\s+)?([^\s:：\[\]#][^:：\[\]#]{0,15}?)::\s*(.+)$/;
 function fmValue(v) {

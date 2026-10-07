@@ -8,7 +8,7 @@
 
 ### 日程与任务
 
-- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）：仿 Roam 的 Nautilus，把今天日记里的事件和待办画成一圈螺旋，没做完的任务从「现在」往后流，带容量条，一眼看出今天还排不排得下。只读日记，日记可以在 Bike 里写。
+- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）：给每一分钟安排一份工作。把今天日记里的事件和待办画成一圈螺旋，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条一眼看出今天还排不排得下，DOING / DONE 另外记下实际用时。也能把 macOS 日历的事件排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。[用法和原理 →](nautilus-spiral/README.md)
 - **任务提醒**（[`nautilus-notify`](nautilus-notify)）：螺旋日程的搭档，用 macOS 通知横幅提醒：快开始的事件、过点没做的待办、做太久的 DOING、排不下的容量预警、下一件该做什么、今日简报和收尾。
 - **Done To Top**（[`done-to-top`](done-to-top)）+ **日记整理**（[`journal-tidy`](journal-tidy)）：顶格任务按 DONE / DOING / TODO 分区归位，写着「明天 / 后天」的整块搬到那天的日记，光标所在块也能用 `/明天` 直接发送到明天的日记；日记整理再把日记里的问句汇总起来，交给本机 Claude 联网查证后写上回答。
 
@@ -38,7 +38,7 @@
 
 | 插件 | 版本 | 说明 |
 |---|---|---|
-| **螺旋日程** ([`nautilus-spiral`](nautilus-spiral)) | 0.1.0 | 仿 Roam 的 Nautilus：把今天日记里的事件和待办画成螺旋日程，未完成的任务从「现在」往后流，带容量条。只读日记不写日记，日记可以在 Bike 里写。 |
+| **螺旋日程** ([`nautilus-spiral`](nautilus-spiral)) | 0.1.0 | 给每一分钟安排一份工作：把今天日记里的事件和待办画成螺旋日程，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条显示今天排不排得下，DOING / DONE 另记实际用时。可以把 macOS 日历的事件一起排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。 |
 | **第二大脑（自用）** ([`second-brain`](second-brain)) | 0.2.0 | 每日回顾（那年今日 / 随机旧块 / 孤岛笔记）、写作模式（相关笔记 + Claudian）、库周报。 |
 | **Backlinks and Export** ([`backlink-defaults`](backlink-defaults)) | 0.2.0 | 反链面板做到和 Logseq / Roam Research 一样，导出比 Logseq 更好。反链：以块为单位按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文，可就地编辑；页面按关系紧密度在前，日记按月 / 按年折叠；共现筛选和分组；「转为链接」后不打断阅读位置。导出 PDF：可附上「链接到当前文件」的全部内容，可选字体、字号、强调色和精致排版。 |
 | **Chrome Tab Groups** ([`chrome-tab-groups`](chrome-tab-groups)) | 1.0.0 | 仿 Chrome 的标签页管理：标签页分组（命名、颜色、折叠、拖色块移动整组、移至新窗口）、右键菜单（在右侧新建、向新拆分视图添加、添加到组、复制标签页）、搜索标签页。 |

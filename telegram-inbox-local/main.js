@@ -5833,7 +5833,7 @@ function finishExisting(data, doneLine, hm, zones) {
   }
   if (!best) return null;
   const old = lines[best.t.line];
-  const m = old.match(/^(\s*(?:[-*+]|\d+[.)])\s+)(\*\*\d{1,2}[:：]\d{2}\*\*\s*)?(?:(TODO|DOING|LATER|NOW|WAITING|WAIT|IN-PROGRESS)\s+|(\[[ \/]\])\s+)(.*)$/);
+  const m = old.match(/^(\s*(?:[-*+]|\d+[.)])\s+)(\*\*\d{1,2}[:：]\d{2}\*\*\s*)?(?:(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|SUSPENDED|IN-PROGRESS)\s+|(\[[ \/]\])\s+)(.*)$/);
   if (!m) return null;
   let rest = sp.stripProgress(m[5]).replace(/\s+/g, " ").trim();   // 做完了，40% 这种进度不留
   if (m[4]) lines[best.t.line] = `${m[1]}${m[2] || ""}[x] ${rest}`;

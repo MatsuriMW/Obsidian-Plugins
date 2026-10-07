@@ -11,7 +11,7 @@ const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto
 const VIEW_REVIEW = "sb-daily-review";
 const VIEW_RELATED = "sb-related";
 const JOURNAL_RE = /^(\d{4})[_-](\d{1,2})[_-](\d{1,2})$/;
-const TASK_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX\/\-]\]\s+|(?:TODO|DOING|DONE|NOW|LATER|WAITING|CANCELL?ED|FAILED)\b)/;
+const TASK_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX\/\-]\]\s+|(?:TODO|DOING|DONE|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|CANCELL?ED|FAILED)\b)/;
 const CARD_RE = /#card\b|#flashcard\b|#reversed\b/;
 const REPORT_NOTE = "计划与总结/库周报.md";
 const REPORT_SNAP = "计划与总结/.库周报快照.json";

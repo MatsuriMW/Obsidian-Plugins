@@ -3,7 +3,7 @@
   "name": "螺旋日程",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "仿 Roam 的 Nautilus：把今天日记里的事件和待办画成螺旋日程，未完成的任务从「现在」往后流，带容量条。只读日记不写日记，日记可以在 Bike 里写。",
+  "description": "给每一分钟安排一份工作：把今天日记里的事件和待办画成螺旋日程，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条显示今天排不排得下，DOING / DONE 另记实际用时。可以把 macOS 日历的事件一起排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。",
   "author": "马自立",
   "isDesktopOnly": false
 }

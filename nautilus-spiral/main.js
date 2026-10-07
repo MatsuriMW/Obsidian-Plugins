@@ -22,6 +22,24 @@ const DEFAULTS = {
   gameFrontApps: "Steam",                       // 这些 App 只有在最前面时才算（Steam 客户端后台常驻，不能一开着就算）
   openTodayOnStartup: true,    // 启动 Obsidian 时打开今天的日记（按 dayCutoff 算「今天」）
   revealOnStartup: true,       // 启动时把左侧栏切到螺旋日程
+  minChunk: 25,         // 最短一段（分钟）：切开的任务每段至少这么长；不够切成两段的整块排，放不下就跳到下一个空档，后面的小任务往前补位。0 = 照旧切开填满
+  calendar: false,      // 读 macOS「日历」里的事件当固定事件（只读）
+  calendarSkip: "",     // 不读这些日历，逗号分隔
+  focus: true,          // ▶ 开始做时顺带开一段 Raycast 专注
+  focusMinutes: 0,      // 专注多久：0 = 按条目上写的时长（没写按默认任务时长；写了进度按还剩的），填 25 = 固定番茄钟
+  focusCategories: "social, gaming",   // Raycast Focus 的屏蔽类别，留空 = 不带类别和模式参数
+  focusMode: "block",                  // block = 只屏蔽这些类别；allow = 只允许这些类别
+  focusAutoComplete: true,             // 那件任务不再是 DOING（做完 / 改回 TODO / 挪走）时结束专注
+  focusAsk: true,                      // 专注到点弹窗问「做完了吗」：做完了 / 再来一轮 / 先停下
+  focusSession: null,                  // 进行中的这一轮专注：{ tasks: [{ key, label, path, start }], start, end, minutes, round }（毫秒）；几件并行就是几条线
+  doingLimit: 3,        // 同时最多几件 DOING：再开始一件，就把最早开始的那件改成 PAUSED。0 = 不限
+  staleHours: 3,        // DOING 超过几小时没动过（这一行和下面的子项都没改）就改成 PAUSED。0 = 不管
+  doingTouch: {},       // { workKey: { sig, at } }：每件 DOING 最后一次被动过的时刻
+  breakWords: "吃饭, 锻炼",   // 日记里新写一条只有这几个字的条目 = 去吃饭 / 锻炼了：所有 DOING 改成 PAUSED，计时停
+  breakApps: "Obsidian, Claude, Terminal, iTerm2, Ghostty, Warp",
+  breakMinAway: 20,     // 吃饭 / 锻炼至少多久（分钟）才开始判断「回来了」
+  parallelDoing: true,  // 几件 DOING 并行排：一起从现在开始，重叠在同一段时间里，只占最长那件的时间   // 在这些 App 里持续操作几分钟 = 回来了，问要不要切回 DOING
+  breakState: null,     // { word, since, path, keys, labels, focus, active }：正在吃饭 / 锻炼
 };
 
 // ---------------- 解析 ----------------
@@ -29,7 +47,7 @@ const DEFAULTS = {
 const LIST_RE = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
 const STAMP_RE = /^\*\*(\d{1,2})[:：](\d{2})\*\*\s*/;           // 你习惯的 **07:37** 记录时间
 const CHECKBOX_RE = /^\[([ xX\/\-])\]\s*/;
-const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|WAITING|WAIT|IN-PROGRESS|DONE|CANCELED|CANCELLED|FAILED)\s+/;
+const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|SUSPENDED|IN-PROGRESS|DONE|CANCELED|CANCELLED|FAILED)\s+/;
 const TIME = String.raw`(\d{1,2})(?:[:：](\d{2})|点(?:(半)|(\d{1,2})分?)?)`;
 const RANGE_RE = new RegExp(String.raw`(?<![\d:：])${TIME}\s*(?:-|–|—|~|～|到|至)\s*(?:${TIME}|(\d{1,2})(?![\d:：点]))`);
 const SINGLE_RE = new RegExp(String.raw`(?<![\d:：])${TIME}(?![\d])`);
@@ -55,8 +73,9 @@ function parseDuration(text) {
     const v = m[2] ? +m[2] : +m[1];                   // 写成 25～30 分钟的按上限算
     return Math.round(/h|小时/.test(m[3]) ? v * 60 : v);
   }
-  if (/半个?小时/.test(text)) return 30;
+  // 先认「一个半小时」再认「半小时」，不然一个半小时会被当成半小时
   if ((m = /([一两二三四五六])个?(半)?小时/.exec(text))) return CN_NUM[m[1]] * 60 + (m[2] ? 30 : 0);
+  if (/半个?小时/.test(text)) return 30;
   return null;
 }
 
@@ -140,14 +159,15 @@ function parseJournal(content, cfg) {
     }
     if (state === "drop") return;
     const doing = kw && /DOING|NOW|IN-PROGRESS/.test(kw[1]) || (cb && cb[1] === "/");
-    const suspended = !!kw && /^WAIT/.test(kw[1]);   // WAITING = 挂起：今天不排、不占容量，做过的时间和进度留着
+    const suspended = !!kw && /^(WAIT|SUSPENDED)/.test(kw[1]);   // WAITING / SUSPENDED = 搁置：短期不推，今天不排、不占容量，做过的时间和进度留着
+    const paused = !!kw && kw[1] === "PAUSED";                     // PAUSED = 暂停：只是停一下，照常排，接着做时剩余时间扣掉做过的
     const progress = state === "none" ? null : parseProgress(s);
     let label = state === "none" ? s : stripProgress(s);
     for (const p of prio) label = label.split(p).join("");
     label = cleanLabel(label) || s.trim();
     const indent = lm[1].replace(/\t/g, "    ").length;
     const pr = /\[\[[^\]|#]+#\^([\w-]+)/.exec(s);   // [[长期计划#^lp-xxxx|简称]] = 挂在某个长期项目上
-    const base = { line, indent, label, state, doing: !!doing, suspended, progress, prio: prio.some((p) => s.includes(p)), stamp, projRef: pr ? pr[1] : null };
+    const base = { line, indent, label, state, doing: !!doing, suspended, paused, progress, prio: prio.some((p) => s.includes(p)), stamp, projRef: pr ? pr[1] : null };
 
     // 紧跟在关键词后面的时间是「记录」：DONE 18:02 = 几点做完；DONE 14:00-15:30 = 实际花在这段；DOING 14:05 = 几点开始做的
     if (state !== "none") {
@@ -172,6 +192,12 @@ function parseJournal(content, cfg) {
       if (state === "done" && ls) {
         const at = normalize(tokenMinutes(ls[1], ls[2], ls[3], ls[4]), cfg);
         items.push({ ...base, kind: "task", dur: parseDuration(s.slice(ls[0].length)) ?? cfg.defaultDur, explicitDur: parseDuration(s.slice(ls[0].length)) != null, doneAt: at });
+        return;
+      }
+      // SUSPENDED 17:12 / PAUSED 17:12 / WAITING 17:12：后面的时刻是当初开始做的记录，不是约好的时间，不当事件
+      if (state === "open" && !doing && (suspended || paused) && ls) {
+        const d = parseDuration(s.slice(ls[0].length));
+        items.push({ ...base, kind: "task", dur: d ?? cfg.defaultDur, explicitDur: d != null });
         return;
       }
       if (state === "open" && doing && ls) {
@@ -254,6 +280,25 @@ function applyWork(items, cfg, dayKey, now, dayRel, bounds = {}) {
   return Object.entries(today).filter(([k]) => !seen.has(k)).map(([k, segs]) => ({ label: k, line: 0, segs: close(segs, 30) })).filter((o) => o.segs.length);
 }
 
+// 把 need 分钟填进空档（free 会被改掉），填出来的段落追加到 segs，返回没填下的分钟。
+// min > 0：每段（包括最后一段）至少 min 分钟。不够切成两段的任务整块放，最早放得下的空档才放，
+// 前面放不下的空档留给后面的小任务往前补位；切开时尾巴不足 min 就让前一段少拿一点。min = 0：从最早的空档起切开填满
+function fill(free, need, min, segs) {
+  for (let i = 0; i < free.length && need > 0;) {
+    const [a, b] = free[i];
+    let take = Math.min(need, b - a);
+    if (min > 0 && take < need) {
+      if (need - take < min) take = need - min;
+      if (take < min) { i++; continue; }
+    }
+    segs.push([a, a + take]);
+    need -= take;
+    if (a + take >= b) free.splice(i, 1);
+    else { free[i] = [a + take, b]; i++; }
+  }
+  return need;
+}
+
 // bounds = 这天实际的开始 / 结束（螺旋上拖出来的），没设就用设置里的 dayStart / dayEnd
 function schedule(items, cfg, now, dayRel, bounds = {}) {
   const S = bounds.start ?? cfg.dayStart * 60, E = bounds.end ?? cfg.dayEnd * 60;
@@ -284,15 +329,33 @@ function schedule(items, cfg, now, dayRel, bounds = {}) {
     }
     t.workedN = t.segments.length;   // 前面这几段是做过的，后面是排的
     t.remaining = need;
-    demand += need;
-    while (need > 0 && free.length) {
-      const [a, b] = free[0];
-      const take = Math.min(need, b - a);
-      t.segments.push([a, a + take]);
-      need -= take;
-      if (a + take >= b) free.shift(); else free[0] = [a + take, b];
-    }
-    t.overflow = need;
+  }
+  // 进行中的几件并行：一起从现在开始，重叠在同一段时间里，只占最长那件的时间（三件各 25 分钟只占 25 分钟）；
+  // 每件画在自己的那条线上（lane）。关掉 parallelDoing 就和其它待办一样首尾相接
+  const doing = queue.filter((t) => t.doing);
+  const parallel = cfg.parallelDoing !== false && doing.length > 1;
+  if (parallel) {
+    const span = Math.max(...doing.map((t) => t.remaining));
+    const win = [];
+    fill(free, span, 0, win);
+    demand += span;
+    doing.forEach((t, lane) => {
+      t.lane = lane;
+      let need = t.remaining;
+      for (const [a, b] of win) {
+        if (need <= 0) break;
+        const take = Math.min(need, b - a);
+        t.segments.push([a, a + take]);
+        need -= take;
+      }
+      t.overflow = need;
+    });
+  }
+  for (const t of queue) {
+    if (parallel && t.doing) continue;
+    demand += t.remaining;
+    // 进行中的从现在接着做，照旧切开填；其余的每段至少 minChunk 分钟
+    t.overflow = fill(free, t.remaining, t.doing ? 0 : cfg.minChunk ?? 0, t.segments);
   }
   const eventLeft = busy.reduce((s, [a, b]) => s + b - a, 0);
   const suspended = items.filter((i) => i.kind === "task" && i.state === "open" && i.suspended);
@@ -315,6 +378,198 @@ const svgEl = (tag, attrs, parent) => {
   if (parent) parent.appendChild(el);
   return el;
 };
+
+const splitList = (s) => (s || "").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+
+// 跑一个外部程序，不管退出码都把输出交回来
+function run(cmd, args, timeout = 20000) {
+  return new Promise((res) => require("child_process").execFile(cmd, args, { timeout, maxBuffer: 16e6 },
+    (e, stdout, stderr) => res({ code: e ? (e.code ?? 1) : 0, stdout: String(stdout || ""), stderr: String(stderr || (e && e.message) || "") })));
+}
+
+// 拆开一行任务：列表符号（连同 **07:37** 记录点）、复选框和关键词去掉，关键词后面紧跟的时刻（DOING 14:05）单独拿出来
+function splitTask(raw) {
+  const m = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/.exec(raw);
+  if (!m) return null;
+  let [, prefix, rest] = m;
+  const st = STAMP_RE.exec(rest);
+  if (st) { prefix += st[0]; rest = rest.slice(st[0].length); }   // **07:37** 记录点留在原位
+  const cb = CHECKBOX_RE.exec(rest);
+  if (cb) rest = rest.slice(cb[0].length);
+  const kw = KEYWORD_RE.exec(rest);
+  if (kw) rest = rest.slice(kw[0].length);
+  let since = null;
+  const t = kw && /^(\d{1,2})[:：](\d{2})(?![\d:：]|\s*[-–~～到至])\s*/.exec(rest);
+  if (t) { since = `${pad(+t[1])}:${t[2]}`; rest = rest.slice(t[0].length); }
+  return { prefix, rest, since, kw: kw ? kw[1] : null, cb: cb ? cb[1] : null };
+}
+// 写法和 ⌘/ 任务状态快切一样：DOING HH:MM … → DONE HH:MM-HH:MM …（复选框也改成关键词，⌘/ 才能接着切）
+function toDoing(raw) { const p = splitTask(raw); return p ? `${p.prefix}DOING ${moment().format("HH:mm")} ${p.rest}` : raw; }
+function toDone(raw, since, end) { const p = splitTask(raw); return p ? `${p.prefix}DONE ${p.since ?? since}-${end} ${p.rest}` : raw; }
+function toTodo(raw) { const p = splitTask(raw); return p ? `${p.prefix}TODO ${p.rest}` : raw; }
+function toPaused(raw) { const p = splitTask(raw); return p ? `${p.prefix}PAUSED ${p.rest}` : raw; }
+
+// 这一行是不是「吃饭」「锻炼」：去掉时间、时长、标点、表情后只剩这几个字（没有别的汉字和英文字母）。
+// 没关键词或者 DOING 的才算（TODO 吃饭 是计划，不是现在去吃）；写了时间段、而且开始时间离现在还远的也是计划。返回命中的词
+function breakWord(raw, words, cfg, now) {
+  const p = splitTask(raw);
+  if (!p || p.cb || (p.kw && !/^(DOING|NOW|IN-PROGRESS)$/.test(p.kw))) return null;
+  const it = parseJournal(raw, cfg)[0];
+  if (it && it.kind === "event" && it.start - now > 15) return null;
+  const text = stripDuration(p.rest.replace(RANGE_RE, " ").replace(SINGLE_RE, " ")).replace(/[^\p{Script=Han}A-Za-z]/gu, "");
+  return words.includes(text) ? text : null;
+}
+
+// 一件任务「动过没有」看这一行加上它下面所有子项
+function subtree(lines, n) {
+  const ind = (l) => /^\s*/.exec(l)[0].replace(/\t/g, "    ").length;
+  const base = ind(lines[n]), out = [lines[n]];
+  for (let i = n + 1; i < lines.length; i++) {
+    if (lines[i].trim() && ind(lines[i]) <= base) break;
+    out.push(lines[i]);
+  }
+  return out.join("\n");
+}
+
+// 这件任务专注多久：条目上写了 10min 就是 10 分钟；没写按默认任务时长；写了进度（2h 40%）按还剩的；设置里填了固定时长就用固定的
+function focusMinutes(t, cfg) {
+  if (cfg.focusMinutes > 0) return cfg.focusMinutes;
+  if (t.progress != null) return Math.max(5, Math.round(t.dur * (1 - t.progress)));
+  return Math.max(1, Math.round(t.dur));
+}
+
+// 系统对话框（osascript）：Obsidian 在后台也会弹到最前面。返回点的按钮，没回答（超时）返回 ""
+const asStr = (x) => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n")}"`;
+async function dialog(msg, buttons, def, wait) {
+  const script = `activate\ndisplay dialog ${asStr(msg)} with title "螺旋日程" buttons {${buttons.map(asStr).join(", ")}} default button ${asStr(def)} giving up after ${wait}`;
+  const r = await run("/usr/bin/osascript", ["-e", script], (wait + 60) * 1000);
+  if (/gave up:true/.test(r.stdout)) return "";
+  return (/button returned:([^,\n]*)/.exec(r.stdout) || [])[1] || "";
+}
+// 多选列表：返回勾上的那几项；点取消返回 []；没回答（半小时超时）返回 null
+async function pickList(prompt, items, ok, cancel, defaults = []) {
+  const def = defaults.length ? ` default items {${defaults.map(asStr).join(", ")}}` : "";
+  const script = `activate\nset r to choose from list {${items.map(asStr).join(", ")}} with title "螺旋日程" with prompt ${asStr(prompt)}${def} OK button name ${asStr(ok)} cancel button name ${asStr(cancel)} with multiple selections allowed and empty selection allowed\nif r is false then return "__CANCEL__"\nset AppleScript's text item delimiters to linefeed\nreturn r as text`;
+  const r = await run("/usr/bin/osascript", ["-e", script], 1800e3);
+  if (r.code !== 0) return null;
+  const out = r.stdout.replace(/\n$/, "");
+  return out === "__CANCEL__" ? [] : out ? out.split("\n") : [];
+}
+const groupBy = (tasks) => { const m = new Map(); for (const t of tasks) (m.get(t.path) || m.set(t.path, []).get(t.path)).push(t); return m; };
+const breakIcon = (w) => (/饭|餐/.test(w) ? "🍚" : /锻炼|运动|健身|跑/.test(w) ? "🏃" : "☕");
+
+// ---------------- macOS 日历（只读） ----------------
+// 用 EventKit 读系统「日历」App 里的事件（iCloud、Exchange、订阅的日历都在里面），只读，不改日历。
+// 读日历的小助手是下面这段 Swift：第一次用时在本机编译到 ~/Library/Caches/nautilus-spiral/（要有 Xcode 命令行工具），
+// 由 Obsidian 启动，所以第一次会弹「“Obsidian”想要访问你的日历」。
+//   calendar-xxx <开始毫秒> <结束毫秒>  → 事件 JSON；calendar-xxx --calendars → 日历列表
+const CAL_SWIFT = String.raw`import EventKit
+import Foundation
+
+func out(_ obj: Any) {
+  let data = (try? JSONSerialization.data(withJSONObject: obj, options: [])) ?? Data("[]".utf8)
+  FileHandle.standardOutput.write(data)
+}
+func hex(_ c: CGColor?) -> String {
+  guard let c = c, let space = CGColorSpace(name: CGColorSpace.sRGB),
+        let rgb = c.converted(to: space, intent: .defaultIntent, options: nil),
+        let p = rgb.components, p.count >= 3 else { return "" }
+  return String(format: "#%02x%02x%02x", Int(p[0] * 255), Int(p[1] * 255), Int(p[2] * 255))
+}
+
+var status = EKEventStore.authorizationStatus(for: .event)
+if status == .notDetermined {
+  let sem = DispatchSemaphore(value: 0)
+  EKEventStore().requestFullAccessToEvents { _, _ in sem.signal() }
+  sem.wait()
+  status = EKEventStore.authorizationStatus(for: .event)
+}
+if status != .fullAccess {
+  out(["error": "denied", "status": status.rawValue])
+  exit(2)
+}
+let store = EKEventStore()
+let args = CommandLine.arguments
+if args.count > 1 && args[1] == "--calendars" {
+  out(store.calendars(for: .event).map { ["title": $0.title, "source": $0.source.title, "color": hex($0.cgColor)] })
+  exit(0)
+}
+guard args.count >= 3, let a = Double(args[1]), let b = Double(args[2]) else {
+  out(["error": "usage"])
+  exit(1)
+}
+let pred = store.predicateForEvents(withStart: Date(timeIntervalSince1970: a / 1000), end: Date(timeIntervalSince1970: b / 1000), calendars: nil)
+var list: [[String: Any]] = []
+for e in store.events(matching: pred) {
+  if e.status == .canceled { continue }
+  // 我拒绝了的邀请不算
+  if let me = e.attendees?.first(where: { $0.isCurrentUser }), me.participantStatus == .declined { continue }
+  list.append([
+    "id": e.eventIdentifier ?? "",
+    "title": e.title ?? "",
+    "start": e.startDate.timeIntervalSince1970 * 1000,
+    "end": e.endDate.timeIntervalSince1970 * 1000,
+    "allDay": e.isAllDay,
+    "calendar": e.calendar.title,
+    "color": hex(e.calendar.cgColor),
+    "location": e.location ?? "",
+  ])
+}
+out(list)
+`;
+
+// 小助手二：看一眼现在的状态。idle = 键盘鼠标多少秒没动；front = 最前面的 App；
+// panel = Raycast 专注的悬浮小窗在不在（专注进行时屏幕上有个 Raycast 的高 40 左右、层级 ≥ 100 的小窗，点完成就没了）
+const PROBE_SWIFT = String.raw`import AppKit
+import CoreGraphics
+
+let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+let front = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+var panel = false
+let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+for w in list where (w[kCGWindowOwnerName as String] as? String) == "Raycast" {
+  let layer = (w[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0
+  let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+  let h = (b["Height"] as? NSNumber)?.doubleValue ?? 0
+  if layer >= 100 && h >= 30 && h <= 60 { panel = true }
+}
+let obj: [String: Any] = ["idle": idle, "front": front, "panel": panel]
+FileHandle.standardOutput.write((try? JSONSerialization.data(withJSONObject: obj, options: [])) ?? Data("{}".utf8))
+`;
+
+// 编译 Swift 小助手到 ~/Library/Caches/nautilus-spiral/<名字>-<源码哈希>，源码一改就重新编译
+const swiftBins = new Map();
+function swiftTool(name, src) {
+  if (!swiftBins.has(name)) swiftBins.set(name, (async () => {
+    const fs = require("fs"), path = require("path"), os = require("os");
+    const hash = require("crypto").createHash("md5").update(src).digest("hex").slice(0, 10);
+    const dir = path.join(os.homedir(), "Library/Caches/nautilus-spiral");
+    const bin = path.join(dir, `${name}-${hash}`);
+    if (fs.existsSync(bin)) return bin;
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(`${bin}.swift`, src);
+    const r = await run("/usr/bin/swiftc", ["-O", "-o", bin, `${bin}.swift`], 300000);
+    if (r.code !== 0 || !fs.existsSync(bin)) throw new Error("编译小助手失败（需要 Xcode 命令行工具：xcode-select --install）\n" + r.stderr.slice(0, 500));
+    return bin;
+  })().catch((e) => { swiftBins.delete(name); throw e; }));
+  return swiftBins.get(name);
+}
+
+class MacCalendar {
+  constructor() {
+    this.cache = new Map();   // "2026-10-07" -> { at, items, allDay, error }
+    this.busy = new Set();
+  }
+
+  async call(args) {
+    const r = await run(await swiftTool("calendar", CAL_SWIFT), args.map(String));
+    let data;
+    try { data = JSON.parse(r.stdout); } catch (e) { throw new Error(r.stderr || "日历小助手没有输出"); }
+    if (data && data.error === "denied") throw new Error("没有日历权限：到「系统设置 → 隐私与安全性 → 日历」里给 Obsidian 打开「完全访问」");
+    if (data && data.error) throw new Error(data.error);
+    return data;
+  }
+}
 
 // ---------------- 人机协作：Claude Code 的本地会话日志 ----------------
 // ~/.claude/projects/**/*.jsonl，每条 assistant 消息带 usage。按日记日（dayCutoff 分界）汇总成：
@@ -558,6 +813,7 @@ class SpiralView extends ItemView {
     }
     const content = await this.app.vault.cachedRead(file);
     const items = parseJournal(content, cfg);
+    const cal = this.plugin.withCalendar(items, date);   // macOS 日历里的事件并进来当固定事件
     // 自动归类到长期项目的行（long-projects.js 按项目的「归类：」词算的）：行号 → 项目
     const projOf = new Map();
     if (cfg.showProjects) {
@@ -633,6 +889,32 @@ class SpiralView extends ItemView {
         attr: { title: "开着 Hearthstone / Steam 里的游戏，或者 Steam 在最前面的时间（螺旋内圈的绿线）。只在 Obsidian 开着时记录。" } });
     }
 
+    // ⏱ 正在专注的这一轮
+    const fs = this.plugin.session();
+    if (fs && dayRel === 0) {
+      const line = cap.createDiv({ cls: "naut-focus-line" });
+      const leftOf = (t) => Math.max(0, Math.ceil((t.end - Date.now()) / 60e3));
+      const one = (t) => `${t.label} ${leftOf(t) ? `还剩 ${dur(leftOf(t))}` : "到点了"}${fs.tasks.length === 1 ? ` / ${dur(t.minutes)}` : ""}${t.round > 1 ? `（第 ${t.round} 轮）` : ""}`;
+      line.createSpan({ text: `⏱ ${fs.tasks.length > 1 ? `${fs.tasks.length} 条线 · ` : ""}${fs.tasks.map(one).join(" · ")}`, attr: { title: fs.tasks.map((t) => `· ${t.label}：${dur(t.minutes)} 一轮，${moment(t.end).format("HH:mm")} 到点`).join("\n") } });
+      const stop = line.createEl("button", { cls: "naut-focus-stop", text: "结束", attr: { title: "提前结束这一轮：问你做完了没有" } });
+      stop.onclick = () => this.plugin.askDone(fs);
+    }
+    // 🍚 吃饭 / 锻炼中
+    const bk = cfg.breakState;
+    if (bk && dayRel === 0) {
+      const line = cap.createDiv({ cls: "naut-focus-line naut-break-line" });
+      line.createSpan({ text: `${breakIcon(bk.word)} ${bk.word}中 · ${moment(bk.since).format("HH:mm")} 起 · ${dur(Math.max(1, Math.round((Date.now() - bk.since) / 60e3)))}${bk.keys.length ? ` · 暂停了 ${bk.keys.length} 件` : ""}`, attr: { title: bk.labels.map((l) => "· " + l).join("\n") } });
+      const back = line.createEl("button", { cls: "naut-focus-stop", text: "回来了", attr: { title: "现在就问要不要切回 DOING" } });
+      back.onclick = () => { bk.asking = false; this.plugin.askBack(bk); };
+    }
+
+    // 📅 日历：全天事件不占时间，列在这里；读不到时说明原因
+    if (cal && (cal.allDay.length || cal.error)) {
+      cap.createDiv({ cls: "naut-cal-line" + (cal.error ? " is-error" : ""),
+        text: cal.error ? `📅 ${cal.error.split("\n")[0]}` : `📅 全天：${cal.allDay.map((e) => e.title).join("、")}`,
+        attr: { title: cal.error || cal.allDay.map((e) => `${e.title}（${e.calendar}）`).join("\n") } });
+    }
+
     // 螺旋
     const size = 320, c = size / 2, R0 = 146, R1 = 42;
     const ang = (t) => ((t / 60) % 12) / 12 * Math.PI * 2 - Math.PI / 2;
@@ -666,13 +948,15 @@ class SpiralView extends ItemView {
       const d = arc(a, Math.max(b, a + 3), -16);
       if (d) svgEl("title", {}, svgEl("path", { d, class: "naut-game" }, svg)).textContent = `${clock(a)}–${clock(b)} 🎮 ${n}（${dur(b - a)}）`;
     }
+    const LANE = [0, 5, -5, 9, -9, 13];   // 并行的几件 DOING 各画一条线，沿螺旋错开一点
     const drawSeg = (a, b, cls, item) => {
-      const d = arc(a, b);
+      const d = arc(a, b, LANE[item.lane || 0] ?? 0);
       if (!d) return;
       const p = svgEl("path", { d, class: `naut-seg ${cls}` }, svg);
+      if (item.cal && item.cal.color) p.style.stroke = item.cal.color;   // 日历事件用日历自己的颜色
       const title = svgEl("title", {}, p);
-      title.textContent = `${clock(a)}–${clock(b)} ${item.label}`;
-      p.addEventListener("click", () => this.plugin.openLine(file, item.line));
+      title.textContent = `${clock(a)}–${clock(b)} ${item.label}` + (item.cal ? `（📅 ${item.cal.calendar}）` : "");
+      p.addEventListener("click", () => this.plugin.openItem(file, item));
     };
     for (const e of items.filter((i) => i.kind === "event")) drawSeg(e.start, e.end, e.state === "done" ? "naut-event naut-done-event" : e.prio ? "naut-prio" : "naut-event", e);
     for (const t of items.filter((i) => i.kind === "task" && i.state === "done")) for (const [a, b] of t.segments) drawSeg(a, b, "naut-done", t);
@@ -738,11 +1022,19 @@ class SpiralView extends ItemView {
       list.createDiv({ cls: "naut-sec", text: title });
       for (const r of rows) {
         const row = list.createDiv({ cls: `naut-row ${r.cls}` });
+        if (r.item.cal && r.item.cal.color) row.style.borderLeftColor = r.item.cal.color;
         row.createSpan({ cls: "naut-time", text: r.time });
         const proj = projOf.get(r.item.line);
-        row.createSpan({ cls: "naut-label", text: (r.item.projRef || proj ? "🧭 " : "") + r.item.label, attr: proj ? { title: "算进长期项目：" + proj.short } : {} });
+        row.createSpan({ cls: "naut-label", text: (r.item.paused ? "⏸ " : "") + (r.item.cal ? "📅 " : r.item.projRef || proj ? "🧭 " : "") + r.item.label,
+          attr: proj ? { title: "算进长期项目：" + proj.short } : r.item.cal ? { title: `日历：${r.item.cal.calendar}${r.item.cal.location ? " · " + r.item.cal.location : ""}` } : {} });
         row.createSpan({ cls: "naut-dur", text: r.dur, attr: r.tip ? { title: r.tip } : {} });
-        row.onclick = () => this.plugin.openLine(file, r.item.line);
+        if (r.play) {
+          const t = r.item;
+          const tip = `${t.doing ? "" : "改成 DOING，"}专注 ${dur(focusMinutes(t, cfg))}${cfg.focus ? "（Raycast Focus）" : ""}，到点问你做完没有`;
+          const b = row.createEl("button", { cls: "naut-play", text: "▶", attr: { title: tip } });
+          b.onclick = (e) => { e.stopPropagation(); this.plugin.startTask(file, t); };
+        }
+        row.onclick = () => this.plugin.openItem(file, r.item);
       }
     };
     const events = items.filter((i) => i.kind === "event").sort((a, b) => a.start - b.start);
@@ -752,15 +1044,16 @@ class SpiralView extends ItemView {
     const pctOf = (t) => (t.progress != null ? Math.round(t.progress * 100) : spentOf(t) >= 1 ? Math.min(99, Math.round(spentOf(t) / (spentOf(t) + t.remaining) * 100)) : null);
     const durText = (t) => (pctOf(t) == null ? dur(t.dur) : `${pctOf(t)}% · 剩 ${dur(t.remaining)}`);
     const tipOf = (t) => (pctOf(t) == null ? "" : `预估 ${dur(t.dur)}${spentOf(t) >= 1 ? ` · 已做 ${dur(spentOf(t))}（今天 ${dur(t.spentToday)}${t.spentBefore >= 1 ? `，之前 ${dur(t.spentBefore)}` : ""}）` : ""}${t.progress != null ? ` · 进度是你写的 ${pctOf(t)}%` : ""}`);
-    const placed = plan.queue.filter((t) => t.segments.length > t.workedN);
+    // 按排到的时间先后列（小任务补位到前面的空档，会排在列表里靠后的大任务前面）
+    const placed = plan.queue.filter((t) => t.segments.length > t.workedN).sort((a, b) => a.segments[a.workedN][0] - b.segments[b.workedN][0]);
     section("接下来", placed.map((t) => ({
       item: t, cls: t.prio ? "is-prio" : "is-task",
       time: t.doing && dayRel === 0 ? "进行中" : clock(t.segments[t.workedN][0]) + (t.overflow ? " 起" : ""),
-      dur: durText(t), tip: tipOf(t),
+      dur: durText(t), tip: tipOf(t), play: dayRel === 0,
     })));
     const over = plan.queue.filter((t) => t.overflow);
     section(dayRel < 0 ? "没做完" : "排不下", over.map((t) => ({ item: t, cls: "is-over", time: "—", dur: t.segments.length > t.workedN ? `缺 ${dur(t.overflow)}` : durText(t), tip: tipOf(t) })));
-    section("⏸ 挂起", plan.suspended.map((t) => ({ item: t, cls: "is-susp", time: "⏸", dur: durText(t), tip: tipOf(t) })));
+    section("💤 搁置", plan.suspended.map((t) => ({ item: t, cls: "is-susp", time: "💤", dur: durText(t), tip: tipOf(t) })));
     section("做过 · 已挪走", orphans.map((o) => ({ item: o, cls: "is-done", time: `${clock(o.segs[0][0])}–${clock(o.segs.at(-1)[1])}`, dur: dur(o.segs.reduce((n, [a, b]) => n + b - a, 0)) })));
     const doneTasks = items.filter((i) => i.kind === "task" && i.state === "done").sort((a, b) => (a.doneAt ?? 1e9) - (b.doneAt ?? 1e9));
     section(`已完成 ${doneTasks.length}`, doneTasks.map((t) => ({
@@ -848,7 +1141,8 @@ module.exports = class NautilusSpiral extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULTS, await this.loadData());
     this.states = new Map();   // path -> Map(label -> state)，用来发现「刚改成 DONE」
-    this.core = { parseJournal, parseDuration, parseProgress, stripProgress, stripDuration, applyWork, workKey, schedule, normalize };   // 给「任务提醒」插件复用
+    this.cal = new MacCalendar();
+    this.core = { parseJournal, parseDuration, parseProgress, stripProgress, stripDuration, applyWork, workKey, schedule, fill, normalize };   // 给「任务提醒」插件复用
     this.saveSoon = debounce(() => this.saveData(this.settings), 1000, true);
     this.refresh = debounce(() => { if (!this.dragging) this.views().forEach((v) => v.render()); }, 300, true);   // 正在拖把手时不重绘
     this.pruneDoneTimes();
@@ -860,6 +1154,31 @@ module.exports = class NautilusSpiral extends Plugin {
     this.addRibbonIcon("orbit", "螺旋日程", () => this.activate());
     this.addCommand({ id: "open", name: "打开螺旋日程", callback: () => this.activate() });
     this.addCommand({ id: "open-today", name: "打开今天的日记（凌晨按日界算前一天）", callback: () => this.openToday() });
+    this.addCommand({ id: "start-here", name: "开始光标所在的任务（改成 DOING + 专注）", hotkeys: [{ modifiers: ["Mod", "Shift"], key: "Enter" }],
+      editorCallback: (editor, view) => this.startAtCursor(editor, view) });
+    this.addCommand({ id: "start-next", name: "开始下一件（改成 DOING + 专注）", callback: () => this.startNext() });
+    this.addCommand({ id: "focus-end", name: "结束这一轮专注（问做完了没有）", checkCallback: (check) => {
+      if (!this.settings.focusSession) return false;
+      if (!check) this.askDone(this.session());
+      return true;
+    } });
+    // 专注到点了没有：每 10 秒看一眼（用时间戳比，电脑睡眠醒来也不会漏）；上次没回答就关了 Obsidian 的，重新问
+    if (this.session()) { const s = this.settings.focusSession; s.asked = false; s.noPanel = true; for (const t of s.tasks) t.asked = false; }   // 重启后不再看悬浮窗，到点照样问
+    if (this.settings.breakState) this.settings.breakState.asking = false;
+    this.registerInterval(window.setInterval(() => this.tickFocus(), 10 * 1000));
+    this.registerInterval(window.setInterval(() => this.checkStale().catch((e) => console.error("[螺旋日程] 检查 DOING 失败", e)), 60 * 1000));
+    this.registerInterval(window.setInterval(() => this.tickBreak().catch((e) => console.error("[螺旋日程] 检查回来没有失败", e)), 30 * 1000));
+    // 外部脚本（~/bin/app-idle-focus.sh：在同一个 App 里待久了）叫螺旋日程来问：这一轮专注做哪几件
+    //   open -g "obsidian://nautilus-focus?app=Obsidian&stay=300"
+    this.registerObsidianProtocolHandler("nautilus-focus", (p) => this.suggestFocus(p.app || "", +p.stay || 0).catch((e) => console.error("[螺旋日程] 专注提议失败", e)));
+    this.addCommand({ id: "suggest-focus", name: "开一轮专注（勾选这一轮做哪几件）", callback: () => this.suggestFocus("", 0) });
+    this.addCommand({ id: "break-back", name: "吃饭 / 锻炼回来了（问要不要切回 DOING）", checkCallback: (check) => {
+      const b = this.settings.breakState;
+      if (!b) return false;
+      if (!check) { b.asking = false; this.askBack(b); }
+      return true;
+    } });
+    this.addCommand({ id: "calendar-refresh", name: "重新读取 macOS 日历", callback: () => { this.cal.cache.clear(); this.refresh(); } });
     this.addSettingTab(new SpiralSettings(this.app, this));
 
     // 在日历里点某一天（或打开任何一篇日记），螺旋跟着切到那一天
@@ -937,6 +1256,7 @@ module.exports = class NautilusSpiral extends Plugin {
     const file = this.app.vault.getAbstractFileByPath(this.journalPath(date));
     if (!(file instanceof TFile)) return `今天（${dayKey}）还没有日记`;
     const items = parseJournal(await this.app.vault.read(file), cfg);
+    this.withCalendar(items, date);
     const nowM = moment();
     const now = normalize(nowM.hours() * 60 + nowM.minutes(), cfg);
     const bounds = (cfg.dayBounds || {})[dayKey] || {};
@@ -944,7 +1264,7 @@ module.exports = class NautilusSpiral extends Plugin {
     const plan = schedule(items, cfg, now, 0, bounds);
     const head = `可用 ${dur(plan.available)} · 待办 ${dur(plan.demand)}`;
     const lines = [plan.overflow ? `${head} · ⚠️ 超出 ${dur(plan.overflow)}` : `${head} · 富余 ${dur(plan.available - plan.demand)}`];
-    const next = plan.queue.filter((t) => t.segments.length > t.workedN).slice(0, 5);
+    const next = plan.queue.filter((t) => t.segments.length > t.workedN).sort((a, b) => a.segments[a.workedN][0] - b.segments[b.workedN][0]).slice(0, 5);
     if (next.length) lines.push("", "接下来：", ...next.map((t) => `${t.doing ? "进行中" : clock(t.segments[t.workedN][0])}  ${t.label}（${t.remaining < t.dur - 1 ? "剩 " + dur(t.remaining) : dur(t.dur)}）`));
     const over = plan.queue.filter((t) => t.overflow);
     if (over.length) lines.push("", "排不下：", ...over.map((t) => `· ${t.label}`));
@@ -989,6 +1309,535 @@ module.exports = class NautilusSpiral extends Plugin {
     const items = file instanceof TFile ? parseJournal(await this.app.vault.read(file), cfg) : [];
     const b = cfg.dayBounds[dayKey] || {};
     return [`🌙 ${clock(t)} 收工 · 今天 ${clock(b.start ?? S)}–${clock(t)}`, ...(await this.dayTail(dayKey, items))].join("\n");
+  }
+
+  // ---- macOS 日历 ----
+
+  // 这天的日历事件：先交缓存（同步），过期了在后台重读，读完有变化再重画。关着或不是 Mac 桌面版返回 null
+  calendarFor(date) {
+    if (!this.settings.calendar || !(OB.Platform && OB.Platform.isMacOS && OB.Platform.isDesktopApp)) return null;
+    const key = date.format("YYYY-MM-DD");
+    const c = this.cal.cache.get(key);
+    if (!c || Date.now() - c.at > 120000) this.loadCalendar(date.clone(), key);
+    return c || null;
+  }
+
+  async loadCalendar(date, key) {
+    if (this.cal.busy.has(key)) return;
+    this.cal.busy.add(key);
+    const prev = this.cal.cache.get(key);
+    let next;
+    try {
+      const cfg = this.settings;
+      const mid = date.clone().startOf("day").valueOf();
+      const skip = new Set(splitList(cfg.calendarSkip));
+      const items = [], allDay = [];
+      const seen = new Set();   // 同一件事出现在好几个日历里（比如两份节假日日历）：只留一份
+      for (const e of await this.cal.call([mid + cfg.dayStart * 60e3 * 60, mid + cfg.dayEnd * 60e3 * 60])) {
+        if (skip.has(e.calendar)) continue;
+        const sig = `${e.title}|${e.allDay ? "" : e.start + "-" + e.end}`;
+        if (seen.has(sig)) continue;
+        seen.add(sig);
+        if (e.allDay) { if (e.start < mid + 864e5 && e.end > mid) allDay.push(e); continue; }   // 读的范围跨到次日凌晨，次日的全天事件不算
+        // 和日记同一个坐标：这天 0 点起的分钟数，过了午夜 > 1440
+        const start = Math.round((e.start - mid) / 60e3), end = Math.round((e.end - mid) / 60e3);
+        if (end <= start) continue;
+        items.push({ kind: "event", state: "none", label: e.title || "（无标题）", start, end, line: -1, indent: 0, prio: false, cal: e });
+      }
+      next = { at: Date.now(), items, allDay };
+    } catch (e) {
+      console.error("[螺旋日程] 读取日历失败", e);
+      next = { at: Date.now(), items: [], allDay: [], error: String(e.message || e) };
+    } finally {
+      this.cal.busy.delete(key);
+    }
+    this.cal.cache.set(key, next);
+    const sig = (c) => c && JSON.stringify([c.items.map((i) => [i.label, i.start, i.end, i.cal.color]), c.allDay.map((e) => e.title), c.error]);
+    if (sig(prev) !== sig(next)) this.refresh();
+  }
+
+  // 把日历事件并进日记解析出来的条目（日记里已经手写了同一件事的就不重复）。返回这天的日历缓存，没开返回 null
+  withCalendar(items, date) {
+    const c = this.calendarFor(date);
+    if (!c) return null;
+    for (const e of c.items) {
+      const dup = items.some((i) => i.kind === "event" && Math.abs(i.start - e.start) <= 5 && (i.label.includes(e.label) || e.label.includes(i.label)));
+      if (!dup) items.push({ ...e });
+    }
+    return c;
+  }
+
+  openItem(file, item) {
+    if (item.cal) require("child_process").execFile("/usr/bin/open", ["-b", "com.apple.iCal"], () => {});   // 日历事件：打开「日历」App
+    else this.openLine(file, item.line);
+  }
+
+  // ---- ▶ 开始做：时间记录 + 番茄钟（+ Raycast Focus） ----
+  // 开始 = 这一行改成 DOING HH:MM，按条目上写的时长开一轮专注。专注中再开始别的 = 加入这一轮：几条线并行，
+  // 每条线各记各的时间（三件一起做了 25 分钟，每件都记 25 分钟；一天的总时长按重叠合并算一次）。
+  // 到点问做完没有：做完了 → DONE 开始-结束；再来一轮 → 同样时长再来；先停下 → PAUSED（做过的时间留在计时里）
+  // 这几处，加上下面的硬规则，是螺旋日程会写日记的地方，都只改那几行
+
+  // 进行中的这一轮专注。每条线 { key, label, path, start, minutes, end, round }：各自倒计时，哪条先到点就先单独问哪条，别的线照常走。
+  // Raycast 专注同一时间只能开一段，所以只开一段，覆盖到最晚那条线到点（rcEnd）
+  session() {
+    const s = this.settings.focusSession;
+    if (!s) return s;
+    if (!s.tasks) { s.tasks = [{ key: s.key, label: s.label, path: s.path, start: s.start }]; delete s.key; delete s.label; delete s.path; }   // 旧格式
+    if (!s.tasks.length) { this.settings.focusSession = null; return null; }
+    for (const t of s.tasks) { t.minutes ??= s.minutes; t.end ??= s.end; t.round ??= s.round || 1; }
+    s.rcEnd ??= s.end;
+    s.end = Math.max(...s.tasks.map((t) => t.end));
+    return s;
+  }
+
+  // 一条线
+  line(path, label, minutes) {
+    const now = Date.now();
+    return { key: workKey(label), label, path, start: now, minutes, end: now + minutes * 60e3, round: 1 };
+  }
+
+  // 螺旋上点 ▶
+  async startTask(file, item) {
+    if (!item.doing) {
+      const ok = await this.editTask(file.path, workKey(item.label), toDoing, item.line);
+      if (!ok) { new OB.Notice(`日记里找不到「${item.label}」这一行（刚改过？），没有开始`); return; }
+    }
+    this.begin(file.path, item.label, focusMinutes(item, this.settings));
+  }
+
+  // 快捷键：开始光标所在的那一行（任何笔记里的列表项都行，没有关键词的当 TODO）
+  startAtCursor(editor, view) {
+    const n = editor.getCursor().line;
+    const raw = editor.getLine(n);
+    const it = parseJournal(raw, this.settings)[0];
+    if (it && it.kind === "task" && it.state === "done") { new OB.Notice("这一条已经做完了"); return; }
+    const doing = it && it.kind === "task" && it.state === "open" && it.doing;
+    const next = doing ? raw : toDoing(raw);
+    const t = parseJournal(next, this.settings)[0];
+    if (!t || t.kind !== "task") { new OB.Notice("光标所在的这一行不是列表项"); return; }
+    if (!doing) editor.setLine(n, next);   // 编辑器里直接改：⌘Z 一步撤销
+    this.begin(view.file.path, t.label, focusMinutes(t, this.settings));
+  }
+
+  // 命令：开始螺旋上排在最前面、还没开始的那件
+  async startNext() {
+    const cfg = this.settings;
+    const date = this.today();
+    const dayKey = date.format(cfg.format);
+    const file = this.app.vault.getAbstractFileByPath(this.journalPath(date));
+    if (!(file instanceof TFile)) { new OB.Notice("今天还没有日记"); return; }
+    const items = parseJournal(await this.app.vault.read(file), cfg);
+    this.withCalendar(items, date);
+    const nowM = moment();
+    const now = normalize(nowM.hours() * 60 + nowM.minutes(), cfg);
+    const bounds = (cfg.dayBounds || {})[dayKey] || {};
+    applyWork(items, cfg, dayKey, now, 0, bounds);
+    const plan = schedule(items, cfg, now, 0, bounds);
+    const next = plan.queue.filter((t) => !t.doing && t.segments.length > t.workedN).sort((a, b) => a.segments[a.workedN][0] - b.segments[b.workedN][0])[0];
+    if (!next) { new OB.Notice("没有排着的待办了"); return; }
+    await this.startTask(file, next);
+  }
+
+  // 没在专注：开一轮；正在专注：加入这一轮，并行，按它自己的时长倒计时
+  begin(path, label, minutes) {
+    const cfg = this.settings;
+    const key = workKey(label);
+    this.touch(key);
+    if (cfg.breakState) { cfg.breakState = null; this.saveData(cfg); }   // 吃完回来自己开始干活了：不用再问
+    const s = this.session();
+    if (s && !s.asked) {
+      if (!s.tasks.some((t) => t.key === key)) { s.tasks.push(this.line(path, label, minutes)); this.extendRaycast(s); }
+      this.saveData(cfg);
+      new OB.Notice(`➕ ${label} 加入这一轮 · ${s.tasks.length} 条线并行 · 这一条 ${dur(minutes)}`);
+      this.refresh();
+      return;
+    }
+    this.startSession([this.line(path, label, minutes)]);
+  }
+
+  // 开一轮专注：每条线自己计时（到点问做完没有），设置里开着就同时开一段 Raycast Focus
+  startSession(tasks) {
+    const cfg = this.settings;
+    const s = (cfg.focusSession = { tasks, start: Date.now(), rcEnd: 0, asked: false });
+    this.extendRaycast(s, true);
+    this.saveData(cfg);
+    new OB.Notice(`▶ ${tasks.map((t) => `${t.label} ${dur(t.minutes)}${t.round > 1 ? `（第 ${t.round} 轮）` : ""}`).join(" + ")}`);
+    this.refresh();
+  }
+
+  // Raycast 专注覆盖到最晚那条线到点：开一段；后来加进来的线超出了现在这段，就结束重开一段
+  extendRaycast(s, fresh = false) {
+    const cfg = this.settings;
+    s.end = Math.max(...s.tasks.map((t) => t.end));
+    if (!cfg.focus || (!fresh && s.end <= s.rcEnd + 30e3)) return;
+    // raycast://focus/start?goal=…&duration=秒&categories=…&mode=block|allow（Raycast 文档里的 Focus Deeplink）
+    const q = [`goal=${encodeURIComponent(s.tasks.map((t) => t.label).join(" + "))}`, `duration=${Math.max(60, Math.round((s.end - Date.now()) / 1000))}`];
+    const cats = splitList(cfg.focusCategories).map((c) => c.replace(/\s+/g, "")).join(",");
+    if (cats) q.push(`categories=${cats}`, `mode=${cfg.focusMode === "allow" ? "allow" : "block"}`);
+    const url = "raycast://focus/start?" + q.join("&");
+    if (!fresh && s.rcEnd > Date.now()) { this.openUrl("raycast://focus/complete"); window.setTimeout(() => this.openUrl(url), 1500); }
+    else this.openUrl(url);
+    Object.assign(s, { rcEnd: s.end, rcStart: Date.now(), panelSeen: false, miss: 0, noPanel: false });
+  }
+
+  // 每 10 秒：哪条线到点了；开着 Raycast 专注的话，看看是不是在 Raycast 里提前点了完成
+  async tickFocus() {
+    const s = this.session();
+    if (s && !s.asked && !this._asking) {
+      const due = s.tasks.find((t) => !t.asked && Date.now() >= t.end);
+      if (due) { this.askLine(s, due); return; }
+      // 只在 Raycast 专注这一段进行中时看悬浮窗；开始 1 分钟还没见过悬浮窗（Raycast 没开起来 / 关了悬浮窗）就不再看
+      if (this.settings.focus && !s.noPanel && Date.now() < s.rcEnd) {
+        if (!s.panelSeen && Date.now() - (s.rcStart || s.start) > 60e3) s.noPanel = true;
+        else await this.watchRaycast(s);
+      }
+    }
+    // 螺旋上「还剩几分钟」变了才重画
+    const left = s ? s.tasks.map((t) => Math.ceil((t.end - Date.now()) / 60e3)).join() : null;
+    if (left !== this._focusLeft) { this._focusLeft = left; this.refresh(); }
+  }
+
+  // Raycast 的专注小窗比它该结束的时刻早消失（连着两次、离结束还有半分钟以上、人在电脑前）= 你在 Raycast 里点了完成：这一轮的几条线都记成 DONE
+  async watchRaycast(s) {
+    if (this._probing) return;
+    this._probing = true;
+    try {
+      const p = await this.probe();
+      if (!p || this.settings.focusSession !== s || s.asked) return;
+      if (p.panel) { s.panelSeen = true; s.miss = 0; return; }
+      if (!s.panelSeen || Date.now() > s.rcEnd - 30e3 || p.idle > 300) return;
+      if ((s.miss = (s.miss || 0) + 1) < 2) return;
+      s.asked = true;
+      const tasks = s.tasks;
+      this.endSession(s);
+      await this.finish(tasks, Date.now());
+      this.notify("✅ 在 Raycast 里完成了", tasks.map((t) => t.label).join("、"));
+    } finally { this._probing = false; }
+  }
+
+  async probe() {
+    try { return JSON.parse((await run(await swiftTool("probe", PROBE_SWIFT), [])).stdout); }
+    catch (e) { console.error("[螺旋日程] 读取状态失败", e); return null; }
+  }
+
+  // 一条线到点：弹系统对话框单独问这一条（Obsidian 在后台也看得到），别的线照常走
+  async askLine(s, t) {
+    const cfg = this.settings;
+    this._asking = true;
+    t.asked = true;
+    this.saveData(cfg);
+    try {
+      if (cfg.focusAsk === false) { this.dropFromSession([t.key]); return; }
+      run("/usr/bin/afplay", ["/System/Library/Sounds/Glass.aiff"]);
+      const others = s.tasks.filter((x) => x !== t && !x.asked);
+      const msg = `专注到点 · ${t.label}\n这一条 ${dur(t.minutes)}${t.round > 1 ? `（第 ${t.round} 轮）` : ""}` +
+        (others.length ? `\n\n另外 ${others.length} 条线还在走：${others.map((x) => `${x.label}（还剩 ${dur(Math.max(1, Math.ceil((x.end - Date.now()) / 60e3)))}）`).join("、")}` : "") + "\n\n做完了吗？";
+      const btn = await dialog(msg, ["先停下", "再来一轮", "做完了"], "做完了", 1800);
+      if (this.settings.focusSession !== s || !s.tasks.includes(t)) return;   // 等回答的时候已经手动改了状态 / 这一轮结束了
+      const at = Date.now();
+      // 结束时刻：到点后 10 分钟内回答按回答的时刻，再晚多半是人走开了，按到点的时刻
+      const end = at - t.end <= 10 * 60e3 ? at : t.end;
+      if (btn === "做完了") { this.dropFromSession([t.key]); await this.finish([t], end); }
+      else if (btn === "再来一轮") {
+        Object.assign(t, { asked: false, round: t.round + 1, end: at + t.minutes * 60e3 });
+        this.extendRaycast(s);
+        this.saveData(cfg);
+        new OB.Notice(`▶ ${t.label} · 第 ${t.round} 轮 · ${dur(t.minutes)}`);
+        this.refresh();
+      } else if (btn === "先停下") { this.dropFromSession([t.key]); await this.editTasks(t.path, [t.key], toPaused); }
+      else { this.dropFromSession([t.key]); new OB.Notice(`⏱ 「${t.label}」到点了，没有回答，还是 DOING`); }
+    } finally { this._asking = false; }
+  }
+
+  // 提前点「结束」：整轮一起问。几条线时先勾做完的，再问剩下的
+  async askDone(s) {
+    const cfg = this.settings;
+    if (s.asked) return;
+    s.asked = true;
+    this.saveData(cfg);
+    if (cfg.focus) this.openUrl("raycast://focus/complete");
+    if (cfg.focusAsk === false) { this.endSession(s); return; }
+    run("/usr/bin/afplay", ["/System/Library/Sounds/Glass.aiff"]);
+    const lines = s.tasks.filter((t) => !t.asked);
+    const head = `提前结束 · 这一轮 ${dur(Math.max(1, Math.round((Date.now() - s.start) / 60e3)))}`;
+    let done = [], next = "";
+    if (lines.length === 1) {
+      next = await dialog(`${head}\n\n${lines[0].label}\n\n做完了吗？`, ["先停下", "再来一轮", "做完了"], "做完了", 1800);
+      if (next === "做完了") done = lines;
+    } else {
+      const picked = await pickList(`${head}\n\n${lines.length} 条线并行，勾上做完了的：`, lines.map((t) => t.label), "就这些做完了", "都没做完");
+      done = lines.filter((t) => (picked || []).includes(t.label));
+      const rest = lines.filter((t) => !done.includes(t));
+      if (picked != null && rest.length) next = await dialog(`还有 ${rest.length} 件没做完：\n${rest.map((t) => "· " + t.label).join("\n")}`, ["先停下", "再来一轮"], "再来一轮", 1800);
+    }
+    if (cfg.focusSession !== s) return;   // 等回答的时候已经手动改了状态 / 开了别的
+    const at = Date.now();
+    const rest = lines.filter((t) => !done.includes(t));
+    this.endSession(s);
+    if (done.length) await this.finish(done, at);
+    if (!rest.length) return;
+    if (next === "再来一轮") this.startSession(rest.map((t) => ({ ...t, asked: false, round: t.round + 1, end: at + t.minutes * 60e3 })));
+    else if (next === "先停下") { for (const [path, ts] of groupBy(rest)) await this.editTasks(path, ts.map((t) => t.key), toPaused); }
+    else if (!done.length) new OB.Notice(`⏱ 专注结束了，没有回答，还是 DOING：${rest.map((t) => t.label).join("、")}`);
+  }
+
+  // 记成 DONE 开始-结束：开始用 DOING 后面写的时刻，没写用开始这条线的时刻
+  async finish(tasks, endMs) {
+    const end = moment(endMs).format("HH:mm");
+    for (const [path, ts] of groupBy(tasks)) {
+      for (const t of ts) await this.editTask(path, t.key, (raw) => toDone(raw, moment(t.start).format("HH:mm"), end));
+    }
+    new OB.Notice(`✅ ${tasks.map((t) => t.label).join("、")}`);
+  }
+
+  endSession(s) {
+    if (this.settings.focusSession === s) this.settings.focusSession = null;
+    this.saveData(this.settings);
+    this.refresh();
+  }
+
+  // 这几条线不在专注里了（做完了 / 被规则暂停 / 手动改了状态）：从这一轮拿掉；拿空了这一轮就结束，Raycast 专注还没到点的一起结束
+  dropFromSession(keys) {
+    const s = this.session();
+    if (!s) return;
+    const left = s.tasks.filter((t) => !keys.includes(t.key));
+    if (left.length === s.tasks.length) return;
+    s.tasks = left;
+    if (!left.length) {
+      if (this.settings.focus && this.settings.focusAutoComplete !== false && Date.now() < s.rcEnd - 30e3) this.openUrl("raycast://focus/complete");
+      this.settings.focusSession = null;
+    } else s.end = Math.max(...left.map((t) => t.end));
+    this.saveData(this.settings);
+    this.refresh();
+  }
+
+  // 提议开一轮专注：列出在做的和接下来的几件，勾上这一轮要做的（可以多选，几条线并行），勾上的改成 DOING 一起专注。
+  // 已经在专注、或者在吃饭 / 锻炼时不问
+  async suggestFocus(app, stay) {
+    const cfg = this.settings;
+    const s = this.session();
+    if (this._suggesting || (s && !s.asked) || cfg.breakState) return;
+    const file = this.todayFile();
+    if (!file) return;
+    this._suggesting = true;
+    try {
+      const date = this.today(), dayKey = date.format(cfg.format);
+      const items = parseJournal(await this.app.vault.read(file), cfg);
+      this.withCalendar(items, date);
+      const nowM = moment();
+      const now = normalize(nowM.hours() * 60 + nowM.minutes(), cfg);
+      const bounds = (cfg.dayBounds || {})[dayKey] || {};
+      applyWork(items, cfg, dayKey, now, 0, bounds);
+      const plan = schedule(items, cfg, now, 0, bounds);
+      const doing = plan.queue.filter((t) => t.doing);
+      const next = plan.queue.filter((t) => !t.doing && t.segments.length > t.workedN)
+        .sort((a, b) => a.segments[a.workedN][0] - b.segments[b.workedN][0]).slice(0, 5);
+      const cands = [...doing, ...next];
+      const name = (t) => `${t.doing ? "▶ " : t.paused ? "⏸ " : ""}${t.label} · ${dur(focusMinutes(t, cfg))}`;
+      const JUST = "（不绑任务，只开 25 分钟专注）";
+      const names = [...cands.map(name), JUST];
+      const head = app ? `你在「${app}」待了 ${dur(Math.max(1, Math.round(stay / 60)))}，开一轮专注吧。` : "开一轮专注。";
+      const picked = await pickList(`${head}\n勾上这一轮要做的（可以多选，几条线并行）：`, names, "开始专注", "不用了", doing.length ? doing.map(name) : names.slice(0, 1));
+      if (!picked || !picked.length || this.session()?.asked === false) return;
+      if (picked.includes(JUST) && picked.length === 1) {
+        this.openUrl(`raycast://focus/start?goal=Pomodoro&duration=1500${cfg.focusCategories ? `&categories=${splitList(cfg.focusCategories).join(",")}&mode=${cfg.focusMode || "block"}` : ""}`);
+        return;
+      }
+      const chosen = cands.filter((t) => picked.includes(name(t)));
+      if (!chosen.length) return;
+      const fresh = chosen.filter((t) => !t.doing).map((t) => workKey(t.label));
+      if (fresh.length) await this.editTasks(file.path, fresh, toDoing);
+      for (const t of chosen) this.touch(workKey(t.label));
+      this.startSession(chosen.map((t) => this.line(file.path, t.label, focusMinutes(t, cfg))));
+    } finally { this._suggesting = false; }
+  }
+
+  // ---- 硬规则：同时最多 3 件 DOING、3 小时没动就暂停、吃饭 / 锻炼全暂停 ----
+
+  touch(key) {
+    const all = (this.settings.doingTouch ||= {});
+    all[key] = { sig: all[key]?.sig ?? null, at: Date.now() };
+  }
+
+  todayFile() {
+    const f = this.app.vault.getAbstractFileByPath(this.journalPath(this.today()));
+    return f instanceof TFile ? f : null;
+  }
+
+  // 日记改了之后（observe 之后调，prev = 改之前的任务状态）
+  async enforce(file, content, prev) {
+    const cfg = this.settings;
+    if (!prev || file.path !== this.todayFile()?.path) return;
+    const lines = content.split("\n");
+    const nowM = moment();
+    const now = normalize(nowM.hours() * 60 + nowM.minutes(), cfg);
+
+    // 新写了一条「吃饭」「锻炼」
+    const words = splitList(cfg.breakWords);
+    const brk = lines.map((l) => breakWord(l, words, cfg, now)).filter(Boolean);
+    const seen = this._breakSeen;
+    this._breakSeen = brk;
+    if (seen && brk.length > seen.length && !cfg.breakState) { await this.startBreak(brk[brk.length - 1], file); return; }
+
+    const doing = parseJournal(content, cfg).filter((i) => i.kind === "task" && i.state === "open" && i.doing);
+    const born = doing.filter((i) => !prev.get(i.label)?.doing);
+    if (!born.length) return;
+    for (const t of born) this.touch(workKey(t.label));
+    if (cfg.breakState) { cfg.breakState = null; this.saveData(cfg); this.refresh(); }   // 吃完自己开始干活了：不用再问
+    // 超过上限：最早开始的那几件改成 PAUSED
+    if (!(cfg.doingLimit > 0) || doing.length <= cfg.doingLimit) return;
+    const work = (cfg.workLog || {})[file.basename] || {};
+    const since = (t) => (work[workKey(t.label)] || []).find((x) => x[1] == null)?.[0] ?? t.startedAt ?? 1e6 + t.line;
+    // 正在专注的几件排到最后才动：先暂停不在这一轮里、最早开始的
+    const fs = this.session();
+    const inFocus = (t) => !!fs && !fs.asked && fs.tasks.some((x) => x.key === workKey(t.label));
+    const victims = doing.filter((t) => !born.includes(t)).sort((a, b) => inFocus(a) - inFocus(b) || since(a) - since(b)).slice(0, doing.length - cfg.doingLimit);
+    if (!victims.length) return;
+    await this.pause(file, victims);
+    this.notify(`⏸ 同时在做超过 ${cfg.doingLimit} 件`, `已暂停最早开始的：${victims.map((t) => t.label).join("、")}`, file, victims[0].line);
+  }
+
+  async pause(file, tasks) {
+    const keys = tasks.map((t) => workKey(t.label));
+    this.dropFromSession(keys);
+    await this.editTasks(file.path, keys, toPaused);
+  }
+
+  // 每分钟：DOING 超过 staleHours 小时没动过（这一行和子项都没改、也不在专注里）→ PAUSED
+  async checkStale() {
+    const cfg = this.settings;
+    const file = this.todayFile();
+    if (!file) return;
+    const text = await this.app.vault.cachedRead(file);
+    const lines = text.split("\n");
+    const touch = (cfg.doingTouch ||= {});
+    const s = this.session();
+    const now = Date.now(), seen = new Set(), stale = [];
+    let changed = false;
+    for (const t of parseJournal(text, cfg)) {
+      if (t.kind !== "task" || t.state !== "open" || !t.doing) continue;
+      const k = workKey(t.label), sig = subtree(lines, t.line);
+      seen.add(k);
+      if (!touch[k] || touch[k].sig !== sig) { touch[k] = { sig, at: touch[k] && touch[k].sig == null ? touch[k].at : now }; changed = true; }
+      const focused = s && !s.asked && s.tasks.some((x) => x.key === k);
+      if (cfg.staleHours > 0 && !focused && now - touch[k].at > cfg.staleHours * 3600e3) stale.push(t);
+    }
+    for (const k of Object.keys(touch)) if (!seen.has(k)) { delete touch[k]; changed = true; }
+    if (changed) this.saveSoon();
+    if (!stale.length) return;
+    await this.pause(file, stale);
+    this.notify(`⏸ 超过 ${cfg.staleHours} 小时没动`, `已暂停：${stale.map((t) => t.label).join("、")}`, file, stale[0].line);
+  }
+
+  // 吃饭 / 锻炼：所有 DOING 改成 PAUSED，专注停掉（记下还剩多久），等你回来
+  async startBreak(word, file) {
+    const cfg = this.settings;
+    const doing = parseJournal(await this.app.vault.read(file), cfg).filter((i) => i.kind === "task" && i.state === "open" && i.doing);
+    const s = this.session();
+    let focus = null;
+    if (s && !s.asked) {
+      focus = { tasks: s.tasks.filter((t) => !t.asked).map((t) => ({ ...t, left: Math.max(1, Math.ceil((t.end - Date.now()) / 60e3)) })) };
+      s.asked = true;
+      if (cfg.focus) this.openUrl("raycast://focus/complete");
+      this.endSession(s);
+    }
+    cfg.breakState = { word, since: Date.now(), path: file.path, keys: doing.map((t) => workKey(t.label)), labels: doing.map((t) => t.label), focus, active: 0 };
+    if (doing.length) await this.editTasks(file.path, cfg.breakState.keys, toPaused);
+    await this.saveData(cfg);
+    this.notify(`${breakIcon(word)} ${word}：计时暂停`, doing.length ? `已暂停 ${doing.length} 件：${doing.map((t) => t.label).join("、")}` : "现在没有在做的事");
+    this.refresh();
+  }
+
+  // 每 30 秒：吃饭 / 锻炼至少 breakMinAway（20）分钟后，在 Obsidian、Claude 等 App 里持续操作满 3 分钟 = 回来了
+  async tickBreak() {
+    const b = this.settings.breakState;
+    if (!b || b.asking || Date.now() - b.since < (this.settings.breakMinAway ?? 20) * 60e3) return;
+    const p = await this.probe();
+    if (!p || this.settings.breakState !== b) return;
+    const apps = splitList(this.settings.breakApps).map((a) => a.toLowerCase());
+    if (p.idle <= 30 && apps.some((a) => p.front.toLowerCase().includes(a))) b.active++;
+    else if (p.idle > 90) b.active = 0;
+    if (b.active >= 6) await this.askBack(b);
+  }
+
+  async askBack(b) {
+    const cfg = this.settings;
+    if (b.asking) return;
+    b.asking = true;
+    const away = dur(Math.max(1, Math.round((Date.now() - b.since) / 60e3)));
+    if (!b.keys.length && !b.focus) { cfg.breakState = null; this.saveData(cfg); this.notify(`欢迎回来`, `${b.word} ${away}`); this.refresh(); return; }
+    this.notify(`欢迎回来 · ${b.word} ${away}`, `要把 ${b.keys.length} 件切回 DOING 吗？`);
+    run("/usr/bin/afplay", ["/System/Library/Sounds/Glass.aiff"]);
+    const msg = `欢迎回来 · ${b.word} ${away}\n\n要把这 ${b.keys.length} 件切回 DOING 吗？\n${b.labels.map((l) => "· " + l).join("\n")}` +
+      (b.focus && b.focus.tasks.length ? `\n\n专注接着开：${b.focus.tasks.map((t) => `${t.label} 还剩 ${dur(t.left)}`).join("、")}` : "");
+    const btn = await dialog(msg, ["先不用", "切回来"], "切回来", 900);
+    if (cfg.breakState !== b) return;
+    if (!btn) { b.asking = false; b.active = 0; this.saveData(cfg); return; }   // 没回答：人又走了，过会儿再问
+    cfg.breakState = null;
+    if (btn === "切回来") {
+      // 只切还是 PAUSED 的（吃饭时手动改过的不动）
+      await this.editTasks(b.path, b.keys, (raw) => (splitTask(raw)?.kw === "PAUSED" ? toDoing(raw) : raw));
+      for (const k of b.keys) this.touch(k);
+      if (b.focus && b.focus.tasks.length) this.startSession(b.focus.tasks.map((t) => ({ ...t, asked: false, end: Date.now() + t.left * 60e3 })));
+    }
+    this.saveData(cfg);
+    this.refresh();
+  }
+
+  // 系统通知；点一下跳到那一行
+  notify(title, body, file, line) {
+    try {
+      const n = new Notification(title, { body });
+      if (file) n.onclick = () => { window.focus(); this.openLine(file, line ?? 0); };
+    } catch (e) { new OB.Notice(`${title}\n${body}`, 8000); }
+  }
+
+  // 改一篇笔记的几行：开在编辑器里就在编辑器里改（光标不跳，⌘Z 能撤销），没开就改文件。fn(lines) 直接改数组，返回改了几行
+  async editFile(file, fn) {
+    let view = null;
+    this.app.workspace.iterateAllLeaves((l) => { if (!view && l.view instanceof OB.MarkdownView && l.view.file?.path === file.path && l.view.getMode() === "source") view = l.view; });
+    if (view) {
+      const ed = view.editor;
+      const before = ed.getValue().split("\n"), lines = [...before];
+      const n = fn(lines);
+      if (!n) return 0;
+      const changes = [];
+      lines.forEach((l, i) => { if (l !== before[i]) changes.push({ from: { line: i, ch: 0 }, to: { line: i, ch: before[i].length }, text: l }); });
+      ed.transaction({ changes });
+      return n;
+    }
+    let n = 0;
+    await this.app.vault.process(file, (text) => {
+      const lines = text.split("\n");
+      n = fn(lines);
+      return n ? lines.join("\n") : text;
+    });
+    return n;
+  }
+
+  // 改几件任务：按 workKey 找还没做完的那几条（hint = 原来的行号，同名的有好几条时优先它）；只改这几行
+  async editTasks(path, keys, fn, hint) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return 0;
+    return this.editFile(file, (lines) => {
+      const open = parseJournal(lines.join("\n"), this.settings).filter((i) => i.kind === "task" && i.state === "open");
+      let n = 0;
+      for (const k of keys) {
+        const hits = open.filter((i) => workKey(i.label) === k).map((i) => i.line);
+        const at = hits.includes(hint) ? hint : hits[0];
+        if (at == null) continue;
+        const next = fn(lines[at]);
+        if (next !== lines[at]) { lines[at] = next; n++; }
+      }
+      return n;
+    });
+  }
+  async editTask(path, key, fn, hint) { return (await this.editTasks(path, [key], fn, hint)) > 0; }
+
+  // 后台打开链接，不把焦点抢走
+  openUrl(url, background = true) {
+    require("child_process").execFile("/usr/bin/open", background ? ["-g", url] : [url], (e) => { if (e) new OB.Notice(`打不开 ${url.split("?")[0]}：${e.message}`); });
   }
 
   async setBounds(dayKey, kind, t) {
@@ -1131,7 +1980,9 @@ module.exports = class NautilusSpiral extends Plugin {
   async onFileChange(f) {
     if (!(f instanceof TFile) || !f.path.startsWith(this.settings.folder + "/")) return;
     const content = await this.app.vault.read(f);
+    const prev = this.states.get(f.path);
     this.observe(f, content, true);
+    this.enforce(f, content, prev).catch((e) => console.error("[螺旋日程] 规则执行失败", e));
     this._lpStale = true;
     this.scheduleProjects();
     if (this.views().some((v) => v.path() === f.path)) this.refresh();
@@ -1191,6 +2042,13 @@ module.exports = class NautilusSpiral extends Plugin {
           const k = workKey(l), seg = openSeg(k);
           if (seg) stop(k, now - seg[0] > 360 ? seg[0] + prev.get(l).dur : now);
         }
+        // 正在专注的那件：改了名字跟着走；还没到点就手动改成 DONE / TODO（或挪走）：这一轮提前结束，不再弹窗问
+        const fs = this.session();
+        if (fs && !fs.asked) {
+          for (const t of fs.tasks) if (renamed && t.path === file.path && t.key === renamed[0]) { t.key = renamed[1]; t.label = born[0]; changed = true; }
+          const off = fs.tasks.filter((t) => t.path === file.path && [...prev].some(([l, p]) => p.doing && workKey(l) === t.key) && ![...cur].some(([l, c]) => c.doing && workKey(l) === t.key));
+          if (off.length) window.setTimeout(() => this.dropFromSession(off.map((t) => t.key)), 0);
+        }
       }
       if (!Object.keys(work).length) delete log[file.basename];
     }
@@ -1223,6 +2081,10 @@ module.exports = class NautilusSpiral extends Plugin {
 
 class SpiralSettings extends PluginSettingTab {
   constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
+  // 关掉设置时：「不读这些日历」改过就清缓存重读
+  hide() {
+    if (this.skipWas !== undefined && this.skipWas !== this.plugin.settings.calendarSkip) { this.plugin.cal.cache.clear(); this.plugin.refresh(); }
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -1246,6 +2108,45 @@ class SpiralSettings extends PluginSettingTab {
     text("日记文件夹", "", "folder");
     text("日记文件名格式", "moment.js 格式", "format");
     text("重要标记", "任务里含有这些文字就标成红色，用逗号分隔", "priorityMarkers");
+    new Setting(containerEl).setName("DOING 并行排").setDesc("几件 DOING 一起从现在开始，重叠在同一段时间里，只占最长那件的时间；关掉就首尾相接")
+      .addToggle((t) => t.setValue(s.parallelDoing !== false).onChange(async (v) => { s.parallelDoing = v; await this.plugin.saveData(s); this.plugin.refresh(); }));
+    num("最短一段（分钟）", "任务被事件隔开时每段至少这么长；不够切成两段的任务整块排，放不下就跳到下一个空档，后面的小任务往前补位。0 = 照旧切开填满", "minChunk", 0, 240);
+
+    containerEl.createEl("h3", { text: "macOS 日历" });
+    new Setting(containerEl).setName("读 macOS 日历").setDesc("把「日历」App 里的事件当固定事件排进螺旋（只读，不改日历）。第一次打开会在本机编译一个读日历的小助手（要有 Xcode 命令行工具），并弹出日历权限请求，选「允许」")
+      .addToggle((t) => t.setValue(!!s.calendar).onChange(async (v) => { s.calendar = v; this.plugin.cal.cache.clear(); await this.plugin.saveData(s); this.plugin.refresh(); this.display(); }));
+    if (s.calendar) {
+      text("不读这些日历", "日历名称，逗号分隔，比如：中国大陆节假日, 生日", "calendarSkip");
+      const names = new Setting(containerEl).setName("本机的日历").setDesc("点「列出」看看有哪些日历");
+      names.addButton((b) => b.setButtonText("列出").onClick(async () => {
+        try {
+          const cals = await this.plugin.cal.call(["--calendars"]);
+          names.setDesc(cals.map((c) => `${c.title}（${c.source}）`).join("、") || "一个日历也没有");
+        } catch (e) { names.setDesc(String(e.message || e)); }
+      }));
+    }
+    this.skipWas = s.calendarSkip;
+
+    containerEl.createEl("h3", { text: "▶ 开始做 · 番茄钟 · Raycast Focus" });
+    containerEl.createEl("p", { cls: "setting-item-description", text: "螺旋上点 ▶，或在任务那一行按 ⌘⇧↵：这一行改成 DOING HH:MM，按条目上写的时长（10min、15分钟）专注一轮；到点问你做完没有，做完了就改成 DONE 开始-结束。" });
+    num("专注多久（分钟）", "0 = 按条目上写的时长（没写按「默认任务时长」，写了进度按还剩的）；填 25 = 每轮固定 25 分钟", "focusMinutes", 0, 600);
+    new Setting(containerEl).setName("到点问做完没有").setDesc("弹系统对话框：做完了（改成 DONE 开始-结束）/ 再来一轮 / 先停下（改回 TODO）。关掉就只计时，不问")
+      .addToggle((t) => t.setValue(s.focusAsk !== false).onChange(async (v) => { s.focusAsk = v; await this.plugin.saveData(s); }));
+    new Setting(containerEl).setName("同时开 Raycast 专注").setDesc("用 raycast://focus/start 开一段同样时长的 Raycast Focus，屏蔽分心的 App 和网站")
+      .addToggle((t) => t.setValue(s.focus !== false).onChange(async (v) => { s.focus = v; await this.plugin.saveData(s); this.plugin.refresh(); }));
+    text("屏蔽类别", "Raycast Focus 的类别，逗号分隔（比如 social, gaming）；留空 = 不带类别，用 Raycast 自己的设置", "focusCategories");
+    new Setting(containerEl).setName("类别的用法").setDesc("屏蔽 = 只挡上面这些类别；只允许 = 除了这些类别都挡")
+      .addDropdown((d) => d.addOption("block", "屏蔽").addOption("allow", "只允许").setValue(s.focusMode || "block")
+        .onChange(async (v) => { s.focusMode = v; await this.plugin.saveData(s); }));
+    new Setting(containerEl).setName("提前做完时结束 Raycast 专注").setDesc("还没到点就把那件任务改成 DONE / TODO（或挪去明天）时，用 raycast://focus/complete 结束这段专注")
+      .addToggle((t) => t.setValue(s.focusAutoComplete !== false).onChange(async (v) => { s.focusAutoComplete = v; await this.plugin.saveData(s); }));
+    containerEl.createEl("h3", { text: "硬规则（只管今天的日记）" });
+    num("同时最多几件 DOING", "再开始一件时，把最早开始的那件改成 PAUSED，并发系统通知。0 = 不限", "doingLimit", 0, 20);
+    num("DOING 多久没动就暂停（小时）", "这一行和它下面的子项都没改过、也不在专注里，超过这么久就改成 PAUSED，并发系统通知。0 = 不管", "staleHours", 0, 48);
+    text("吃饭 / 锻炼的词", "新写一条只有这几个字的条目（逗号分隔），所有 DOING 改成 PAUSED、专注停掉，等你回来", "breakWords");
+    num("吃饭 / 锻炼至少多久（分钟）", "这么久以内不判断「回来了」，吃饭保守估计也得 20 分钟", "breakMinAway", 0, 240);
+    text("回来了的判断：在这些 App 里持续操作", "吃饭 / 锻炼过了上面这个时间以后，在这些 App 里连续操作满 3 分钟就算回来了，弹窗问要不要切回 DOING", "breakApps");
+    containerEl.createEl("h3", { text: "其它" });
     new Setting(containerEl).setName("启动时打开今天的日记").setDesc("按上面的「日记日期分界」算今天：已经开着就切过去，没开就开一个新标签，还没有这篇就新建")
       .addToggle((t) => t.setValue(s.openTodayOnStartup !== false).onChange(async (v) => { s.openTodayOnStartup = v; await this.plugin.saveData(s); }));
     new Setting(containerEl).setName("启动时左侧栏显示螺旋日程").setDesc("展开左侧栏并切到螺旋日程标签（Wiki、文件列表等标签还在，点图标切换）")
@@ -1261,4 +2162,4 @@ class SpiralSettings extends PluginSettingTab {
   }
 }
 
-module.exports.core = { parseJournal, parseDuration, parseProgress, applyWork, workKey, schedule, normalize, DEFAULTS, AiUsage, fmtTok, unionMin };
+module.exports.core = { parseJournal, parseDuration, parseProgress, applyWork, workKey, schedule, fill, normalize, toDoing, toDone, toTodo, toPaused, breakWord, subtree, focusMinutes, DEFAULTS, AiUsage, fmtTok, unionMin };

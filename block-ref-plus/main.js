@@ -19,7 +19,7 @@ function cleanLine(line) {
   for (let i = 0; i < 3; i++) {
     s = s.replace(/^(?:[-*+]|\d+[.)])\s+/, "")
       .replace(/^\[[ xX\-\/]\]\s+/, "")
-      .replace(/^(?:TODO|DOING|DONE|LATER|NOW|WAITING|CANCELED|CANCELLED)\s+/, "")
+      .replace(/^(?:TODO|DOING|DONE|LATER|NOW|PAUSED|WAITING|WAIT|SUSPENDED|IN-PROGRESS|CANCELED|CANCELLED|FAILED)\s+/, "")
       .replace(/^#{1,6}\s+/, "")
       .replace(/^(?:>\s*)+/, "");
   }

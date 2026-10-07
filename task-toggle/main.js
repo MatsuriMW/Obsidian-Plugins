@@ -5,7 +5,7 @@
 //   · 标题、表格、代码块、分隔线、frontmatter 里不动；选中多行 = 每行各切一次
 const { Plugin } = require("obsidian");
 
-const KW = /^(TODO|DOING|DONE|LATER|NOW|WAITING|WAIT|IN-PROGRESS|CANCELED|CANCELLED|FAILED|SUSPENDED)(?=\s|$)\s*/;
+const KW = /^(TODO|DOING|DONE|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|CANCELED|CANCELLED|FAILED|SUSPENDED)(?=\s|$)\s*/;
 const HM = "(\\d{1,2}[:：]\\d{2})";
 const pad = (n) => String(n).padStart(2, "0");
 const now = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -22,7 +22,7 @@ function nextLine(line) {
   const k = rest.match(KW);
   if (!k) return prefix + "TODO " + rest;
   const kw = k[1], body = rest.slice(k[0].length);
-  if (kw === "TODO" || kw === "LATER") return prefix + `DOING ${now()} ` + body;
+  if (kw === "TODO" || kw === "LATER" || kw === "PAUSED") return prefix + `DOING ${now()} ` + body;   // PAUSED = 停一下，再按一次接着做
   if (kw === "DOING" || kw === "NOW" || kw === "IN-PROGRESS") {
     const t = body.match(new RegExp("^" + HM + "\\s*"));
     return prefix + (t ? `DONE ${t[1].replace("：", ":")}-${now()} ` + body.slice(t[0].length) : `DONE ${now()} ` + body);
