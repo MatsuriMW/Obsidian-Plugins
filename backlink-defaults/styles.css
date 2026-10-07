@@ -205,3 +205,20 @@ body .backlink-pane .tree-item-self.is-clickable.bd-title-row:hover { background
 /* ---------- 名字筛选（文件名 + 别名） ---------- */
 .bd-names { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0; }
 .bd-names-label { font-size: var(--font-ui-smaller); color: var(--text-faint); margin-right: 2px; }
+
+/* 「转为链接」点过之后：按钮变成「已链接 ✓」，面板不刷新 */
+.search-result-file-match-replace-button.bd-linked,
+.search-result-file-match-replace-button.bd-linked:hover {
+  color: var(--text-faint); background: transparent; box-shadow: none; cursor: default;
+}
+
+/* Bullet 插件 Zoom 进列表块时顶上的面包屑（Shift 点开到右侧栏时最明显）：
+   原样式是一行横向滚动、每级最宽 220px、超出用省略号截掉；改成折行，每一级的文字完整显示 */
+.bullet-zoom-breadcrumbs.bullet-zoom-breadcrumbs {
+  flex-wrap: wrap; align-items: baseline; row-gap: 2px; overflow-x: visible;
+}
+.bullet-zoom-breadcrumbs.bullet-zoom-breadcrumbs button {
+  flex-shrink: 1; max-width: 100%; height: auto; min-height: 0;
+  padding: 2px 4px; line-height: 1.4; text-align: left;
+  white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere;
+}

@@ -53,6 +53,10 @@ const NAME_FILTER = true;
 // 「提到当前文件名」要不要区分大小写：在那篇笔记的属性里写 大小写敏感: true（也认 case-sensitive）。
 // 开了之后，只有和文件名 / 别名一字不差（含大小写）的提及才显示。Obsidian 自己没有这个开关，一律不分大小写
 const CASE_KEYS = ["大小写敏感", "case-sensitive"];
+// 「提到当前文件名」里点「转为链接」后，反链面板先不刷新、不重排（光标和滚动位置留在原地，不打断思路）：
+// 按钮换成「已链接 ✓」，同一篇里再点别的也照样能转（位置按已经改过的地方顺延）。
+// 离开这一页再回来、或者重新打开这一页时，再整体重新读取
+const FREEZE_AFTER_LINK = true;
 
 module.exports = class BacklinkDefaults extends Plugin {
   onload() {
@@ -69,6 +73,8 @@ module.exports = class BacklinkDefaults extends Plugin {
     this.registerEvent(this.app.workspace.on("layout-change", apply));
     this.registerEvent(this.app.workspace.on("active-leaf-change", apply));
     this.registerEvent(this.app.workspace.on("file-open", apply));
+    // 重新打开同一页 = 刷新：解冻并重新读取反链
+    if (FREEZE_AFTER_LINK) this.registerEvent(this.app.workspace.on("file-open", (f) => { if (f) this.thawFor(f.path); }));
 
     if (BLOCK_REFCOUNT) {
       // 全库扫一遍 ^id 块引用建索引，之后按文件增量更新
@@ -121,6 +127,7 @@ module.exports = class BacklinkDefaults extends Plugin {
 
   onunload() {
     this.unloaded = true;
+    this.eachComponent((c) => this.thaw(c, true));
     this.app.workspace.iterateAllLeaves((leaf) => {
       for (const c of [leaf.view && leaf.view.backlink, leaf.view && leaf.view.backlinks]) {
         for (const dom of c ? [c.backlinkDom, c.unlinkedDom] : []) {
@@ -168,6 +175,8 @@ module.exports = class BacklinkDefaults extends Plugin {
         if (!this.openInit.has(component)) { component.__bd.open = COOCCUR_OPEN; this.openInit.add(component); }
         // 换了当前文件就重置筛选（Roam 是按页筛选）
         if (component.__bdPrevTarget !== component.__bdTargetPath) {
+          // 离开了冻结时的那一页：解冻（Obsidian 换页时自己会整体重算）
+          if (component.__bdFrozen) this.thaw(component, false);
           component.__bd.include.clear(); component.__bd.exclude.clear(); component.__bd.text = "";
           component.__bd.nameInc.clear(); component.__bd.nameExc.clear();
           if (component.__bdInput) component.__bdInput.value = "";
@@ -446,6 +455,88 @@ module.exports = class BacklinkDefaults extends Plugin {
       m.el.toggleClass("bd-hidden", !this.matchVisible(comp, m));
       this.refresh(comp);
     }
+    if (FREEZE_AFTER_LINK && comp && dom === comp.unlinkedDom) this.takeOverLinkButton(m, comp);
+  }
+
+  // ---------- 「转为链接」之后不刷新 ----------
+
+  eachComponent(fn) {
+    this.app.workspace.iterateAllLeaves((leaf) => {
+      const v = leaf.view;
+      for (const c of [v && v.backlink, v && v.backlinks]) if (c) fn(c);
+    });
+  }
+
+  // 冻结：把 Obsidian 反链面板的两个更新队列换成空的，文件改动、元数据变化都不再触发重算和重排
+  freeze(c) {
+    if (c.__bdFrozen) return;
+    const dummy = { add() {}, remove() {}, runnable: { isCancelled: () => true, cancel() {} } };
+    c.__bdQueues = { b: c.backlinkQueue, u: c.unlinkedQueue, dummy };
+    c.backlinkQueue = dummy;
+    c.unlinkedQueue = dummy;
+    c.__bdEdits = new Map();     // 文件路径 → [{ at, delta }]：冻结期间在这篇里已经改过的地方（按原来的位置记）
+    c.__bdLinked = new Set();    // 「文件路径:位置」：已经转成链接的提及
+    c.__bdFrozen = true;
+  }
+
+  // 解冻；recompute 为真时立刻重新读取（重新打开同一页时用）
+  thaw(c, recompute) {
+    if (!c.__bdFrozen) return;
+    const q = c.__bdQueues;
+    c.__bdFrozen = false;
+    c.__bdQueues = c.__bdEdits = c.__bdLinked = null;
+    if (c.backlinkQueue === q.dummy) c.backlinkQueue = q.b;
+    if (c.unlinkedQueue === q.dummy) c.unlinkedQueue = q.u;
+    if (!recompute) return;
+    const f = c.file || c.__bdTarget;
+    try { c.recomputeBacklink(f); c.recomputeUnlinked(f); } catch (e) { console.error("[backlink-defaults] thaw", e); }
+  }
+
+  thawFor(path) {
+    this.eachComponent((c) => { if (c.__bdFrozen && c.__bdTargetPath === path) this.thaw(c, true); });
+  }
+
+  // 把 Obsidian 的「转为链接」按钮换成自己的：改完原文不删这一行、不重算面板
+  takeOverLinkButton(m, comp) {
+    const btn = m.el.querySelector(".search-result-file-match-replace-button");
+    const file = m.parentDom && m.parentDom.file;
+    const range = m.matches && m.matches[0];
+    if (!btn || !file || !range || typeof m.content !== "string") return;
+    const nb = btn.cloneNode(true);   // 克隆不带原来的点击事件
+    btn.replaceWith(nb);
+    if (comp.__bdLinked && comp.__bdLinked.has(file.path + ":" + range[0])) this.markLinked(nb);
+    nb.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!nb.hasClass("bd-linked")) this.linkMention(comp, m, file, range, nb);
+    });
+  }
+
+  async linkMention(comp, m, file, range, btn) {
+    const target = comp.__bdTarget;
+    if (!target) return;
+    this.freeze(comp);
+    const text = m.content.slice(range[0], range[1]);
+    const edits = comp.__bdEdits.get(file.path) || [];
+    const at = range[0] + edits.reduce((s, x) => s + (x.at < range[0] ? x.delta : 0), 0);
+    const link = this.app.fileManager.generateMarkdownLink(target, file.path, "", text);
+    let ok = false;
+    await this.app.vault.process(file, (data) => {
+      if (data.slice(at, at + text.length) !== text) return data;   // 原文在这期间被改过：不动
+      ok = true;
+      return data.slice(0, at) + link + data.slice(at + text.length);
+    });
+    if (!ok) { new Notice("这一处原文已经变了，没有改动。重新打开这一页、刷新反链后再试"); return; }
+    edits.push({ at: range[0], delta: link.length - text.length });
+    comp.__bdEdits.set(file.path, edits);
+    comp.__bdLinked.add(file.path + ":" + range[0]);
+    this.markLinked(btn);
+  }
+
+  markLinked(btn) {
+    btn.addClass("bd-linked");
+    btn.setText("已链接 ✓");
+    btn.setAttribute("aria-label", "已转为链接；离开或重新打开这一页后刷新");
   }
 
   renderCrumbs(m, crumbs) {
