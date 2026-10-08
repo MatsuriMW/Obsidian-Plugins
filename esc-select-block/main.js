@@ -32,6 +32,7 @@
 //     「选中的文字被换成了一个成对符号」就改成包裹
 //   · 没有选中文字、或者选中的是 Esc 选出来的整块时，不接管
 //   · 包好之后按 Enter = 确认：光标跳到右半边符号后面接着写，不换行
+//     （在列表项里也一样：Enter 在 keydown 里抢在 Bullet 等插件的 Enter 前面处理）
 //
 // 三、⌘K 插分割线（命令，可在设置里改键）
 //   · 光标在哪一层的子块、块里哪个位置都行：在当前这一块（连同它的子项）下面，顶格插一行「- ---」
@@ -196,8 +197,19 @@ module.exports = class LogseqEditing extends Plugin {
 				{ key: "ArrowDown", run: (view) => this.move(view, 1, false) },
 				{ key: "Shift-ArrowUp", run: (view) => this.move(view, -1, true) },
 				{ key: "Shift-ArrowDown", run: (view) => this.move(view, 1, true) },
-				{ key: "Enter", run: (view) => this.edit(view) },
 			])),
+			// Enter 不走 keymap：Bullet 也在最高优先级挂了 Enter，又比本插件先加载，
+			// 光标在列表项里时它先把选中的文字换成新的一条，轮不到这里确认包裹。
+			// keymap 整体是在默认优先级的 keydown 里跑的，最高优先级的 keydown 能排在所有 keymap 前面
+			Prec.highest(EditorView.domEventHandlers({
+				keydown: (e, view) => {
+					if (e.key !== "Enter" || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return false;
+					if (e.isComposing || e.keyCode === 229 || view.composing) return false;
+					if (!this.edit(view)) return false;
+					e.preventDefault();
+					return true;
+				},
+			})),
 			EditorState.transactionFilter.of((tr) => this.keepBlock(tr)),
 			EditorState.transactionFilter.of((tr) => this.wrapFilter(tr)),
 			EditorView.domEventHandlers({
