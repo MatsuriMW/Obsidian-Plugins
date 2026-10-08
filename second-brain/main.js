@@ -37,6 +37,7 @@ const DEFAULTS = {
     ankiUrl: "http://127.0.0.1:8765",
     ankiSeconds: 5,           // 写进 Anki 复习记录的用时（秒）；AnkiConnect 要打过补丁才认，原版会忽略、记成约 0 秒
     ankiAutoSync: true,       // 答完卡自动让 Anki 同步到 AnkiWeb（最后一次作答 3 分钟后同步一次）
+    reviewLog: true,          // 每日回顾里复习的时间和卡片数记进今天日记顶部（DONE 14:00-14:12 复习卡片 N 张），螺旋日程按实际用时画出来
     fxSound: true,            // 作答后播一小段提示音：良好 / 简单往上走，重来 / 困难往下走（Web Audio 现场合成，没有音频文件）
     fxAnim: true,             // 在作答按钮那儿放一小簇烟花：答对是亮色往上炸，答错是暗色往下落
     fxVolume: 55,             // 0-100
@@ -132,6 +133,38 @@ const FX = {
         if (cut) { const f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cut; o.connect(f); node = f; }
         node.connect(g); g.connect(ac.destination);
         o.start(t0); o.stop(t0 + dur + 0.05);
+    },
+    // 一段带通滤波的白噪声，中心频率 f0 滑到 f1：用来做「唰」「嚓」这类纸面的摩擦声
+    noise(ac, dur, delay, gain, f0, f1, q) {
+        const t0 = ac.currentTime + (delay || 0);
+        const n = Math.ceil(ac.sampleRate * dur), buf = ac.createBuffer(1, n, ac.sampleRate), d = buf.getChannelData(0);
+        for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+        const src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+        src.buffer = buf;
+        f.type = "bandpass"; f.Q.value = q || 1;
+        f.frequency.setValueAtTime(f0, t0);
+        f.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + dur * 0.25);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        src.connect(f); f.connect(g); g.connect(ac.destination);
+        src.start(t0); src.stop(t0 + dur + 0.02);
+    },
+    // 揭开：像把卡片翻过来，一声轻的「唰」往上扫，尾巴挂一个清脆的小叮。揭开很频繁，所以比作答的声音轻
+    reveal(vol) {
+        if (!vol) return;
+        const ac = this.audio(); if (!ac) return;
+        const v = 0.12 * vol;
+        this.noise(ac, 0.15, 0, v, 900, 4200, 0.9);
+        this.note(ac, 1318.5, 1318.5, 0.22, 0.08, v * 0.6, "sine");
+    },
+    // 删掉（不再作为卡片）：像一笔划掉、揉成一团，「嚓」往下扫，再落一声短促的闷响
+    erase(vol) {
+        if (!vol) return;
+        const ac = this.audio(); if (!ac) return;
+        const v = 0.16 * vol;
+        this.noise(ac, 0.24, 0, v, 3800, 450, 0.8);
+        this.note(ac, 180, 90, 0.18, 0.13, v * 0.8, "sine", 500);
     },
     // 昂扬：C-E-G-C 往上走的琶音（三角波，亮一点），顶上再挂一个高八度的亮片
     up(vol) {
@@ -787,6 +820,8 @@ class ReviewView extends ItemView {
         const anki = it.kind === "wiki" || !p.settings.ankiReview ? null : c.createDiv({ cls: "sb-anki", text: "…" });
         const reveal = () => {
             st.revealed = true; show(full); row.empty();
+            if (p.settings.fxSound) FX.reveal(fxVol(p.settings));
+            p.reviewTick(st, "look");
             if (st.reviewable) this.answerButtons(row, anki, st);
         };
         if (hiddenOf(null) !== full) {
@@ -802,7 +837,7 @@ class ReviewView extends ItemView {
             evt.preventDefault(); evt.stopPropagation();
             const menu = new Menu();
             menu.addItem((i) => i.setTitle(it.kind === "card" ? "不再作为卡片（去掉 #card）" : "不再作为卡片（去掉挖空）").setIcon("eraser").onClick(async () => {
-                if (await p.uncard(it)) this.dismissWalk(c);
+                if (await p.uncard(it)) { if (p.settings.fxSound) FX.erase(fxVol(p.settings)); this.dismissWalk(c); }
             }));
             menu.addItem((i) => i.setTitle("打开原文").setIcon("file-text").onClick(() => p.openAt(it.file, it.line)));
             menu.showAtMouseEvent(evt);
@@ -857,6 +892,7 @@ class ReviewView extends ItemView {
                     const [after] = await p.anki("cardsInfo", { cards: [st.card.cardId] });
                     p.dueCache = null;
                     p.scheduleAnkiSync();
+                    p.reviewTick(st, "answer", ease);
                     row.empty();
                     el.removeClass("is-off"); el.addClass("is-done");
                     el.setText(after.queue === 2 ? `✓ ${after.interval} 天后` : "✓ 一会儿再来");
@@ -1125,6 +1161,7 @@ module.exports = class SecondBrain extends Plugin {
     onunload() {
         document.body.removeClass("sb-writing"); clearTimeout(this.lookupTimer);
         if (this.syncTimer) this.ankiSync();   // 还有没同步的作答：关掉 / 重载前补一次（不等结果）
+        if (this.reviewTimer) this.flushReview();   // 这一轮复习还没记进日记：补记
     }
     async saveSettings() { await this.saveData(this.settings); }
     // 外部素材库：设置里每行「库名|绝对路径」
@@ -1356,6 +1393,64 @@ module.exports = class SecondBrain extends Plugin {
         });
         new Notice(frag, 10000);
         return true;
+    }
+    // ----- 复习计时：记进今天的日记，螺旋日程把它当「实际花在这段」画出来 -----
+    // 一轮 = 第一次揭开 / 作答到最后一次；最后一次操作 3 分钟后这一轮算结束，写一行
+    //   DONE 14:00-14:12 复习卡片 23 张（作答 18 · 重来 2 · 只看 5）
+    // 插在今天日记属性区后面的第一行。10 分钟内又接着复习，就延长上一行，不另起
+    // st：这张卡的状态；kind = look（揭开）/ answer（作答）。先揭开再作答的卡只算一次作答
+    reviewTick(st, kind, ease) {
+        if (!this.settings.reviewLog) return;
+        const s = (this.reviewSession ||= { start: Date.now(), end: Date.now(), answer: 0, again: 0, look: 0 });
+        if (kind === "look" && !st.counted) { s.look++; st.counted = "look"; }
+        if (kind === "answer" && st.counted !== "answer") {
+            if (st.counted === "look") s.look--;
+            s.answer++; if (ease === 1) s.again++;
+            st.counted = "answer";
+        }
+        s.end = Date.now();
+        clearTimeout(this.reviewTimer);
+        this.reviewTimer = setTimeout(() => this.flushReview(), 3 * 60 * 1000);
+    }
+    // 日记路径和「今天」跟螺旋日程一致（凌晨分界前算前一天）；螺旋日程没装就用第二大脑自己的日记文件夹
+    reviewJournalPath(t) {
+        const ns = this.app.plugins.plugins["nautilus-spiral"];
+        if (ns?.today && ns?.journalPath) {
+            const cut = ns.settings?.dayCutoff ?? 0, m = window.moment(t);
+            if (m.hours() * 60 + m.minutes() < cut * 60) m.subtract(1, "day");
+            return ns.journalPath(m.startOf("day"));
+        }
+        return `${this.settings.journalFolder || "日记"}/${window.moment(t).format("YYYY_MM_DD")}.md`;
+    }
+    async flushReview() {
+        clearTimeout(this.reviewTimer); this.reviewTimer = null;
+        const s = this.reviewSession; this.reviewSession = null;
+        if (!s || !(s.answer + s.look)) return;
+        const path = this.reviewJournalPath(s.start);
+        const last = this.lastReview;
+        const merge = last && last.path === path && s.start - last.end < 10 * 60 * 1000;
+        const hm = (t) => window.moment(t).format("HH:mm");
+        const lineOf = (x) => {
+            const endT = Math.max(x.end, x.start + 60 * 1000);   // 至少一分钟，螺旋上才画得出来
+            const parts = [x.answer ? `作答 ${x.answer}` : "", x.again ? `重来 ${x.again}` : "", x.look ? `只看 ${x.look}` : ""].filter(Boolean);
+            return `- DONE ${hm(x.start)}-${hm(endT)} 复习卡片 ${x.answer + x.look} 张（${parts.join(" · ")}）`;
+        };
+        const tot = merge ? { start: last.start, end: s.end, answer: last.answer + s.answer, again: last.again + s.again, look: last.look + s.look } : null;
+        let wrote = { ...s, line: lineOf(s) };   // 上一行被改过、找不到了，就只记这一轮，免得重复计时
+        try {
+            let f = this.app.vault.getAbstractFileByPath(path);
+            if (!f) f = await this.app.vault.create(path, wrote.line + "\n");
+            else await this.app.vault.process(f, (data) => {
+                const L = data.split("\n");
+                const at = merge ? L.indexOf(last.line) : -1;
+                if (at >= 0) { wrote = { ...tot, line: lineOf(tot) }; L[at] = wrote.line; return L.join("\n"); }
+                let i = 0;   // 属性区后面的第一行
+                if (L[0] === "---") { const e = L.indexOf("---", 1); if (e > 0) i = e + 1; }
+                L.splice(i, 0, wrote.line);
+                return L.join("\n");
+            });
+            this.lastReview = { ...wrote, path };
+        } catch (e) { console.warn("[second-brain] 复习计时", e); new Notice("复习计时没记进日记：" + (e.message || e)); }
     }
     // ----- Anki（AnkiConnect）-----
     // 答完卡自动同步：最后一次作答 3 分钟后让 Anki 同步一次，连着答不会每张都同步
@@ -1805,15 +1900,16 @@ class SBSettings extends PluginSettingTab {
         tog("没挂双链的外文挖空也算语言类", "挖掉的全是英文生词 / 日文、或整句是英文句子的挖空", "langGuess");
         new Setting(c).setName("Anki").setHeading();
         tog("随机漫步里复习 Anki 卡片", "卡片 / 挖空揭开后可以按「重来 / 困难 / 良好 / 简单」作答，直接写进 Anki 的复习记录（要 Anki 开着、装了 AnkiConnect）。没到期的卡只能看", "ankiReview");
+        tog("复习计时记进日记", "每日回顾里一轮复习（最后一次操作 3 分钟后算结束）在今天日记顶部记一行「DONE 14:00-14:12 复习卡片 N 张」，螺旋日程按实际用时画出来；10 分钟内接着复习就延长那一行", "reviewLog");
         tog("答完自动同步 Anki", "最后一次作答 3 分钟后让 Anki 同步一次（AnkiWeb），手机上马上能看到。要在 Anki 里登录过 AnkiWeb", "ankiAutoSync");
         text("AnkiConnect 地址", "", "ankiUrl");
         num("复习用时（秒）", "ankiSeconds");
         new Setting(c).setName("作答反馈").setHeading();
-        tog("提示音", "「良好 / 简单」一小段往上走的音，「重来 / 困难」低一点、往下走。Web Audio 现场合成，不带音频文件", "fxSound");
+        tog("提示音", "「良好 / 简单」一小段往上走的音，「重来 / 困难」低一点、往下走；揭开是一声轻的「唰」加小叮，不再作为卡片是一声「嚓」往下扫。Web Audio 现场合成，不带音频文件", "fxSound");
         tog("小烟花", "在作答按钮那儿炸一小簇：答对亮色往上散，答错暗色往下落", "fxAnim");
         new Setting(c).setName("音量").setDesc("0 = 静音")
             .addSlider((sl) => sl.setLimits(0, 100, 5).setValue(Number(s.fxVolume) || 0).setDynamicTooltip().onChange(async (v) => { s.fxVolume = v; await p.saveSettings(); }))
-            .addButton((b) => b.setButtonText("试听").onClick(() => { FX.up(fxVol(s)); setTimeout(() => FX.down(fxVol(s)), 800); }));
+            .addButton((b) => b.setButtonText("试听").onClick(() => { FX.reveal(fxVol(s)); setTimeout(() => FX.up(fxVol(s)), 600); setTimeout(() => FX.down(fxVol(s)), 1500); setTimeout(() => FX.erase(fxVol(s)), 2400); }));
         new Setting(c).setName("外部素材库").setDesc("每行一个：库名|绝对路径。写作模式会把那个库里的笔记也当素材（只读）；库名要和 Obsidian 里的库名一致，点卡片才能跳过去").addTextArea((t) => {
             t.setValue(String(s.extraVaults || "")).onChange(async (v) => { s.extraVaults = v; await p.saveSettings(); });
             t.inputEl.rows = 3; t.inputEl.style.width = "100%";
