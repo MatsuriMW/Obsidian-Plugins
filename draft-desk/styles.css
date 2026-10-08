@@ -9,3 +9,5 @@
 .dd-result { width: min(860px, 92vw); }
 .dd-md { max-height: 65vh; overflow: auto; }
 .dd-input { width: 100%; margin-top: 8px; }
+.dd-note { margin-top: 10px; }
+.dd-note pre { white-space: pre-wrap; background: var(--background-secondary); padding: 8px 10px; border-radius: 6px; font-family: var(--font-text); font-size: .9em; max-height: 20vh; overflow: auto; }

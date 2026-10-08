@@ -1101,7 +1101,7 @@ module.exports = class SecondBrain extends Plugin {
         }
         let qvec = null;
         if (idx.store && idx.store.n) { try { qvec = (await this.embedTexts([String(query).slice(0, 1200)], true))[0]; } catch (e) { /* 连不上 Ollama：只按字面找 */ } }
-        return idx.search(String(query), { limit, perFile, qvec, only: (b) => b.ext && (!vault || b.ext.vault === vault) && !(exclude && exclude(b.ext.rel, b.line)) })
+        return idx.search(String(query), { limit, perFile, qvec, only: (b) => b.ext && (!vault || b.ext.vault === vault) && !(exclude && exclude(b.ext.rel, b.line, b.text)) })
             .map((b) => ({ vault: b.ext.vault, rel: b.ext.rel, line: b.line, text: b.text, score: b.score }));
     }
     // 插入了哪条素材：记进正在写的这篇的属性「素材」；在稿子库里，再记到主库里挂着这篇稿子的选题页（属性「用到的素材」）

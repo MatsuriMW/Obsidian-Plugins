@@ -14,6 +14,9 @@ const CLAUDIAN_ID = "realclaudian", MTT_ID = "my-text-tools", SB_ID = "second-br
 const OUT_ROOT = "选题/_采访";
 const STYLE_DIR = "写作与创作";
 const TIDY_BATCH = { id: "draft-desk-tidy", name: "稿件台 · 规范排版" };
+const EXPR_DIR = "素材库/";        // 表达与典故素材库：这个文件夹下带「类别」的页 + 全库标了 [[有趣的表达]] 的块
+const FUNNY_RE = /\[\[(?:[^\]|]*\/)?(?:有趣的表达|搞笑的表达)(?:[|#\]])/;
+const EXPR_NOTE = "<<<表达备注>>>";
 const MAX_PACK = 150000;          // 概念材料包上限（和 QWS 素材包一样）
 const MANY_HITS = 300;            // 命中超过这么多处先问一声
 const PIT_PARALLEL = 3;           // 填坑同时查几个
@@ -261,7 +264,7 @@ const NAMES = Object.fromEntries(GROUPS.flatMap((g) => g.items));
 
 // 改写预设：风格提示词 + 要求
 const REWRITE = {
-    expand: { style: "form", ask: "按风格提示词把它扩写、补充：说得简略的地方展开，补上过渡、必要的解释和例子。范围里以 `> [!补料]` 开头的折叠标注是查来的材料，可以拿来扩写（标注本身原样保留）。不改主张，不加稿子、补料和我的笔记里都没有的事实、数据、引语。" },
+    expand: { style: "form", expr: true, ask: "按风格提示词把它扩写、补充：说得简略的地方展开，补上过渡、必要的解释和例子。范围里以 `> [!补料]` 开头的折叠标注是查来的材料，可以拿来扩写（标注本身原样保留）。不改主张，不加稿子、补料和我的笔记里都没有的事实、数据、引语。" },
     formal: { style: "文章稿风格提示词", ask: "按文章稿风格提示词把它改得正式、书面：口语词、重复、语气词换成书面表达，句子更紧凑，意思和论证顺序不变。" },
     // 文白交杂以文章稿总章为底（总章「用词」一节的文白混杂是从博文里整理的真实用法），另一份只说要往前推多少
     wenbai: { style: ["文章稿风格提示词", "文白交杂风格提示词"], ask: "按风格提示词改写成文白交杂：底子是文章稿风格，文言词和文言句式自然地长在白话里，放在下判断、转折、收束的地方，不要处处都文。意思和论证顺序不变。" },
@@ -383,6 +386,39 @@ module.exports = class DraftDesk extends Plugin {
         }
         const all = ed.getValue(), { offset } = splitFrontmatter(all);
         return { whole: true, text: all.slice(offset), from: offset, to: all.length };
+    }
+
+    // 表达与典故素材库里和这段意思相近的卡片（第二大脑的语义检索）；没有第二大脑或检索失败就返回空
+    async exprCandidates(text, limit = 15) {
+        const sb = this.app.plugins.plugins[SB_ID];
+        if (!sb?.searchExtra) return [];
+        try {
+            const mv = this.mainVault(), pages = new Set();
+            try {
+                for (const n of nfs.readdirSync(npath.join(mv.root, EXPR_DIR))) {
+                    if (!n.endsWith(".md")) continue;
+                    if (/^类别:/m.test(splitFrontmatter(nfs.readFileSync(npath.join(mv.root, EXPR_DIR, n), "utf8")).fm)) pages.add(EXPR_DIR + n);
+                }
+            } catch (e) { /* 没有素材库文件夹 */ }
+            const keep = (rel, line, t) => (pages.has(rel) && line > 0) || FUNNY_RE.test(t || "");
+            return (await sb.searchExtra(String(text).slice(0, 1500), { vault: mv.name, limit, perFile: limit, exclude: (rel, line, t) => !keep(rel, line, t) || this.isPrivate(rel, t) }))
+                .map((h) => ({ rel: h.rel, text: h.text.replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g, "$1").replace(/\s*\n\s*/g, " ").slice(0, 300) }));
+        } catch (e) { console.warn("[draft-desk] 表达检索", e); return []; }
+    }
+    exprPrompt(cands, forBrainstorm) {
+        if (!cands.length) return [];
+        return [
+            "下面是我记下的表达与典故素材（按意思从我的素材库里检索出来的候选，每条后面标着来源：自写 = 我自己写的；摘抄 = 别人的，带作者或书名；不确定、AI 补充 = 来路不清）：",
+            ...cands.map((c, i) => `${i + 1}. ${c.text}`),
+            forBrainstorm
+                ? "每个方向如果有贴得上的，在「可以用的表达」里列一两条（原文 + 来源标记），贴不上就不写这一行，不要硬配。"
+                : "适当用上贴得上的：自写的可以直接用或改几个字；摘抄的不能写成我的原话，要么当引用并注明出处，要么只借句式和意思；典故、诗句当典故用；不确定、AI 补充的不要直接用，放进「拿不准」。一处到几处点睛就够，不要为了用而堆。",
+            "",
+        ];
+    }
+    splitExprNote(result) {
+        const i = result.lastIndexOf(EXPR_NOTE);
+        return i < 0 ? { text: result, note: "" } : { text: stripFence(result.slice(0, i)), note: result.slice(i + EXPR_NOTE.length).trim() };
     }
 
     // 同一个操作重复点 = 取消
@@ -524,22 +560,26 @@ module.exports = class DraftDesk extends Plugin {
         const preset = REWRITE[id];
         const styles = [preset.style].flat().flatMap((n) => (n === "form" ? this.styleForForm(file) : [n])).map((n) => this.readStyle(n));
         const task = this.beginTask(key, `正在${NAMES[id]}…`);
+        const cands = preset.expr ? await this.exprCandidates(sc.text) : [];
         const prompt = [
             `下面是我的稿子《${file.basename.replace(/\s+v\d+$/i, "")}》的${sc.whole ? "全文" : "一段"}。${preset.ask}`,
             "", IRON_RULES, "",
+            ...this.exprPrompt(cands, false),
+            ...(cands.length ? [`正文写完后，另起一行写「${EXPR_NOTE}」，下面用两行交代（这部分不算正文）：`, "- 用了：哪几条（原文开头几个字 + 来源标记）、放在哪一段", "- 拿不准、没放进去：哪几条、可以放在哪、为什么拿不准", ""] : []),
             ...styles.flatMap((st) => [`风格提示词「${npath.basename(st.path, ".md")}」：`, "<<<", st.text, ">>>", ""]),
             sc.whole ? "稿子全文：" : "要改的这段：", "<<<", sc.text, ">>>",
         ].join("\n");
-        const result = stripFence(await this.callClaude(prompt, task));
+        const { text: result, note } = this.splitExprNote(stripFence(await this.callClaude(prompt, task)));
         if (!result) throw new Error("claude 没有返回内容");
         const diff = structureDiff(sc.text, result);
         if (sc.whole) {
             const f = await this.saveVersion(file, result, NAMES[id]);
             new Notice(`已另存为「${f.basename}」${diff.length ? `（注意：${diff.join("，")}，和原稿对不上，看一下）` : ""}`, 8000);
+            if (note) new ResultModal(this.app, { title: `${NAMES[id]} · 用到的表达`, md: `${note}\n\n拿不准的那几条要不要用，你决定；要用就直接改「${f.basename}」。`, sourcePath: f.path }).open();
             return;
         }
         this.endTask(key);
-        new PreviewModal(this.app, { title: NAMES[id], before: sc.text, after: result, warn: diff.length ? `标记和原文对不上：${diff.join("，")}` : "",
+        new PreviewModal(this.app, { title: NAMES[id], before: sc.text, after: result, note, warn: diff.length ? `标记和原文对不上：${diff.join("，")}` : "",
             onReplace: () => this.applyToSelection(view, file, sc, result, "replace"),
             onInsert: () => this.applyToSelection(view, file, sc, result, "insert") }).open();
     }
@@ -594,6 +634,7 @@ module.exports = class DraftDesk extends Plugin {
         const file = view.file, sc = this.scope(view);
         if (!sc.text.trim()) throw new Error("范围里没有内容");
         const task = this.beginTask(key, "正在发散方向…");
+        const cands = await this.exprCandidates(sc.text);
         const form = [this.fm(file)["形式"]].flat().filter(Boolean).join(" ");
         const prompt = [
             `下面是我正在写的稿子《${file.basename}》${form ? `（形式：${form}）` : ""}的${sc.whole ? "全文" : "一部分"}。`,
@@ -604,7 +645,9 @@ module.exports = class DraftDesk extends Plugin {
             "- 一句话主张：……",
             "- 开头第一句：……",
             "- 为什么值得试：……",
+            ...(cands.length ? ["- 可以用的表达：……（贴得上才写）"] : []),
             "只输出这些方向，不要别的话。", "",
+            ...this.exprPrompt(cands, true),
             "<<<", sc.text, ">>>",
         ].join("\n");
         const result = stripFence(await this.callClaude(prompt, task));
@@ -805,6 +848,11 @@ class PreviewModal extends Modal {
             const c = cols.createDiv({ cls: "dd-col" });
             c.createEl("b", { text: h });
             c.createEl("pre", { text: t });
+        }
+        if (o.note) {
+            const n = contentEl.createDiv({ cls: "dd-note" });
+            n.createEl("b", { text: "表达备注（拿不准的那几条要不要用，你决定）" });
+            n.createEl("pre", { text: o.note });
         }
         const bar = contentEl.createDiv({ cls: "dd-bar" });
         const btn = (text, fn, cta) => { const b = bar.createEl("button", { text }); if (cta) b.addClass("mod-cta"); b.onclick = async () => { this.close(); await fn(); }; };
