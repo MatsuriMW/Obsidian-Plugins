@@ -144,7 +144,7 @@ function insertSupplement(text, pit, callout) {
     return lines.join("\n");
 }
 
-function formatSupplement(pit, res, date, mainVaultName) {
+function formatSupplement(pit, res, date, mainVaultName, sameVault = false) {
     const one = (s) => String(s || "").replace(/\s*\n\s*/g, " ").trim();
     const out = [`> ${supplementTitle(pit)}${date}）`];
     if (res.error) { out.push(`> - 查证失败：${one(res.error).slice(0, 200)}`); return out; }
@@ -156,7 +156,9 @@ function formatSupplement(pit, res, date, mainVaultName) {
         if (!one(n.text)) continue;
         const rel = String(n.path || "").replace(/^\/+/, "");
         const name = rel.split("/").pop().replace(/\.md$/, "");
-        out.push(rel ? `> - ${one(n.text)} —— [${name}](obsidian://open?vault=${encodeURIComponent(mainVaultName)}&file=${encodeURIComponent(rel.replace(/\.md$/, ""))})` : `> - ${one(n.text)}`);
+        // 稿子就在主库里（单库）用双链；在别的库里 [[ ]] 解析不到主库，用 obsidian:// 链接
+        const link = sameVault ? `[[${rel.replace(/\.md$/, "")}|${name}]]` : `[${name}](obsidian://open?vault=${encodeURIComponent(mainVaultName)}&file=${encodeURIComponent(rel.replace(/\.md$/, ""))})`;
+        out.push(rel ? `> - ${one(n.text)} —— ${link}` : `> - ${one(n.text)}`);
     }
     if (out.length === 1) out.push("> - 没查到可靠来源");
     return out;
@@ -324,16 +326,17 @@ module.exports = class DraftDesk extends Plugin {
     }
 
     // ----- 公共 -----
-    // 主库：设置里填了就用，否则用第二大脑设置里的第一个「外部素材库」
+    // 主库：设置里填了就用；否则用第二大脑设置里的第一个「外部素材库」（在旧的稿子库里）；都没有就是本库自己（单库写作，现在的默认）
     mainVault() {
         let root = String(this.settings.mainVault || "").trim().replace(/^~(?=\/)/, nos.homedir());
         let name = String(this.settings.mainVaultName || "").trim();
         if (!root) {
             const xv = this.app.plugins.plugins[SB_ID]?.extraVaults?.()?.[0];
             if (xv) { root = xv.root; name = name || xv.name; }
+            else { root = this.app.vault.adapter.basePath; name = name || this.app.vault.getName(); }
         }
-        if (!root || !nfs.existsSync(root)) throw new Error("找不到主库：在稿件台设置里填主库路径（或在第二大脑设置里填「外部素材库」）");
-        return { root, name: name || npath.basename(root) };
+        if (!root || !nfs.existsSync(root)) throw new Error("找不到主库：在稿件台设置里填主库路径");
+        return { root, name: name || npath.basename(root), self: npath.resolve(root) === npath.resolve(this.app.vault.adapter.basePath || "") };
     }
     readStyle(name) {
         const p = npath.join(this.mainVault().root, STYLE_DIR, name + ".md");
@@ -353,13 +356,17 @@ module.exports = class DraftDesk extends Plugin {
         const form = [this.fm(file)["形式"]].flat().join(" ") || file.basename;
         return /口播|播客|视频|演讲/.test(form) ? ["文章稿风格提示词", "口播稿风格提示词"] : ["文章稿风格提示词"];
     }
-    // 选题名：属性「选题」→ 主库选题页里 稿件: 写着这篇的 → 稿名
+    // 选题名：属性「选题」→ 选题页 稿件: 链到 / 写着这篇的 → 稿名
     topicName(file) {
         const raw = [this.fm(file)["选题"]].flat().filter(Boolean)[0];
         if (raw) {
             const m = String(raw).match(/\[\[([^\]|#]+)/);
             return safeName((m ? m[1] : String(raw)).split("/").pop());
         }
+        const mc = this.app.metadataCache;
+        const linked = this.app.vault.getMarkdownFiles().find((f) => f.path.startsWith("选题/") && !f.path.startsWith(OUT_ROOT + "/")
+            && (mc.getFileCache(f)?.frontmatterLinks || []).some((l) => /^稿件(\.\d+)?$/.test(l.key) && mc.getFirstLinkpathDest(l.link, f.path)?.path === file.path));
+        if (linked) return safeName(linked.basename);
         try {
             const dir = npath.join(this.mainVault().root, "选题");
             for (const n of nfs.readdirSync(dir)) {
@@ -617,9 +624,10 @@ module.exports = class DraftDesk extends Plugin {
         this.reindex();
         return nf;
     }
-    // 稿子库新增了文件：重跑主库的索引脚本（选题台靠它核对稿件）
+    // 旧的稿子库里新增了文件：重跑主库的索引脚本（选题台靠它核对旧库的稿件）。单库写作时稿子就在主库，不用跑
     reindex() {
         try {
+            if (this.mainVault().self) return;
             const sh = npath.join(this.mainVault().root, "scripts", "index-obsidian-vault.sh");
             if (!nfs.existsSync(sh)) return;
             const c = spawn("bash", [sh], { cwd: nos.tmpdir() });
@@ -700,7 +708,7 @@ module.exports = class DraftDesk extends Plugin {
             }
             if (task.cancelled) throw { cancelled: true };
             if (res.error) failed++;
-            const callout = formatSupplement(pit, res, now("YYYY-MM-DD"), mv.name);
+            const callout = formatSupplement(pit, res, now("YYYY-MM-DD"), mv.name, mv.self);
             let missing = false;
             await this.app.vault.process(file, (data) => {
                 if (hasSupplement(data, pit)) return data;

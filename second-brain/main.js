@@ -1204,7 +1204,7 @@ module.exports = class SecondBrain extends Plugin {
         return out;
     }
     // ----- 给别的插件用（稿件台：填坑、概念锚点检索）-----
-    // 在外部素材库（比如主库）里找和 query 意思相近的块：[{ vault, rel, line, text, score }]。没开语义 / 连不上 Ollama 就只按字面找
+    // 在素材库里找和 query 意思相近的块：[{ vault, rel, line, text, score }]。vault 是外部素材库的名字就搜那个库，是本库的名字就搜本库；没开语义 / 连不上 Ollama 就只按字面找
     // 不在写作模式时借用索引，十分钟没人用就放掉
     async searchExtra(query, { vault = null, limit = 12, perFile = 2, exclude = null } = {}) {
         const idx = await this.ensureIndex();
@@ -1214,8 +1214,10 @@ module.exports = class SecondBrain extends Plugin {
         }
         let qvec = null;
         if (idx.store && idx.store.n) { try { qvec = (await this.embedTexts([String(query).slice(0, 1200)], true))[0]; } catch (e) { /* 连不上 Ollama：只按字面找 */ } }
-        return idx.search(String(query), { limit, perFile, qvec, only: (b) => b.ext && (!vault || b.ext.vault === vault) && !(exclude && exclude(b.ext.rel, b.line, b.text)) })
-            .map((b) => ({ vault: b.ext.vault, rel: b.ext.rel, line: b.line, text: b.text, score: b.score }));
+        const self = this.app.vault.getName();
+        const where = (b) => (b.ext ? { vault: b.ext.vault, rel: b.ext.rel } : { vault: self, rel: b.path });
+        return idx.search(String(query), { limit, perFile, qvec, only: (b) => { const w = where(b); return (!vault || w.vault === vault) && !(exclude && exclude(w.rel, b.line, b.text)); } })
+            .map((b) => ({ ...where(b), line: b.line, text: b.text, score: b.score }));
     }
     // 插入了哪条素材：记进正在写的这篇的属性「素材」；在稿子库里，再记到主库里挂着这篇稿子的选题页（属性「用到的素材」）
     async recordSource(base, ext) {
@@ -1229,6 +1231,20 @@ module.exports = class SecondBrain extends Plugin {
                 fm["素材"] = cur;
             });
         } catch (e) { console.warn("[second-brain] 素材", e); }
+        // 稿子在本库（单库写作）：选题页的 稿件: 链到这篇的，记进它的「用到的素材」
+        const topics = this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith("选题/") && !f.path.startsWith("选题/_采访/")
+            && (this.app.metadataCache.getFileCache(f)?.frontmatterLinks || []).some((l) => /^稿件(\.\d+)?$/.test(l.key)
+                && this.app.metadataCache.getFirstLinkpathDest(l.link, f.path)?.path === v.file.path));
+        if (topics.length === 1) {
+            try {
+                await this.app.fileManager.processFrontMatter(topics[0], (fm) => {
+                    const cur = [fm["用到的素材"]].flat().filter(Boolean).map(String);
+                    if (!cur.includes(label)) cur.push(label);
+                    fm["用到的素材"] = cur;
+                });
+            } catch (e) { console.warn("[second-brain] 选题页", e); }
+            return;
+        }
         if (!ext) return;
         const xv = this.extraVaults().find((x) => x.name === ext.vault);
         if (!xv) return;
