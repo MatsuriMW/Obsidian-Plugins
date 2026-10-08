@@ -12,7 +12,13 @@
 import json, os, re, ssl, subprocess, sys, urllib.error, urllib.request
 
 TEAM_KEY = "MAT"
-PROJECT = "Obsidian-Plugins"
+PROJECT = "Obsidian-Plugins"   # 默认项目；重点插件各有自己的项目（2026-10-09 拆出来的），见 PLUGIN_PROJECT
+PLUGIN_PROJECT = {
+    "draft-desk": "写作台", "qws-bridge": "写作台",
+    "second-brain": "第二大脑",
+    "llm-wiki": "LLM Wiki",
+    "backlink-defaults": "反链面板",
+}
 LABEL_GROUP = "插件"
 REPO_URL = "https://github.com/MatsuriMW/Obsidian-Plugins"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,11 +106,13 @@ def main():
         return
 
     # 分几次查：一次查太多嵌套字段 Linear 会报「Query too complex」
-    d = gql(key, """query($k:String!,$p:String!){
-      teams(filter:{key:{eq:$k}}){nodes{id states{nodes{id name}}}}
-      projects(filter:{name:{eq:$p}}){nodes{id}}}""", {"k": TEAM_KEY, "p": PROJECT})
+    d = gql(key, """query($k:String!){
+      teams(filter:{key:{eq:$k}}){nodes{id states{nodes{id name}}}}}""", {"k": TEAM_KEY})
     team = d["teams"]["nodes"][0]
-    project_id = d["projects"]["nodes"][0]["id"]
+    names = sorted({PROJECT, *PLUGIN_PROJECT.values()})
+    pr = gql(key, "query($n:[String!]){projects(filter:{name:{in:$n}}){nodes{id name}}}", {"n": names})["projects"]["nodes"]
+    project_ids = {x["name"]: x["id"] for x in pr}
+    project_of = lambda plugin: project_ids.get(PLUGIN_PROJECT.get(plugin, PROJECT)) or project_ids[PROJECT]
     done_id = next(s["id"] for s in team["states"]["nodes"] if s["name"] == "Done")
     # 标签：团队的和整个工作区的（Improvement 之类可能是工作区级）
     labels = gql(key, "query{issueLabels(first:250){nodes{id name isGroup}}}")["issueLabels"]["nodes"]
@@ -138,7 +146,7 @@ def main():
     for p in plugins:
         desc = (body + "\n\n" if body else "") + f"由 `sync.sh` 根据提交 [{short}]({url}) 自动建的。需要细节就在这里补。"
         r = gql(key, """mutation($i:IssueCreateInput!){issueCreate(input:$i){issue{id identifier url}}}""",
-                {"i": {"teamId": team["id"], "projectId": project_id, "stateId": done_id, "title": f"[{p}] {subject}",
+                {"i": {"teamId": team["id"], "projectId": project_of(p), "stateId": done_id, "title": f"[{p}] {subject}",
                        "description": desc, "labelIds": [x for x in (improvement, label_id(p)) if x]}})
         issue = r["issueCreate"]["issue"]
         gql(key, link, {"id": issue["id"], "u": url, "t": f"{short} {subject}"})
