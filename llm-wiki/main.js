@@ -18,6 +18,10 @@ const DEFAULTS = {
   baselines: {},   // 主题 -> 上次摄入的时间戳；之后改过的相关笔记算「新材料」
   lastResult: null,
   dismissed: [],   // 「建议新增」里点了 × 的
+  semantic: true,      // 待摄入按意思找（借「第二大脑」的向量）；关掉、没装第二大脑或连不上 Ollama 就按关键词
+  simKeyword: 0.45,    // 含关键词的块：相似度到这个数才算（低于它的基本是字面误命中，如 EVE、ETH 当子串）
+  simOnly: 0.61,       // 不含关键词的块：要更像才算（0.58～0.61 之间混着不少只是沾边的，如「激素」主题下的心理学笔记）
+  ingested: {},        // 主题 -> 已经交给 Claude 摄入过的块哈希，下次不再列出
 };
 // 「开新主题」建议里不算的：标记类双链、看板 / 人物 / 书之类
 const SUGGEST_STOP = new Set(["等待尝试", "toread", "towatch", "tolisten", "toinstall", "文章选题", "视频选题", "小说选题", "英文记录", "中文记录", "中文表达", "出色的表达", "英文表达", "打扮", "穿搭", "鞋", "化妆", "yyt", "宝a", "important", "重要", "菜谱", "card", "待办", "inbox", "长期计划", "2026", "等待考虑", "生活常识", "问题汇总", "宝的培养计划"].map((s) => s.toLowerCase()));
@@ -34,6 +38,7 @@ function fmtElapsed(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const preview = (t, n = 60) => { const s = t.replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, "").replace(/\s\^[\w-]+\s*$/gm, "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
 
 class WikiView extends ItemView {
   constructor(leaf, plugin) {
@@ -74,18 +79,23 @@ class WikiView extends ItemView {
     for (const t of Object.keys(pages)) if (!topics.some((x) => x.name === t)) topics.push({ name: t, keywords: [] });
     const all = Object.values(pages).flat();
     const fmOf = (f) => this.app.metadataCache.getFileCache(f)?.frontmatter || {};
-    const pending = {};
-    for (const t of topics) pending[t.name] = t.keywords.length ? await p.pendingFor(t) : [];
-    const totalPending = Object.values(pending).reduce((s, a) => s + a.length, 0);
+    if (p.pendingDirty && !p.computing) p.computePending();   // 算完会再画一次
+    const pending = p.pending?.byTopic || {};
+    const sem = p.pending?.mode === "semantic";
+    const totalPending = Object.values(pending).reduce((s, e) => s + e.n, 0);
     const lastUpd = all.map((f) => String(fmOf(f).updated || "")).filter(Boolean).sort().at(-1);
     const stats = root.createDiv({ cls: "wiki-stats" });
     const stat = (n, label, cls = "") => { const d = stats.createDiv({ cls: "wiki-stat " + cls }); d.createDiv({ cls: "wiki-stat-n", text: String(n) }); d.createDiv({ cls: "wiki-stat-l", text: label }); return d; };
     stat(all.length, "条目");
     stat(topics.filter((t) => (pages[t.name] || []).length).length, "主题");
     stat(all.reduce((s, f) => s + (Number(fmOf(f).sources) || 0), 0), "来源笔记");
-    const pd = stat(totalPending, "待摄入", totalPending ? "is-accent" : "");
-    pd.setAttr("aria-label", "上次摄入之后改过、又提到主题关键词的笔记");
-    if (lastUpd) root.createDiv({ cls: "wiki-muted wiki-sub", text: `最近更新 ${lastUpd} · ${window.moment(lastUpd).fromNow()}` });
+    const pd = stat(p.pending ? totalPending : "…", sem ? "待摄入块" : "待摄入篇", totalPending ? "is-accent" : "");
+    pd.setAttr("aria-label", sem ? "上次摄入之后改过的笔记里，和主题意思相近的块（含关键词的门槛低一些）" : "上次摄入之后改过、又提到主题关键词的笔记");
+    const subParts = [];
+    if (lastUpd) subParts.push(`最近更新 ${lastUpd} · ${window.moment(lastUpd).fromNow()}`);
+    if (p.computing || !p.pending) subParts.push("正在找新材料…");
+    else subParts.push(sem ? "新材料按意思找" : `新材料按关键词找${p.pending.err ? `（${p.pending.err}）` : ""}`);
+    root.createDiv({ cls: "wiki-muted wiki-sub", text: subParts.join(" · ") });
 
     // ---------- 提问 ----------
     const ask = root.createDiv({ cls: "wiki-ask" });
@@ -108,16 +118,28 @@ class WikiView extends ItemView {
       th.createSpan({ cls: "wiki-topic-name", text: `${t.name}` });
       th.createSpan({ cls: "wiki-muted", text: `${list.length} 条` });
       const pend = pending[t.name];
-      if (pend.length) {
-        const badge = th.createEl("button", { cls: "wiki-pending", text: `${pend.length} 新材料` });
+      if (pend?.n) {
+        const badge = th.createEl("button", { cls: "wiki-pending", text: `${pend.n} ${pend.blocks ? "块" : "篇"}新材料` });
         badge.onclick = () => { this.expanded.has(t.name) ? this.expanded.delete(t.name) : this.expanded.add(t.name); this.render(); };
         const ing = th.createEl("button", { text: "摄入" });
         ing.disabled = !!p.job;
         ing.onclick = () => p.ingest(t, pend);
-      } else if (t.keywords.length) th.createSpan({ cls: "wiki-ok", text: "✓ 最新" });
-      if (this.expanded.has(t.name) && pend.length) {
+      } else if (pend && t.keywords.length) th.createSpan({ cls: "wiki-ok", text: "✓ 最新" });
+      if (this.expanded.has(t.name) && pend?.n) {
         const ul = box.createDiv({ cls: "wiki-pending-list" });
-        for (const f of pend) { const row = ul.createDiv({ cls: "wiki-row is-pending", text: f.basename }); row.onclick = () => p.openPath(f.path); }
+        for (const e of pend.files) {
+          const row = ul.createDiv({ cls: "wiki-row is-pending" });
+          row.createSpan({ cls: "wiki-page", text: e.file.basename });
+          if (e.blocks) row.createSpan({ cls: "wiki-meta", text: `${e.blocks.length} 块` });
+          row.onclick = () => p.openPath(e.file.path, e.blocks?.[0]?.line);
+          for (const b of (e.blocks || []).slice(0, 5)) {
+            const r = ul.createDiv({ cls: "wiki-row wiki-block", attr: { "aria-label": `相似度 ${b.sim.toFixed(2)}${b.kw ? " · 含关键词" : " · 不含关键词，按意思找到的"}` } });
+            r.createSpan({ cls: "wiki-page", text: preview(b.text) });
+            r.createSpan({ cls: "wiki-meta" + (b.kw ? "" : " is-sem"), text: b.sim.toFixed(2) });
+            r.onclick = () => p.openPath(e.file.path, b.line);
+          }
+          if (e.blocks && e.blocks.length > 5) ul.createDiv({ cls: "wiki-muted wiki-block-more", text: `还有 ${e.blocks.length - 5} 块` });
+        }
       }
       for (const pg of list) {
         const fm = fmOf(pg);
@@ -194,9 +216,16 @@ class WikiView extends ItemView {
     if (this.lintIssues) {
       if (!this.lintIssues.length) lint.createDiv({ cls: "wiki-muted wiki-sub", text: "没有发现问题" });
       else {
-        const fix = lh.createEl("button", { text: "交给 Claude 修" });
-        fix.disabled = !!p.job;
-        fix.onclick = () => p.fixLint(this.lintIssues);
+        const local = this.lintIssues.filter((i) => i.repair);
+        if (local.length) {
+          const lf = lh.createEl("button", { text: `本地修 ${local.length} 处`, attr: { "aria-label": "失效的块链接：能找回原块就改指过去，找不到就改成只链到文件。只改 Wiki/ 里的页面，不调 Claude" } });
+          lf.onclick = async () => { await p.applyRepairs(local); this.lintIssues = await p.lint(); this.render(); };
+        }
+        if (this.lintIssues.length > local.length) {
+          const fix = lh.createEl("button", { text: "交给 Claude 修" });
+          fix.disabled = !!p.job;
+          fix.onclick = () => p.fixLint(this.lintIssues.filter((i) => !i.repair));
+        }
         for (const it of this.lintIssues) {
           const row = lint.createDiv({ cls: "wiki-row is-issue" });
           row.createSpan({ cls: "wiki-page", text: it.file.replace(/^.*\//, "").replace(/\.md$/, "") });
@@ -237,7 +266,11 @@ module.exports = class LlmWiki extends Plugin {
     this.addSettingTab(new WikiSettings(this.app, this));
 
     this.refresh = debounce(() => this.views().forEach((v) => v.render()), 1500, true);
-    for (const ev of ["modify", "create", "delete", "rename"]) this.registerEvent(this.app.vault.on(ev, () => this.refresh()));
+    // 新材料要切块、算向量，不跟着每次保存重算：停手 20 秒后再算（也免得把写到一半的块存进向量缓存）
+    this.pending = null;
+    this.pendingDirty = true;
+    this.refreshPending = debounce(() => { this.pendingDirty = true; this.refresh(); }, 20000, true);
+    for (const ev of ["modify", "create", "delete", "rename"]) this.registerEvent(this.app.vault.on(ev, () => { this.refresh(); this.refreshPending(); }));
     this.registerInterval(window.setInterval(() => {
       if (!this.job) return;
       for (const v of this.views()) if (v.statusEl) v.statusEl.setText(`⏳ ${this.job.label} · ${fmtElapsed(Date.now() - this.job.start)}`);
@@ -270,10 +303,9 @@ module.exports = class LlmWiki extends Plugin {
     return out;
   }
 
-  // 上次摄入之后改过、又提到这个主题关键词的笔记
-  async pendingFor(topic) {
+  // 上次摄入之后改过的笔记（这个主题的材料范围内）
+  candidateFiles(topic) {
     const since = this.settings.baselines[topic.name] || 0;
-    const kws = topic.keywords.map((k) => k.toLowerCase());
     const out = [];
     for (const f of this.app.vault.getMarkdownFiles()) {
       if (f.stat.mtime <= since) continue;
@@ -282,10 +314,107 @@ module.exports = class LlmWiki extends Plugin {
         const d = window.moment(f.basename, "YYYY_MM_DD", true);
         if (d.isValid() && d.isBefore(topic.since)) continue;
       }
+      out.push(f);
+    }
+    return out.sort((a, b) => b.stat.mtime - a.stat.mtime);
+  }
+
+  // 按关键词：改过、又提到这个主题关键词的笔记（第二大脑用不了时的退路）
+  async pendingFor(topic) {
+    const kws = topic.keywords.map((k) => k.toLowerCase());
+    const out = [];
+    for (const f of this.candidateFiles(topic)) {
       const text = (await this.app.vault.cachedRead(f)).toLowerCase();
       if (kws.some((k) => text.includes(k))) out.push(f);
     }
-    return out.sort((a, b) => b.stat.mtime - a.stat.mtime);
+    return out;
+  }
+
+  // 查主题用的句子：主题名 + 关键词，加上这个主题每个 wiki 页的摘要
+  topicQueries(topic) {
+    const pages = this.pages()[topic.name] || [];
+    return [`${topic.name}：${topic.keywords.join("、")}`, ...pages.map((f) => `${f.basename.replace(/（wiki）$/, "")}：${this.app.metadataCache.getFileCache(f)?.frontmatter?.summary || ""}`)];
+  }
+
+  // wiki 页已经引用过的块：原笔记路径 -> 被引用的块 id 所在行
+  citedLines() {
+    const mc = this.app.metadataCache;
+    const out = new Map();
+    for (const f of Object.values(this.pages()).flat()) for (const l of mc.getFileCache(f)?.links || []) {
+      const [pp, sub] = l.link.split("#");
+      if (!sub || !sub.startsWith("^")) continue;
+      const d = mc.getFirstLinkpathDest(pp, f.path);
+      const b = d && mc.getFileCache(d)?.blocks?.[sub.slice(1).toLowerCase()];
+      if (!b) continue;
+      if (!out.has(d.path)) out.set(d.path, []);
+      out.get(d.path).push(b.position.start.line);
+    }
+    return out;
+  }
+
+  // 算各主题的新材料，结果放在 this.pending：{ mode: semantic | keyword, err, byTopic: { 主题: { n, blocks 是否按块, files: [{ file, blocks }] } } }
+  async computePending() {
+    if (this.computing) return;
+    this.computing = true;
+    this.pendingDirty = false;
+    const s = this.settings;
+    const topics = s.topics.filter((t) => t.keywords.length);
+    const res = { mode: "keyword", err: "", byTopic: {} };
+    try {
+      const sb = this.app.plugins.plugins["second-brain"];
+      let blocks = null;
+      const cand = new Map(), fileTopics = new Map();
+      if (s.semantic && !sb?.semanticBlocks) res.err = "没装「第二大脑」";
+      if (s.semantic && sb?.semanticBlocks) {
+        for (const t of topics) for (const f of this.candidateFiles(t)) {
+          cand.set(f.path, f);
+          if (!fileTopics.has(f.path)) fileTopics.set(f.path, new Set());
+          fileTopics.get(f.path).add(t.name);
+        }
+        try {
+          blocks = await sb.semanticBlocks([...cand.values()], Object.fromEntries(topics.map((t) => [t.name, this.topicQueries(t)])));
+          res.mode = "semantic";
+        } catch (e) {
+          console.warn("[llm-wiki] 语义找新材料失败，改按关键词", e);
+          res.err = /ECONNREFUSED|net::|Failed to fetch|connect/i.test(String(e?.message || e)) ? "连不上 Ollama" : String(e?.message || e).slice(0, 40);
+        }
+      }
+      if (blocks) {
+        const cited = this.citedLines();
+        for (const t of topics) {
+          const done = new Set(s.ingested?.[t.name] || []);
+          const kws = t.keywords.map((k) => k.toLowerCase());
+          const byFile = new Map();
+          let n = 0;
+          for (const b of blocks) {
+            if (b.title || !fileTopics.get(b.path)?.has(t.name) || done.has(b.h)) continue;
+            const lines = cited.get(b.path);
+            if (lines && lines.some((l) => l >= b.line && l <= b.end + 1)) continue;   // 已经被 wiki 引用过（块后面单独一行的 ^q-xxxx 也算）
+            const low = b.text.toLowerCase();
+            const kw = kws.some((k) => low.includes(k));
+            const sim = b.sims[t.name] || 0;
+            if (sim < (kw ? s.simKeyword : s.simOnly)) continue;
+            if (!byFile.has(b.path)) byFile.set(b.path, []);
+            byFile.get(b.path).push({ line: b.line, end: b.end, text: b.text, h: b.h, sim, kw });
+            n++;
+          }
+          const files = [...byFile.entries()].map(([path, bl]) => ({ file: cand.get(path), blocks: bl.sort((a, b) => a.line - b.line) }))
+            .sort((a, b) => b.file.stat.mtime - a.file.stat.mtime);
+          res.byTopic[t.name] = { n, blocks: true, files };
+        }
+      } else {
+        for (const t of topics) {
+          const files = await this.pendingFor(t);
+          res.byTopic[t.name] = { n: files.length, blocks: false, files: files.map((file) => ({ file, blocks: null })) };
+        }
+      }
+      this.pending = res;
+    } catch (e) {
+      console.error("[llm-wiki] 找新材料", e);
+    } finally {
+      this.computing = false;
+    }
+    this.views().forEach((v) => v.render());
   }
 
   // ---------- 面板用的统计 ----------
@@ -388,7 +517,7 @@ module.exports = class LlmWiki extends Plugin {
 3. 建入口页「${name}（wiki）」，按规则做首次摄入；内容多就拆子页。
 4. 更新 Wiki/index.md（新分组），在 Wiki/log.md 末尾追加一条 ingest 记录。
 最后用中文汇报：用了哪些关键词、建了哪些页、有什么冲突或存疑。关键词请单独列一行「关键词：a、b、c」。`;
-    this.runClaude(`新主题：${name}`, prompt, () => { this.settings.baselines[name] = Date.now(); });
+    this.runClaude(`新主题：${name}`, prompt, () => { this.settings.baselines[name] = Date.now(); this.pendingDirty = true; });
   }
 
   // ---------- 调本机 Claude ----------
@@ -403,7 +532,7 @@ module.exports = class LlmWiki extends Plugin {
     const args = ["-p", prompt, "--output-format", "json", "--allowedTools", tools];
     const env = { ...process.env, PATH: `${os.homedir()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || ""}` };
     let child;
-    try { child = spawn(bin, args, { cwd, env }); }
+    try { child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] }); }   // 不给 stdin，免得 claude 白等 3 秒
     catch (e) { new Notice(`启动 claude 失败：${e.message}`); return; }
     const job = (this.job = { label, start: Date.now(), child, out: "", err: "" });
     child.stdout.on("data", (d) => (job.out += d));
@@ -436,18 +565,34 @@ module.exports = class LlmWiki extends Plugin {
     this.job.child.kill();
   }
 
-  ingest(topic, files) {
-    const list = files.map((f) => `- ${f.path}`).join("\n");
+  ingest(topic, entry) {
+    const byBlock = entry.blocks;
+    const list = byBlock
+      ? entry.files.map((e) => `- ${e.file.path}\n` + e.blocks.map((b) => `\t- 第 ${b.line + 1}${b.end > b.line ? `～${b.end + 1}` : ""} 行：${preview(b.text, 50)}`).join("\n")).join("\n")
+      : entry.files.map((e) => `- ${e.file.path}`).join("\n");
+    const head = byBlock
+      ? `上次摄入之后改动过的笔记里，本地检索（按意思，结合关键词 ${topic.keywords.join("、")}）挑出了下面这些可能相关的块（行号从 1 数，每块连同它的子项）：
+${list}
+
+只读这些块，需要上下文时再看前后几行；列表以外的内容不用读。检索会有误判，和主题无关的块直接跳过。`
+      : `上次摄入之后，下面这些笔记改动过，而且提到了这个主题的关键词（${topic.keywords.join("、")}）：
+${list}
+
+逐篇读，只挑和这个主题有关的块（关键词的无关用法要排除）。`;
+    const hashes = byBlock ? entry.files.flatMap((e) => e.blocks.map((b) => b.h)) : [];
     const prompt = `${PREAMBLE}
 
 任务：对主题「${topic.name}」做一次增量 ingest。
-上次摄入之后，下面这些笔记改动过，而且提到了这个主题的关键词（${topic.keywords.join("、")}）：
-${list}
-
-逐篇读，只挑和这个主题有关的块（关键词的无关用法要排除）。已经收进 wiki 的说法不要重复加；新的说法按规则补进对应页面，需要时新建子页。改过的页面更新属性 sources 和 updated，同步 Wiki/index.md，在 Wiki/log.md 末尾追加一条 ingest 记录（格式照旧）。
+${head}已经收进 wiki 的说法不要重复加；新的说法按规则补进对应页面，需要时新建子页。改过的页面更新属性 sources 和 updated，同步 Wiki/index.md，在 Wiki/log.md 末尾追加一条 ingest 记录（格式照旧）。
 如果这些笔记里其实没有新东西，就不要改页面，只在 log.md 记一句「无新增」。
 最后用中文三到五句话汇报：改了哪些页、新增了什么、有什么冲突或存疑。`;
-    this.runClaude(`摄入：${topic.name}`, prompt, (start) => { this.settings.baselines[topic.name] = start; });
+    this.runClaude(`摄入：${topic.name}`, prompt, (start) => {
+      this.settings.baselines[topic.name] = start;
+      // 交给 Claude 看过的块记下来：摄入之后又改动了别处的同一篇笔记，这些块也不再列出
+      const ing = (this.settings.ingested ||= {});
+      ing[topic.name] = [...new Set([...(ing[topic.name] || []), ...hashes])].slice(-4000);
+      this.pendingDirty = true;
+    });
   }
 
   ingestNote(file) {
@@ -484,6 +629,88 @@ ${list}
     this.runClaude("体检修复", prompt);
   }
 
+  // ---------- 给「第二大脑」库周报用 ----------
+
+  // 返回几行 Markdown（列表块）：这周更新了哪些页、各主题待摄入、久没更新的页、建议新增；skip 里的词周报上面已经列过，不再重复
+  async weeklyLines(skip = new Set()) {
+    const fmOf = (f) => this.app.metadataCache.getFileCache(f)?.frontmatter || {};
+    const pages = this.pages();
+    const all = Object.values(pages).flat();
+    const link = (f) => `[[${f.basename}|${f.basename.replace(/（wiki）$/, "")}]]`;
+    const age = (f) => (fmOf(f).updated ? window.moment().diff(window.moment(String(fmOf(f).updated)), "day") : null);
+    const fresh = all.filter((f) => age(f) != null && age(f) <= 7);
+    const stale = all.filter((f) => age(f) != null && age(f) > 30);
+    if (!this.pending || this.pendingDirty) await this.computePending();
+    const pend = Object.entries(this.pending?.byTopic || {}).filter(([, e]) => e.n);
+    const unit = this.pending?.mode === "semantic" ? "块" : "篇";
+    const topics = [...this.settings.topics];
+    for (const t of Object.keys(pages)) if (!topics.some((x) => x.name === t)) topics.push({ name: t, keywords: [] });
+    const sug = await this.suggestions(pages, topics);
+    const newTopics = sug.topics.filter((x) => !skip.has(x.name));
+    const L = [`- 📚 Wiki：${all.length} 页，本周更新 ${fresh.length} 页${fresh.length ? "：" + fresh.map(link).join(" · ") : ""}`];
+    L.push(`\t- 待摄入：${pend.length ? pend.map(([k, e]) => `${k} ${e.n} ${unit}`).join(" · ") + "（在 Wiki 面板点「摄入」）" : "都是最新的"}`);
+    if (stale.length) L.push(`\t- 超过 30 天没更新：${stale.map(link).join(" · ")}`);
+    if (sug.entries.length) L.push(`\t- 好几页都提到、还没有条目的：${sug.entries.map((x) => `${x.name}（${x.citedBy.length} 页）`).join(" · ")}`);
+    if (newTopics.length) L.push(`\t- 近 60 天日记里常出现、可以开新主题的：${newTopics.map((x) => `${x.name}×${x.count}`).join(" · ")}`);
+    return L;
+  }
+
+  // ---------- 失效块链接：本地找回 ----------
+
+  // 原块的新 id：①文件里还留着「^id」字样（常见于 Flashcards 在块后面补了一行 ^q-xxxx，Obsidian 改认后一个）→ 用同一块现在认的 id；
+  // ②按内容找最像的块（借第二大脑的向量），那块有 id 就指过去；③都不行就只链到文件（CLAUDE.md 规则 3 允许）。不给原文加 id（规则 1）
+  async relocateBlock(dest, id, claim) {
+    const cache = this.app.metadataCache.getFileCache(dest) || {};
+    const ids = Object.entries(cache.blocks || {}).map(([k, b]) => ({ id: k, line: b.position.start.line }));
+    const tops = [];
+    for (const it of cache.listItems || []) {
+      if (it.parent < 0) tops.push({ s: it.position.start.line, e: it.position.end.line });
+      else if (tops.length) tops[tops.length - 1].e = Math.max(tops[tops.length - 1].e, it.position.end.line);
+    }
+    const rangeOf = (k) => tops.find((t) => k >= t.s && k <= t.e + 1) || { s: k, e: k };
+    const idsIn = (s, e, near) => ids.filter((x) => x.line >= s && x.line <= e + 1 && x.id !== id.toLowerCase()).sort((a, b) => Math.abs(a.line - near) - Math.abs(b.line - near));
+    const L = (await this.app.vault.cachedRead(dest)).split("\n");
+    const re = new RegExp(`(^|\\s)\\^${esc(id)}\\s*$`, "i");
+    const k = L.findIndex((x) => re.test(x));
+    if (k >= 0) {
+      const r = rangeOf(k);
+      const hit = idsIn(r.s, r.e, k)[0];
+      if (hit) return { id: hit.id, how: `原 id 还在第 ${k + 1} 行，但 Obsidian 现在认的是同一块的 ^${hit.id}` };
+    }
+    const sb = this.app.plugins.plugins["second-brain"];
+    if (claim.trim() && sb?.semanticBlocks) {
+      try {
+        const bl = (await sb.semanticBlocks([dest], { c: [claim] })).filter((b) => !b.title).sort((a, b) => b.sims.c - a.sims.c);
+        for (const b of bl.slice(0, 3)) {
+          if (b.sims.c < 0.6) break;
+          const hit = idsIn(b.line, b.end, b.line)[0];
+          if (hit) return { id: hit.id, how: `按内容找到最像的块（相似度 ${b.sims.c.toFixed(2)}，第 ${b.line + 1} 行）` };
+        }
+        if (bl[0] && bl[0].sims.c >= 0.7) return { id: null, how: `原块大概是第 ${bl[0].line + 1} 行（相似度 ${bl[0].sims.c.toFixed(2)}），但它没有块 id，按规则不给原文加 id，改成只链到文件` };
+      } catch (e) { /* 连不上 Ollama 就跳过这一步 */ }
+    }
+    return { id: null, how: "找不到原块，改成只链到文件" };
+  }
+
+  async applyRepairs(issues) {
+    const byFile = new Map();
+    for (const i of issues) { if (!byFile.has(i.file)) byFile.set(i.file, []); byFile.get(i.file).push(i.repair); }
+    const done = [];
+    for (const [path, reps] of byFile) {
+      const f = this.app.vault.getAbstractFileByPath(path);
+      if (!(f instanceof TFile) || !path.startsWith(this.settings.folder + "/")) continue;   // 只改 Wiki/
+      await this.app.vault.process(f, (t) => { for (const r of reps) if (t.includes(r.from)) { t = t.split(r.from).join(r.to); done.push({ page: f.basename, ...r }); } return t; });
+    }
+    if (!done.length) return;
+    const log = this.app.vault.getAbstractFileByPath(`${this.settings.folder}/log.md`);
+    if (log instanceof TFile) {
+      const entry = `\n## [${window.moment().format("YYYY-MM-DD")}] lint | 本地修复 ${done.length} 个块链接\n\n` +
+        done.map((d) => `- [[${d.page}]]：\`${d.from}\` → \`${d.to}\`（${d.how}）`).join("\n") + "\n";
+      await this.app.vault.process(log, (t) => t.replace(/\s*$/, "\n") + entry);
+    }
+    new Notice(`Wiki：本地修好 ${done.length} 个块链接，已记进 log.md`);
+  }
+
   // ---------- 本地体检（不调模型） ----------
 
   async lint() {
@@ -501,7 +728,7 @@ ${list}
       const isPage = !["index", "log", "CLAUDE", "体检报告"].includes(f.basename);   // 体检报告是体检自己写的报告，不是条目
       for (const k of FORBIDDEN_PROPS) if (k in fm) add(f.path, `属性里有 ${k}（规则 7）`, 0);
       for (const t of cache.tags || []) add(f.path, `有标签 ${t.tag}（规则 7）`, t.position.start.line);
-      let brokenBlocks = 0, firstBroken = null;
+      const pageLines = (await this.app.vault.cachedRead(f)).split("\n");
       for (const l of [...(cache.links || []), ...(cache.embeds || [])]) {
         const [pathPart, sub] = l.link.split("#");
         const dest = pathPart ? mc.getFirstLinkpathDest(pathPart, f.path) : f;
@@ -510,10 +737,15 @@ ${list}
         if (FORBIDDEN_LINKS.includes(pathPart)) add(f.path, `用了标记 [[${pathPart}]]（规则 7）`, l.position.start.line);
         if (sub && sub.startsWith("^")) {
           const blocks = mc.getFileCache(dest)?.blocks || {};
-          if (!blocks[sub.slice(1).toLowerCase()]) { brokenBlocks++; firstBroken ??= l; }
+          if (!blocks[sub.slice(1).toLowerCase()]) {
+            const claim = (pageLines[l.position.start.line] || "").replace(/\[\[[^\]]*\]\]/g, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "");
+            const r = await this.relocateBlock(dest, sub.slice(1), claim);
+            const to = r.id ? l.original.replace("#" + sub, "#^" + r.id) : l.original.replace("#" + sub, "");
+            const it = { file: f.path, line: l.position.start.line, msg: `块链接跳不到：${l.original} → 可改成 ${to}（${r.how}）`, repair: { from: l.original, to, how: r.how } };
+            issues.push(it);
+          }
         }
       }
-      if (brokenBlocks) add(f.path, `${brokenBlocks} 个块链接跳不到块（如 [[${firstBroken.link}]]）`, firstBroken.position.start.line);
       if (!isPage) continue;
       if (!/（wiki）$/.test(f.basename)) add(f.path, "页面名没有「（wiki）」后缀（规则 2）");
       // 展现形式：正文写成列表块；段落、表格都不行，引用块只许是第一个标题前的摘要
@@ -552,8 +784,12 @@ class WikiSettings extends PluginSettingTab {
           }));
           for (const t2 of s.topics) s.baselines[t2.name] ||= Date.now();
           await this.plugin.saveSettings();
-          this.plugin.refresh();
+          this.plugin.refreshPending();
         });
       });
+    new Setting(containerEl).setName("新材料按意思找").setDesc("借「第二大脑」的语义向量（要本机 Ollama 开着），只把相关的块交给 Claude；关掉、没装第二大脑或连不上 Ollama 时按关键词找整篇").addToggle((t) => t.setValue(!!s.semantic).onChange(async (v) => { s.semantic = v; await this.plugin.saveSettings(); this.plugin.pendingDirty = true; this.plugin.refresh(); }));
+    const num = (name, desc, key) => new Setting(containerEl).setName(name).setDesc(desc).addText((t) => t.setValue(String(s[key])).onChange(async (v) => { const n = parseFloat(v); if (n > 0 && n < 1) { s[key] = n; await this.plugin.saveSettings(); this.plugin.pendingDirty = true; this.plugin.refresh(); } }));
+    num("门槛：含关键词的块", "和主题的相似度（0～1）到这个数才算新材料。调低会多列，调高会少列；默认 0.45", "simKeyword");
+    num("门槛：不含关键词的块", "没提到关键词、但意思相近的块，要到这个数才算；默认 0.61", "simOnly");
   }
 }

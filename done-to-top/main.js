@@ -391,6 +391,13 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			name: "发送到明天：把光标所在块（连同子项）移到明天的日记",
 			editorCallback: (editor, ctx) => this.sendToTomorrow(editor, ctx && ctx.file),
 		});
+		// 以下全部：光标所在行到页尾整段追加到今天的日记（光标在分隔线上就从下一行起，分隔线留在原处）
+		this.addCommand({
+			id: "send-rest-to-today",
+			name: "以下全部发送到今天：光标所在行及以下的块追加到今天的日记",
+			hotkeys: [{ modifiers: ["Alt"], key: "2" }],
+			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file),
+		});
 	}
 
 	// 明天的日记：当前笔记是日记就取它的后一天；不是日记就取「今天」的后一天（和螺旋日程同一个凌晨分界）
@@ -404,6 +411,72 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		if (d.getHours() * 60 + d.getMinutes() < (cfg.dayCutoff ?? 7) * 60) d.setDate(d.getDate() - 1);
 		const today = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())].join("_");
 		return { ...journalAfter(today, 1), folder: cfg.folder || "日记", source: file ? file.basename : today };
+	}
+
+	// 今天的日记（和螺旋日程同一个凌晨分界）；当前笔记是日记就放在它那个文件夹
+	todayOf(file) {
+		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
+		const d = new Date();
+		if (d.getHours() * 60 + d.getMinutes() < (cfg.dayCutoff ?? 7) * 60) d.setDate(d.getDate() - 1);
+		const ymd = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())];
+		const isJournal = file && JOURNAL_NAME_RE.test(file.basename);
+		const folder = isJournal ? (file.parent && file.parent.path !== "/" ? file.parent.path : "") : cfg.folder || "日记";
+		return { name: ymd.join("_"), date: ymd.join("-"), folder, source: file ? file.basename : ymd.join("_") };
+	}
+
+	// 光标所在行到页尾整段拿走，原样追加到今天日记的末尾；顶格条目行尾记上「← [[来源]]」。
+	// 光标在列表项的续行上时从这一项开始；光标正好在分隔线上时跳过这条线（它留在原处，原日记就以分隔线收尾）
+	async sendRest(editor, file) {
+		file = file || this.app.workspace.getActiveFile();
+		const lines = editor.getValue().split("\n");
+		const bodyStart = topInsertLine(lines);
+		let start = Math.max(editor.getCursor().line, bodyStart);
+		const isSep = (l) => SEP_RE.test(l) || /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l);
+		if (start > bodyStart && !isBlank(lines[start]) && /^\s/.test(lines[start])) {
+			// 续行 → 它所属的那一项
+			let i = start;
+			while (i > bodyStart && !ITEM_RE.test(lines[i]) && (isBlank(lines[i]) || /^\s/.test(lines[i]))) i--;
+			if (ITEM_RE.test(lines[i])) start = i;
+		}
+		if (isSep(lines[start])) start++;
+		while (start < lines.length && isBlank(lines[start])) start++;
+		let end = lines.length - 1;
+		while (end >= start && isBlank(lines[end])) end--;
+		if (start > end) return new Notice("下面没有可以发送的内容");
+
+		const to = this.todayOf(file);
+		if (file && to.name === file.basename) return new Notice("这里已经是今天的日记了");
+		const orig = lines.slice(start, end + 1);
+		const baseIndent = indentWidth(orig[0]);
+		let inFence = false;
+		const moved = orig.map((l) => {
+			const out = isBlank(l) ? "" : dedent(l, baseIndent);
+			const fence = /^\s*(```|~~~)/.test(out);
+			// 顶格列表项（不是分隔线、不在代码块里、还没记过来源）记上来源
+			const top = !inFence && !fence && ITEM_RE.test(out) && !/^\s/.test(out) && !isSep(out);
+			if (fence) inFence = !inFence;
+			return top && !FROM_RE.test(out) ? markFrom(normalizeKeyword(out, false), to.source) : out;
+		});
+		const path = (to.folder ? to.folder + "/" : "") + to.name + ".md";
+		try {
+			let target = this.app.vault.getAbstractFileByPath(path);
+			if (!target) target = await this.app.vault.create(path, `---\njournal: 每日\njournal-date: ${to.date}\n---\n`);
+			await this.app.vault.process(target, (data) => data.replace(/\s*$/, "\n") + moved.join("\n") + "\n");
+		} catch (e) {
+			console.error("[done-to-top] 以下全部发送失败", path, e);
+			return new Notice("写入日记失败，原文没动。详情见控制台");
+		}
+		// 原文里删掉这一段（编辑器事务，⌘Z 能撤回；目标日记里那份要手动删）
+		const last = lines.length - 1;
+		if (editor.getRange({ line: start, ch: 0 }, { line: last, ch: lines[last].length }).replace(/\s+$/, "") !== orig.join("\n")) {
+			return new Notice(`已写进 ${to.name}，但原文在这期间变了，没有删原处，请手动删`);
+		}
+		const from = start > 0 ? { line: start - 1, ch: lines[start - 1].length } : { line: 0, ch: 0 };
+		editor.transaction({ changes: [{ from, to: { line: editor.lastLine(), ch: editor.getLine(editor.lastLine()).length }, text: "" }] });
+		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
+		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+		const tops = moved.filter((l) => !isBlank(l) && !/^\s/.test(l) && !isSep(l)).length;
+		new Notice(`➡️ 已追加到今天（${to.name}）：${tops} 块，共 ${orig.length} 行`);
 	}
 
 	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，行尾记上「← [[来源]]」

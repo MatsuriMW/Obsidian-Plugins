@@ -30,12 +30,16 @@ const CONTEXT = {
 		{ keys: ["Mod+点击"], name: "面包屑：跳到原文", when: "反链面包屑上" },
 		{ keys: ["Shift+点击"], name: "在右侧栏叠放打开（链接 / 块 / 面包屑 / 文件标题）", when: "反链面板里" },
 	],
+	"second-brain": [
+		{ keys: ["右键"], name: "不再作为卡片（去掉 #card / 挖空标记，可撤销）", when: "每日回顾的随机漫步卡片上" },
+	],
 	"esc-select-block": [
 		{ keys: ["Escape"], name: "选中光标所在的整个列表块（再按回到原来的光标）", when: "编辑器里" },
 		{ keys: ["ArrowUp", "ArrowDown"], name: "在块之间切换", when: "已选中整块时" },
 		{ keys: ["Shift+ArrowUp", "Shift+ArrowDown"], name: "扩选到上 / 下一块", when: "已选中整块时" },
 		{ keys: ["Enter"], name: "回到编辑（光标在块首行末尾）", when: "已选中整块时" },
 		{ keys: ["[", "（", "【", "「"], name: "选中文字后输入成对符号 = 包裹", when: "有选中文字时" },
+		{ keys: ["Enter"], name: "确认包裹：光标跳到右半边符号后面，不换行", when: "选中的文字被成对符号包着时" },
 	],
 	"palette-split-open": [
 		{ keys: ["Mod+Alt+Enter"], name: "在右侧拆分打开（最多 3 栏）", when: "⌘O 文件搜索面板里" },

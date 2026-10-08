@@ -1,9 +1,9 @@
 {
   "id": "llm-wiki",
   "name": "LLM Wiki",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.4.0",
-  "description": "左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面，提示哪些新笔记还没摄入，一键让本机 Claude 摄入 / 回答问题，本地体检 wiki 规则。",
+  "description": "左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面；待摄入的新材料借「第二大脑」按意思找、精确到块，只把相关的块交给本机 Claude 摄入；一键提问；本地体检 wiki 规则，失效的块链接在本地找回。",
   "author": "马自立",
   "isDesktopOnly": true
 }

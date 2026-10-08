@@ -31,6 +31,13 @@
 //   · 不管字符是怎么进来的（直接输入、输入法直接上屏、输入法选字上屏），都是事后看：
 //     「选中的文字被换成了一个成对符号」就改成包裹
 //   · 没有选中文字、或者选中的是 Esc 选出来的整块时，不接管
+//   · 包好之后按 Enter = 确认：光标跳到右半边符号后面接着写，不换行
+//
+// 三、⌘K 插分割线（命令，可在设置里改键）
+//   · 光标在哪一层的子块、块里哪个位置都行：在当前这一块（连同它的子项）下面，顶格插一行「- ---」
+//   · 块后面紧跟着单独一行的块 id（^q-xxxx，Flashcards 写的）算这一块的，插在它后面
+//   · 不在列表里：插在当前段落下面；下面紧挨着已经是分割线就不重复插
+//     （只要选中的文字正好被一对符号包着就算，也包括 Obsidian 自己包的 ** == ~~ 等）
 const { Plugin } = require("obsidian");
 const { keymap, EditorView } = require("@codemirror/view");
 const { Prec, EditorSelection, EditorState, StateField, StateEffect } = require("@codemirror/state");
@@ -46,6 +53,16 @@ const PAIRS = {
 // 右半边 → 左半边（不对称的才需要）
 const CLOSE_TO_OPEN = {};
 for (const [o, c] of Object.entries(PAIRS)) if (o !== c) CLOSE_TO_OPEN[c] = o;
+
+// 包裹后按 Enter 要认的成对符号：长的排前面（[[ 先于 [，** 先于 *）
+const WRAPS = [["[[", "]]"], ["**", "**"], ["==", "=="], ["~~", "~~"], ["__", "__"], ["$$", "$$"], ["%%", "%%"],
+	["*", "*"], ["_", "_"], ["$", "$"], ...Object.entries(PAIRS)];
+// 选区 from..to 正好被一对符号包着：返回右半边符号结束的位置，否则 -1
+function wrappedEnd(doc, from, to) {
+	for (const [o, c] of WRAPS)
+		if (from >= o.length && doc.sliceString(from - o.length, from) === o && doc.sliceString(to, to + c.length) === c) return to + c.length;
+	return -1;
+}
 
 // 文档 doc（CodeMirror Text）里 from..to 是选中的文字，输入了字符 ch：
 // 返回要做的替换 { from, to, insert } 和替换后文字的位置 { selFrom, selTo }；ch 不是成对符号返回 null
@@ -165,6 +182,12 @@ module.exports = class LogseqEditing extends Plugin {
 	onload() {
 		this.blockLines = blockLines;     // 方便在控制台里测试
 		this.beforeCompose = new WeakMap();   // view → 输入法开始组字前的 state
+		this.addCommand({
+			id: "insert-divider-below",
+			name: "在当前块下面顶格插入分割线",
+			hotkeys: [{ modifiers: ["Mod"], key: "k" }],
+			editorCallback: (editor) => this.insertDivider(editor),
+		});
 		this.registerEditorExtension([
 			blockField,
 			Prec.highest(keymap.of([
@@ -307,15 +330,39 @@ module.exports = class LogseqEditing extends Plugin {
 		return true;
 	}
 
-	// Enter：回到编辑，光标放在当前块首行末尾
+	// Enter：回到编辑，光标放在当前块首行末尾；或者，选中的文字刚被成对符号包好时，光标跳到右半边后面（确认包裹，不换行）
 	edit(view) {
 		const s = this.active(view);
-		if (!s) return false;
+		if (!s) return this.confirmWrap(view);
 		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(s.start + 1).to), effects: setBlock.of(null) });
 		return true;
 	}
 
+	// ---------- ⌘K 分割线 ----------
+
+	insertDivider(editor) {
+		const n = editor.lineCount(), getLine = (i) => editor.getLine(i);
+		const cur = editor.getCursor("head").line;
+		const start = itemLineFor(getLine, cur);
+		let end;
+		if (start >= 0) end = subtreeEnd(getLine, n, start);
+		else { end = cur; while (end + 1 < n && !isBlank(getLine(end + 1))) end++; }
+		while (end + 1 < n && /^\s*\^[\w-]+\s*$/.test(getLine(end + 1))) end++;
+		const next = end + 1 < n ? getLine(end + 1).trim() : "";
+		if (/^([-*+]\s+)?-{3,}$/.test(next)) return;   // 下面已经是分割线
+		editor.replaceRange("\n- ---", { line: end, ch: getLine(end).length });
+	}
+
 	// ---------- 成对符号包裹 ----------
+
+	confirmWrap(view) {
+		const sel = view.state.selection;
+		if (sel.ranges.some((r) => r.empty)) return false;
+		const ends = sel.ranges.map((r) => wrappedEnd(view.state.doc, r.from, r.to));
+		if (ends.some((e) => e < 0)) return false;
+		view.dispatch({ selection: EditorSelection.create(ends.map((e) => EditorSelection.cursor(e))), scrollIntoView: true, userEvent: "select" });
+		return true;
+	}
 
 	isBlockSelection(state) { return !!this.activeIn(state); }
 

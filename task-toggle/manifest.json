@@ -1,9 +1,9 @@
 {
   "id": "task-toggle",
   "name": "任务状态快切",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.4.0",
-  "description": "⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；不写文件、不等保存，可以连按",
+  "description": "⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；⌘⇧/ 在 PAUSED / SUSPENDED / CANCELLED / FAILED 之间切换（任何状态都能切进来）；不写文件、不等保存，可以连按",
   "author": "马自立",
   "isDesktopOnly": false
 }

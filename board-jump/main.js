@@ -3,7 +3,9 @@
 //   · 命令「看板切换器」：列出设置里的看板 + 全库 frontmatter 写了 type: 看板 的笔记，输入就能搜，新看板不用登记也能跳
 //   · 链接 obsidian://board?name=长期项目（或 path=…）：给 Keyboard Maestro / Raycast 做全局快捷键用
 //   · 已经开着的就切过去，不重复开；没开就在新标签打开（设置里可以改成当前标签）
-const { Plugin, PluginSettingTab, Setting, SuggestModal, Notice, TFile } = require("obsidian");
+//   · 看板全宽：书签里的笔记、type: 看板 的笔记，只要里面有 dataview / dataviewjs 代码块，就不受「可读行宽」限制、铺满面板
+//     （给视图加 board-wide 类，样式在 styles.css）；命令「当前笔记切换全宽」可以单篇改，记在设置里
+const { Plugin, PluginSettingTab, Setting, SuggestModal, Notice, TFile, MarkdownView } = require("obsidian");
 
 const DEFAULTS = {
   boards: [
@@ -12,7 +14,10 @@ const DEFAULTS = {
   ],
   switcherHotkey: "Alt+Mod+K",
   openIn: "tab",   // tab = 新标签 · current = 当前标签
+  wideBoards: true,     // 书签 / type: 看板 里带 Dataview 的笔记全宽显示
+  wideOverrides: {},    // 单篇例外：path → true 全宽 / false 照常
 };
+const DV_BLOCK = /^\s*(```|~~~)\s*dataview(js)?\b/m;
 const parseHotkey = (s) => {
   if (!s || !String(s).trim()) return [];
   const parts = String(s).split("+").map((x) => x.trim()).filter(Boolean);
@@ -49,6 +54,69 @@ module.exports = class BoardJump extends Plugin {
       if (b) this.openBoard(b); else new Notice("看板直达：找不到 " + (p.name || p.path));
     });
     this.addSettingTab(new BoardJumpSettings(this.app, this));
+    this.setupWide();
+  }
+
+  // ---------- 看板全宽 ----------
+  setupWide() {
+    this.dvCache = new Map();   // path → 有没有 dataview 代码块
+    const refresh = () => this.refreshWide();
+    this.registerEvent(this.app.workspace.on("layout-change", refresh));
+    this.registerEvent(this.app.workspace.on("file-open", refresh));
+    this.registerEvent(this.app.metadataCache.on("changed", (f) => { this.dvCache.delete(f.path); refresh(); }));
+    this.registerEvent(this.app.vault.on("rename", (f, old) => { this.dvCache.delete(old); refresh(); }));
+    const bm = this.bookmarks();
+    if (bm && typeof bm.on === "function") this.registerEvent(bm.on("changed", refresh));
+    this.app.workspace.onLayoutReady(refresh);
+    this.addCommand({
+      id: "toggle-wide", name: "当前笔记切换全宽 / 可读行宽",
+      checkCallback: (checking) => {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view || !view.file) return false;
+        if (!checking) this.toggleWide(view.file);
+        return true;
+      },
+    });
+    this.register(() => this.app.workspace.iterateAllLeaves((l) => l.view?.containerEl?.removeClass("board-wide")));
+  }
+  bookmarks() { return this.app.internalPlugins?.getPluginById?.("bookmarks")?.instance || null; }
+  bookmarkedPaths() {
+    const out = new Set();
+    const walk = (items) => { for (const it of items || []) { if (it.type === "file" && it.path) out.add(it.path); if (it.items) walk(it.items); } };
+    walk(this.bookmarks()?.items);
+    return out;
+  }
+  async hasDataview(f) {
+    if (this.dvCache.has(f.path)) return this.dvCache.get(f.path);
+    let yes = false;
+    try { yes = DV_BLOCK.test(await this.app.vault.cachedRead(f)); } catch (e) {}
+    this.dvCache.set(f.path, yes);
+    return yes;
+  }
+  async isWide(f, marked) {
+    const o = this.settings.wideOverrides || {};
+    if (f.path in o) return !!o[f.path];
+    if (!this.settings.wideBoards) return false;
+    const isBoard = marked.has(f.path) || String(this.app.metadataCache.getFileCache(f)?.frontmatter?.type) === "看板";
+    return isBoard && (await this.hasDataview(f));
+  }
+  async refreshWide() {
+    const marked = this.bookmarkedPaths();
+    const leaves = [];
+    this.app.workspace.iterateAllLeaves((l) => { if (l.view instanceof MarkdownView) leaves.push(l); });
+    for (const l of leaves) {
+      const f = l.view.file;
+      l.view.containerEl.toggleClass("board-wide", !!f && (await this.isWide(f, marked)));
+    }
+  }
+  async toggleWide(f) {
+    const now = await this.isWide(f, this.bookmarkedPaths());
+    const o = (this.settings.wideOverrides = this.settings.wideOverrides || {});
+    delete o[f.path];
+    if ((await this.isWide(f, this.bookmarkedPaths())) === now) o[f.path] = !now;   // 默认规则给不出想要的结果，才记成例外
+    await this.saveData(this.settings);
+    await this.refreshWide();
+    new Notice(`看板直达：「${f.basename}」${now ? "恢复可读行宽" : "全宽显示"}`);
   }
 
   // 命令 ID 用序号（open-board-1、open-board-2…），在 设置 → 快捷键 里改过的绑定跟着序号走
@@ -117,6 +185,9 @@ class BoardJumpSettings extends PluginSettingTab {
       .addButton((x) => x.setButtonText("保存").setCta().onClick(async () => { await this.plugin.saveSettings(); new Notice("看板直达：已保存，命令已更新"); }));
     new Setting(containerEl).setName("看板切换器快捷键").setDesc("改了要重启插件才生效（或者直接在 设置 → 快捷键 里改）")
       .addText((t) => t.setValue(s.switcherHotkey || "").onChange(async (v) => { s.switcherHotkey = v.trim(); await this.plugin.saveData(s); }));
+    new Setting(containerEl).setName("看板全宽显示")
+      .setDesc("书签里的笔记、type: 看板 的笔记，只要有 dataview / dataviewjs 代码块，就不受「可读行宽」限制。单篇想改用命令「当前笔记切换全宽」")
+      .addToggle((t) => t.setValue(s.wideBoards !== false).onChange(async (v) => { s.wideBoards = v; await this.plugin.saveData(s); this.plugin.refreshWide(); }));
     new Setting(containerEl).setName("没开着的看板在哪打开")
       .addDropdown((d) => d.addOption("tab", "新标签").addOption("current", "当前标签").setValue(s.openIn).onChange(async (v) => { s.openIn = v; await this.plugin.saveData(s); }));
   }

@@ -1,18 +1,16 @@
 // 第二大脑（自用）
-//   · 每日回顾：那年今日 / 随机旧块 / 孤岛笔记（右侧栏，每天第一次打开 Obsidian 时自动放一个标签，不抢焦点）
+//   · 每日回顾：随机漫步（只从 #card 卡片、==挖空==、Wiki 条目里抽）/ Wiki 回看 / 孤岛笔记（右侧栏，每天第一次打开 Obsidian 时自动放一个标签，不抢焦点）
 //   · 写作模式：打开 Claudian + 「相关笔记」面板（按光标所在段落实时找库里相近的块），退出时收起。平时不建索引
 //     可以把别的库当素材源（设置「外部素材库」）：在稿子库里写，右边列的是主库里的日记和笔记；插入的链接 / 引用会记进稿子的属性「素材」
 //   · 库周报：每周第一次打开时生成 计划与总结/库周报.md（新笔记、长得最多的页、候选建页词、孤岛变化）
 // 相关度 = 语义向量（本机 Ollama 的 embedding 模型，按意思找）+ BM25（中文按字的二元组切，按字面找）混合；Ollama 没开就只用 BM25。
 // 向量按块内容的哈希缓存在 ~/.cache/second-brain/vectors/（不放进库里，免得 iCloud 同步），两个库共用。
-const { Plugin, ItemView, Notice, TFile, MarkdownView, Modal, PluginSettingTab, Setting, Keymap, requestUrl } = require("obsidian");
+const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, requestUrl } = require("obsidian");
 const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto = require("crypto");
 
 const VIEW_REVIEW = "sb-daily-review";
 const VIEW_RELATED = "sb-related";
 const JOURNAL_RE = /^(\d{4})[_-](\d{1,2})[_-](\d{1,2})$/;
-const TASK_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX\/\-]\]\s+|(?:TODO|DOING|DONE|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|CANCELL?ED|FAILED)\b)/;
-const CARD_RE = /#card\b|#flashcard\b|#reversed\b/;
 const REPORT_NOTE = "计划与总结/库周报.md";
 const REPORT_SNAP = "计划与总结/.库周报快照.json";
 const DEFAULTS = {
@@ -31,6 +29,12 @@ const DEFAULTS = {
     embedDims: 768,
     hybridWeight: 0.15,
     extraVaults: "",          // 每行一个：库名|绝对路径（把那个库当素材源）
+ langPattern: "^.{1,4}[语文](记录|表达)$",   // 随机漫步：卡片本身、上层或下层链到名字符合这个规则的页（英文记录、日语记录、英文表达、拉丁语记录……）算语言类
+    langExcept: "中文记录, 中文表达",        // 但这些不算（中文的记录 / 表达留在「知识」里）
+    langGuess: true,                         // 没挂这类双链、但挖掉的全是外文生词 / 英文句子的挖空，也算语言类
+    ankiReview: true,         // 随机漫步里的卡片 / 挖空可以直接作答，结果写进 Anki（走 AnkiConnect 的 answerCards）
+    ankiUrl: "http://127.0.0.1:8765",
+    ankiSeconds: 5,           // 写进 Anki 复习记录的用时（秒）；AnkiConnect 要打过补丁才认，原版会忽略、记成约 0 秒
     lastAutoOpen: "",
     dismissedOrphans: [],
 };
@@ -66,6 +70,26 @@ function plain(s) {
         .replace(/\s+/g, " ")
         .trim();
 }
+// 挖空：和 Flashcards 一样编号（{{c2::…}}、{2:…} 用自己的号，==…== 按出现顺序 1、2、3…）；
+// target = 要遮的那个号，null = 全遮，-1 = 全揭开（只去掉标记）
+function clozeMask(text, target) {
+    let auto = 0;
+    return String(text).replace(/\{\{c(\d+)::([\s\S]*?)\}\}|\{(\d+):([^{}\n]*?)\}|==([^=\n]+)==/g, (m, n1, b1, n2, b2, b3) => {
+        const num = n1 ? +n1 : n2 ? +n2 : ++auto;
+        const body = b1 ?? b2 ?? b3;
+        return target === null || num === target ? "［⋯］" : body;
+    });
+}
+// 随机漫步里渲染用的 Markdown：去掉制卡标签、块 id、单独一行的 ^q-xxxx，整体去掉公共缩进（嵌套的卡不会被当成代码块）
+function cardMd(text) {
+    const L = cardText(text).split("\n").filter((l) => !/^\s*\^[\w-]+\s*$/.test(l)).map((l) => l.replace(/\s\^[\w-]+\s*$/, ""));
+    const ind = Math.min(...L.filter((l) => l.trim()).map((l) => (l.match(/^[\t ]*/) || [""])[0].replace(/ {4}/g, "\t").length));
+    return L.map((l) => l.replace(/ {4}/g, "\t").replace(new RegExp(`^\\t{0,${Number.isFinite(ind) ? ind : 0}}`), "")).join("\n").trim();
+}
+// 揭开后的挖空：{{c1::x}}、{1:x} 都显示成高亮
+const clozeReveal = (s) => String(s).replace(/\{\{c\d+::([\s\S]*?)\}\}/g, "==$1==").replace(/\{(\d+):([^{}\n]*?)\}/g, "==$2==");
+// 卡片显示用：去掉 #card 这类制卡标签
+const cardText = (s) => String(s).replace(/\s*#(card|flashcard|reversed)\b/gi, "");
 async function osa(script) {
     const { execFile } = require("child_process");
     return new Promise((res) => execFile("osascript", ["-l", "JavaScript", "-e", script], { timeout: 4000 }, (err, out) => res(err ? "" : String(out).trim())));
@@ -84,36 +108,65 @@ const MODEL_PROMPT = [
     [/^embeddinggemma/, "task: search result | query: ", "title: none | text: "],
 ];
 // 追加式的向量缓存：hashes.txt 一行一个块哈希，vecs.bin 顺序放 Float32 向量（已归一化）
+// lazy = 只读哈希表，向量用到哪条从磁盘读哪条（给 LLM Wiki 查少量块用，不把近 200 MB 读进内存）
 class VectorStore {
-    constructor(model, dims) {
+    constructor(model, dims, lazy = false) {
         this.dims = dims;
+        this.lazy = lazy;
         this.dir = npath.join(nos.homedir(), ".cache", "second-brain", "vectors", `${String(model).replace(/[^\w.-]+/g, "_")}-${dims}`);
         this.map = new Map();
         this.n = 0;
-        this.data = new Float32Array(dims * 4096);
+        this.data = lazy ? null : new Float32Array(dims * 4096);
         this.load();
     }
     load() {
         const hp = npath.join(this.dir, "hashes.txt"), vp = npath.join(this.dir, "vecs.bin");
         if (!nfs.existsSync(hp) || !nfs.existsSync(vp)) return;
         const hashes = nfs.readFileSync(hp, "utf8").split("\n").filter(Boolean);
-        const buf = nfs.readFileSync(vp);
-        const n = Math.min(hashes.length, Math.floor(buf.byteLength / 4 / this.dims));
-        this.data = new Float32Array(Math.max(4096, n * 2) * this.dims);
-        this.data.set(new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + n * this.dims * 4)));
+        const size = nfs.statSync(vp).size;
+        const n = Math.min(hashes.length, Math.floor(size / 4 / this.dims));
+        if (!this.lazy) {
+            const buf = nfs.readFileSync(vp);
+            this.data = new Float32Array(Math.max(4096, n * 2) * this.dims);
+            this.data.set(new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + n * this.dims * 4)));
+        }
         for (let i = 0; i < n; i++) this.map.set(hashes[i], i);
         this.n = n;
         // 上次写到一半断掉的话，两个文件对不齐：截到对齐的长度
-        if (hashes.length !== n || buf.byteLength !== n * this.dims * 4) {
+        if (hashes.length !== n || size !== n * this.dims * 4) {
             nfs.writeFileSync(hp, hashes.slice(0, n).join("\n") + (n ? "\n" : ""));
             nfs.truncateSync(vp, n * this.dims * 4);
         }
     }
     idx(h) { const i = this.map.get(h); return i == null ? -1 : i; }
+    // 按序号取向量；lazy 时从 vecs.bin 里读
+    vecsOf(ids) {
+        if (!this.lazy) return ids.map((i) => (i < 0 ? null : this.data.subarray(i * this.dims, (i + 1) * this.dims)));
+        const fd = nfs.openSync(npath.join(this.dir, "vecs.bin"), "r");
+        try {
+            return ids.map((i) => {
+                if (i < 0) return null;
+                const buf = Buffer.alloc(this.dims * 4);
+                nfs.readSync(fd, buf, 0, buf.length, i * this.dims * 4);
+                return new Float32Array(buf.buffer, buf.byteOffset, this.dims);
+            });
+        } finally { nfs.closeSync(fd); }
+    }
     addMany(list) {
         list = list.filter((x) => !this.map.has(x.h) && x.vec && x.vec.length === this.dims);
         if (!list.length) return;
         nfs.mkdirSync(this.dir, { recursive: true });
+        if (this.lazy) {
+            // 序号以文件里的实际条数为准（写作模式那份缓存可能也往里追加过）
+            const vp = npath.join(this.dir, "vecs.bin");
+            const base = nfs.existsSync(vp) ? Math.floor(nfs.statSync(vp).size / 4 / this.dims) : 0;
+            const out = new Float32Array(list.length * this.dims);
+            list.forEach((x, k) => { out.set(x.vec, k * this.dims); this.map.set(x.h, base + k); });
+            this.n = base + list.length;
+            nfs.appendFileSync(npath.join(this.dir, "vecs.bin"), Buffer.from(out.buffer));
+            nfs.appendFileSync(npath.join(this.dir, "hashes.txt"), list.map((x) => x.h).join("\n") + "\n");
+            return;
+        }
         if ((this.n + list.length) * this.dims > this.data.length) {
             const bigger = new Float32Array(Math.max(this.data.length * 2, (this.n + list.length) * this.dims * 2));
             bigger.set(this.data.subarray(0, this.n * this.dims));
@@ -219,22 +272,23 @@ class BlockIndex {
         return this.plugin.excludeList().some((x) => path === x || path.startsWith(x.endsWith("/") ? x : x + "/"));
     }
     // 一篇笔记切成块：日记 = 每个顶层列表项（连子项）；其它笔记 = 标题/定义当一块 + 每个顶层列表项 + 每个段落
-    async blocksOf(file) {
+    // keepPrivate：私密块也要（LLM Wiki 摄入用，wiki 本来就在自己库里）
+    async blocksOf(file, keepPrivate = false) {
         const cache = this.app.metadataCache.getFileCache(file) || {};
         const text = await this.app.vault.cachedRead(file);
         const L = text.split("\n");
-        const priv = this.plugin.privateRe();
+        const priv = keepPrivate ? null : this.plugin.privateRe();
         const res = [];
-        const push = (line, s) => {
+        const push = (line, s, title = false) => {
             const t = s.trim();
             if (t.replace(/\s/g, "").length < 8) return;
             if (priv && priv.test(t)) return;
-            res.push({ line, text: t });
+            res.push({ line, end: line + s.replace(/\s+$/, "").split("\n").length - 1, text: t, title });
         };
         const isJournal = !!journalDate(file.basename);
         if (!isJournal) {
             const fm = cache.frontmatter || {};
-            push(0, `${file.basename} ${fm.def || ""} ${[fm.aliases].flat().filter(Boolean).join(" ")}`);
+            push(0, `${file.basename} ${fm.def || ""} ${[fm.aliases].flat().filter(Boolean).join(" ")}`, true);   // 标题块：页名 + 定义 + 别名，不是正文
         }
         const items = cache.listItems || [];
         const skip = new Set();
@@ -356,7 +410,8 @@ class BlockIndex {
         for (const b of this.blocks) if (!b.dead) { live++; if (b.v >= 0) have++; }
         return { live, have };
     }
-    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null } = {}) {
+    // only：只要满足条件的块（写作模式用它把 Wiki 条目和普通笔记分开查）
+    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null, only = null } = {}) {
         if (!this.ready) return [];
         const qtf = new Map();
         for (const t of tokenize(query)) qtf.set(t, (qtf.get(t) || 0) + 1);
@@ -415,6 +470,7 @@ class BlockIndex {
             if (seen.has(key)) continue;
             seen.add(key);
             if (onlyNotes && (b.ext || journalDate(b.path.split("/").pop().replace(/\.md$/, "")))) continue;
+            if (only && !only(b)) continue;
             const c = perCount.get(b.path) || 0;
             if (c >= perFile) continue;
             perCount.set(b.path, c + 1);
@@ -439,6 +495,24 @@ class ConfirmModal extends Modal {
     onClose() { this.contentEl.empty(); }
 }
 
+// ---------- LLM Wiki 条目 ----------
+const obsUri = (vault, rel) => `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(String(rel).replace(/\.md$/, ""))}`;
+// wiki 条目末尾全角括号里的双链是出处：（[[2026_08_26#^q-9hqk|2026-08-26]] · [[mr dang|mr dang]]）
+// 返回去掉出处括号的说法，和出处列表 { target 含 #^块, file 文件名, alias, label }
+function wikiSources(text) {
+    const sources = [], seen = new Set();
+    const claim = String(text).replace(/（([^（）]*\[\[[^（）]*)）/g, (m, inner) => {
+        for (const x of inner.matchAll(/\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]/g)) {
+            const target = x[1].trim(), file = target.split("#")[0].trim();
+            if (/（wiki）$/.test(file) || seen.has(target)) continue;
+            seen.add(target);
+            sources.push({ target, file, alias: x[2] || "", label: x[2] || file });
+        }
+        return "";
+    });
+    return { claim: claim.replace(/\s+$/gm, ""), sources };
+}
+
 // ---------- 每日回顾 ----------
 class ReviewView extends ItemView {
     constructor(leaf, plugin) { super(leaf); this.plugin = plugin; this.shift = 0; this.orphanShift = 0; }
@@ -447,6 +521,9 @@ class ReviewView extends ItemView {
     getIcon() { return "history"; }
     async onOpen() { await this.render(); }
     async render() {
+        // 渲染是异步的，连着触发两次会交错、叠出两份：每次编号，等完异步回来发现有更新的一次就不再往面板里写
+        const seq = (this.renderSeq = (this.renderSeq || 0) + 1);
+        const stale = () => seq !== this.renderSeq;
         const el = this.contentEl; el.empty(); el.addClass("sb-view");
         const today = M().format("YYYY-MM-DD");
         const head = el.createDiv({ cls: "sb-head" });
@@ -454,9 +531,10 @@ class ReviewView extends ItemView {
         const again = head.createEl("button", { text: "↻", attr: { "aria-label": "重新抽" } });
         again.onclick = () => { this.shift++; this.orphanShift++; this.render(); };
 
-        const journals = this.plugin.journals();
-        await this.renderOnThisDay(el, journals);
-        await this.renderRandom(el, journals, today);
+        await this.renderWalk(el, today, stale);
+        if (stale()) return;
+        await this.renderWiki(el, today, stale);
+        if (stale()) return;
         await this.renderOrphans(el, today);
     }
     section(el, title, hint) {
@@ -477,36 +555,183 @@ class ReviewView extends ItemView {
         c.addEventListener("mouseover", (evt) => this.app.workspace.trigger("hover-link", { event: evt, source: VIEW_REVIEW, hoverParent: this, targetEl: c, linktext: file.path, state: { scroll: line } }));
         return c;
     }
-    // 那年今日：往年同月同日的日记，每年最多 3 条顶层块
-    async renderOnThisDay(el, journals) {
-        const now = M();
-        const hits = journals.filter((j) => j.date.month() === now.month() && j.date.date() === now.date() && j.date.year() < now.year())
-            .sort((a, b) => b.date.valueOf() - a.date.valueOf());
-        const s = this.section(el, "📅 那年今日", hits.length ? `${hits.length} 年` : "往年今天没写日记");
-        for (const j of hits) {
-            const blocks = (await this.plugin.reviewBlocks(j.file)).slice(0, 3);
-            if (!blocks.length) continue;
-            const y = s.createDiv({ cls: "sb-year" });
-            y.createEl("div", { text: `${j.date.year()}（${now.year() - j.date.year()} 年前）`, cls: "sb-year-h" });
-            for (const b of blocks) this.card(y, j.file, b.line, b.text, j.date.format("YYYY-MM-DD ddd"));
+    // 随机漫步：只从 #card 卡片、==挖空==、Wiki 条目三处抽，三类轮流来；卡片先只给问题、挖空先遮住，点「揭开」再看
+    // Anki 开着的话，今天到期的卡排在前面（最多占 n-1 个名额，给别的留一个），揭开后可以直接作答，结果写进 Anki
+    // 三种，标题旁边切换：知识（默认，非语言类的卡片和挖空）/ 语言（语言类的卡片和挖空）/ Wiki（Wiki 条目）
+    // 卡片 / 挖空里今天在 Anki 到期的排最前；先显示 n 条，答完一张就收走，从后面的队列里补一张
+    async renderWalk(el, today, stale = () => false) {
+        const p = this.plugin, n = p.settings.reviewCount;
+        const mode = ["main", "lang", "wiki"].includes(this.walkMode) ? this.walkMode : "main";
+        const pool = await p.walkPool();
+        if (stale()) return;
+        const lang = mode === "lang";
+        const src = mode === "wiki" ? { wiki: pool.wiki } : { card: pool.card.filter((it) => !!it.lang === lang), cloze: pool.cloze.filter((it) => !!it.lang === lang) };
+        let dueN = new Set();
+        if (mode !== "wiki" && p.settings.ankiReview) { try { dueN = await p.ankiDueNotes(); } catch (e) { /* Anki 没开：照常随机 */ } }
+        if (stale()) return;
+        const rand = rng(today + "#" + this.shift + "#" + mode);
+        const due = dueN.size ? shuffle([...src.card, ...src.cloze].filter((it) => dueN.has(p.nidOf(it))), rand) : [];
+        const hint = mode === "wiki" ? `Wiki ${src.wiki.length}` : `卡片 ${src.card.length} · 挖空 ${src.cloze.length}` + (due.length ? ` · 今天到期 ${due.length}` : "");
+        const s = this.section(el, "🎲 随机漫步", hint);
+        const tabs = s.querySelector(".sb-sec-h > span").createSpan({ cls: "sb-walk-tabs" });
+        for (const [m, label] of [["main", "知识"], ["lang", "语言"], ["wiki", "Wiki"]]) {
+            const b = tabs.createEl("button", { text: label, cls: m === mode ? "is-active" : "" });
+            b.onclick = () => { this.walkMode = m; this.render(); };
+        }
+        // 排好整条队列：到期的在前，其余几类轮流
+        const order = [...due], taken = new Set(due);
+        const lists = shuffle(Object.keys(src), rand).map((k) => shuffle(src[k], rand).filter((x) => !taken.has(x)));
+        for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) order.push(l[i]);
+        if (!order.length) { s.createDiv({ text: mode === "wiki" ? "没有 Wiki 条目" : lang ? "没有语言类的卡片或挖空" : "没有可抽的卡片或挖空", cls: "sb-hint" }); return; }
+        this.walkBox = s;
+        this.walkQueue = order.slice(n);
+        for (const it of order.slice(0, n)) this.walkCard(s, it);
+    }
+    // 这张处理完了：收起来，后面的往上顶，从队列里补一张
+    dismissWalk(c) {
+        if (c.hasClass("is-leaving")) return;
+        c.style.height = c.offsetHeight + "px";
+        c.addClass("is-leaving");
+        requestAnimationFrame(() => { c.style.height = "0px"; });
+        setTimeout(() => {
+            const box = c.parentElement;
+            c.remove();
+            const next = box === this.walkBox ? this.walkQueue?.shift() : null;
+            if (next) this.walkCard(box, next);
+            else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "这一批做完了，点 ↻ 再来一批", cls: "sb-hint" });
+        }, 260);
+    }
+    walkCard(parent, it) {
+        const p = this.plugin;
+        const c = parent.createDiv({ cls: `sb-card sb-walk is-${it.kind}` });
+        const meta = c.createDiv({ cls: "sb-meta" });
+        const jd = journalDate(it.file.basename);
+        const where = jd ? jd.format("YYYY-MM-DD") : it.file.basename.replace(/（wiki）$/, "");
+        meta.createEl("span", { text: `${{ card: "🃏 卡片", cloze: "✂️ 挖空", wiki: "📚 Wiki" }[it.kind]} · ${where}` });
+        // 母块：包着这张卡的各层，从外到内；点哪一层跳到哪一层
+        if (it.ctx?.length) {
+            const bc = c.createDiv({ cls: "sb-crumbs" });
+            it.ctx.forEach((x, i) => {
+                if (i) bc.createSpan({ cls: "sb-crumb-sep", text: " › " });
+                const t = plain(x.text);
+                const a = bc.createSpan({ cls: "sb-crumb", text: t.length > 40 ? t.slice(0, 39) + "…" : t, attr: { "aria-label": t.length > 40 ? t : "" } });
+                a.onclick = (evt) => { evt.stopPropagation(); p.openAt(it.file, x.line, evt); };
+            });
+        }
+        // 按 Markdown 渲染（图片、加粗、链接、列表都正常显示）；点里面的双链跳过去，点别处打开原文
+        const body = c.createDiv({ cls: "sb-text sb-md markdown-rendered" });
+        body.addEventListener("click", (evt) => {
+            const a = evt.target.closest("a.internal-link");
+            if (!a) { if (evt.target.closest("a, img")) evt.stopPropagation(); return; }
+            evt.preventDefault(); evt.stopPropagation();
+            this.app.workspace.openLinkText(a.getAttribute("data-href") || a.getAttribute("href"), it.file.path, Keymap.isModEvent(evt));
+        });
+        const md = cardMd(it.text);
+        const lines = md.split("\n");
+        const full = it.kind === "wiki" ? md : clozeReveal(md);
+        // 卡片：第一行是问题，子项是答案；挖空：遮住（一条笔记在 Anki 里有好几张卡时，只遮这次要复习的那个空）
+        const hiddenOf = (target) => it.kind === "card" ? lines[0] + (lines.length > 1 ? "\n\n…" : "")
+            : it.kind === "cloze" ? clozeMask(md, target)
+            : full;
+        const show = (m) => { body.empty(); MarkdownRenderer.render(this.app, m, body, it.file.path, this); };
+        const st = { revealed: false, card: null, reviewable: false, done: () => this.dismissWalk(c) };
+        show(hiddenOf(null));
+        const row = c.createDiv({ cls: "sb-actions" });
+        const anki = it.kind === "wiki" || !p.settings.ankiReview ? null : c.createDiv({ cls: "sb-anki", text: "Anki：查询中…" });
+        const reveal = () => {
+            st.revealed = true; show(full); row.empty();
+            if (st.reviewable) this.answerButtons(row, anki, st);
+        };
+        if (hiddenOf(null) !== full) {
+            const b = row.createEl("button", { text: "👁 揭开" });
+            b.onclick = (evt) => { evt.stopPropagation(); reveal(); };
+        } else st.revealed = true;
+        if (anki) this.fillAnki(it, anki, row, st, () => { if (!st.revealed && it.kind === "cloze" && st.target) show(hiddenOf(st.target)); });
+        c.onclick = (evt) => p.openAt(it.file, it.line, evt);
+        // 右键：不再作为卡片（只去掉 #card / 挖空符号，文字留着）
+        if (it.kind !== "wiki") c.addEventListener("contextmenu", (evt) => {
+            evt.preventDefault(); evt.stopPropagation();
+            const menu = new Menu();
+            menu.addItem((i) => i.setTitle(it.kind === "card" ? "不再作为卡片（去掉 #card）" : "不再作为卡片（去掉挖空）").setIcon("eraser").onClick(async () => {
+                if (await p.uncard(it)) this.dismissWalk(c);
+            }));
+            menu.addItem((i) => i.setTitle("打开原文").setIcon("file-text").onClick(() => p.openAt(it.file, it.line)));
+            menu.showAtMouseEvent(evt);
+        });
+    }
+    // 查这张卡在 Anki 里的状态；到期的和新卡可以作答
+    async fillAnki(it, el, row, st, onTarget) {
+        const p = this.plugin;
+        el.empty(); el.removeClass("is-off");
+        const nid = p.nidOf(it);
+        if (!nid) { el.setText("还没同步到 Anki（先跑一次 Flashcards: Update Anki from vault）"); el.addClass("is-off"); return; }
+        let cards;
+        try {
+            const ids = await p.anki("findCards", { query: `nid:${nid}` });
+            if (!ids.length) { el.setText("Anki 里找不到这张卡（可能已经删了）"); el.addClass("is-off"); return; }
+            cards = await p.anki("cardsInfo", { cards: ids });
+            const due = await p.anki("areDue", { cards: ids });
+            cards.forEach((x, i) => (x._due = due[i]));
+        } catch (e) {
+            el.addClass("is-off");
+            el.createSpan({ text: "Anki 没开，打开 Anki 再复习 " });
+            const open = el.createEl("button", { text: "打开 Anki" });
+            open.onclick = (evt) => {
+                evt.stopPropagation();
+                require("child_process").exec("open -a Anki");
+                el.setText("正在打开 Anki…");
+                setTimeout(() => this.fillAnki(it, el, row, st, onTarget), 8000);
+            };
+            return;
+        }
+        const live = cards.filter((x) => x.queue >= 0);
+        const card = live.find((x) => x._due) || live.find((x) => x.queue === 0) || live.sort((a, b) => a.due - b.due)[0] || cards[0];
+        st.card = card;
+        if (cards.length > 1 && it.kind === "cloze") { st.target = card.ord + 1; onTarget(); }
+        const label = await p.ankiState(card);
+        el.setText(`Anki：${label}`);
+        st.reviewable = card.queue === 0 || (card.queue > 0 && card._due);
+        if (!st.reviewable) el.addClass("is-off");
+        if (st.reviewable && st.revealed) { row.empty(); this.answerButtons(row, el, st); }
+    }
+    answerButtons(row, el, st) {
+        const p = this.plugin;
+        for (const [ease, text] of [[1, "重来"], [2, "困难"], [3, "良好"], [4, "简单"]]) {
+            const b = row.createEl("button", { text, cls: `sb-ease is-${ease}` });
+            b.onclick = async (evt) => {
+                evt.stopPropagation();
+                row.querySelectorAll("button").forEach((x) => (x.disabled = true));
+                try {
+                    const ok = await p.anki("answerCards", { answers: [{ cardId: st.card.cardId, ease, duration: Number(p.settings.ankiSeconds) || 0 }] });
+                    if (!ok?.[0]) throw new Error("Anki 没接受这次作答");
+                    const [after] = await p.anki("cardsInfo", { cards: [st.card.cardId] });
+                    p.dueCache = null;
+                    row.empty();
+                    el.removeClass("is-off"); el.addClass("is-done");
+                    el.setText(`✓ 已记入 Anki（${text}）· ${after.queue === 2 ? `下次 ${after.interval} 天后` : "学习中，几分钟后再出现"}`);
+                    setTimeout(() => st.done?.(), 900);   // 让人看一眼结果，再收走
+                    // 核对用时有没有记上：AnkiConnect 从 AnkiWeb 自动更新后，本地补丁会被覆盖，用时又变回约 0 秒
+                    if (Number(p.settings.ankiSeconds) > 0) {
+                        try {
+                            const rv = (await p.anki("getReviewsOfCards", { cards: [st.card.cardId] }))?.[String(st.card.cardId)] || [];
+                            const last = rv.reduce((m, x) => (!m || x.id > m.id ? x : m), null);
+                            if (last && last.time < 1000) el.setText(el.getText() + " · ⚠️ 用时没记上（AnkiConnect 更新后补丁没了，让 Claude 重新打一次）");
+                        } catch (e) { /* 查不到就算了 */ }
+                    }
+                } catch (e) {
+                    row.querySelectorAll("button").forEach((x) => (x.disabled = false));
+                    new Notice(`没记进 Anki：${e.message || e}`);
+                }
+            };
         }
     }
-    // 随机旧块：30 天前的日记里，不是任务、不是 Anki 卡片、不私密的顶层块
-    async renderRandom(el, journals, today) {
-        const n = this.plugin.settings.reviewCount;
-        const s = this.section(el, "🎲 随机旧块", "30 天前的日记");
-        const old = journals.filter((j) => M().diff(j.date, "days") > 30);
-        const rand = rng(today + "#" + this.shift);
-        let got = 0, tries = 0;
-        for (const j of shuffle(old, rand)) {
-            if (got >= n || tries++ > 60) break;
-            const blocks = await this.plugin.reviewBlocks(j.file);
-            if (!blocks.length) continue;
-            const b = blocks[Math.floor(rand() * blocks.length)];
-            this.card(s, j.file, b.line, b.text, j.date.format("YYYY-MM-DD"));
-            got++;
-        }
-        if (!got) s.createDiv({ text: "没抽到合适的块", cls: "sb-hint" });
+    // Wiki 回看：LLM Wiki 页里「存疑」「冲突」「你自己的判断」「还没回答的问题」这些小节下的条目，每天抽两条
+    async renderWiki(el, today, stale = () => false) {
+        const items = await this.plugin.wikiReviewItems();
+        if (!items.length || stale()) return;
+        const s = this.section(el, "📚 Wiki 回看", "存疑 · 冲突 · 你的判断 · 没回答的问题");
+        const rand = rng(today + "#w" + this.shift);
+        for (const it of shuffle(items, rand).slice(0, 2)) this.card(s, it.file, it.line, it.text, `📚 ${it.page} · ${it.kind}`);
     }
     // 孤岛笔记：没有任何笔记链接到它的非日记笔记
     async renderOrphans(el, today) {
@@ -626,17 +851,25 @@ class RelatedView extends ItemView {
             try { qvec = (await this.plugin.embedTexts([q.slice(0, 1200)], true))[0]; } catch (e) { this.semErr = "连不上 Ollama，暂时只按字面找"; this.setStatus(); }
             if (seq !== this.seq || !this.plugin.index) return;   // 等向量的时候光标又动了 / 已经退出
         }
-        const res = idx.search(q, { excludePath: view.file?.path, limit: 14, perFile: 2, qvec });
+        const isWiki = (b) => this.plugin.isWikiBlock(b);
+        // LLM Wiki 的条目是整理过、带出处的，单列在最前；普通笔记照旧
+        const wres = idx.search(q, { excludePath: view.file?.path, limit: 3, perFile: 1, qvec, only: (b) => isWiki(b) && b.line > 0 });
+        const res = idx.search(q, { excludePath: view.file?.path, limit: 14, perFile: 2, qvec, only: (b) => !this.plugin.inWikiFolder(b) });   // Wiki 的目录、日志、规则页不当素材
         this.list.empty();
         if (!q.trim()) { this.list.createDiv({ text: "开始写，这里会列出库里和这段相近的内容。", cls: "sb-hint" }); return; }
-        if (!res.length) { this.list.createDiv({ text: "这段没找到相近的内容。", cls: "sb-hint" }); return; }
+        if (!res.length && !wres.length) { this.list.createDiv({ text: "这段没找到相近的内容。", cls: "sb-hint" }); return; }
+        if (wres.length) {
+            this.list.createDiv({ cls: "sb-group-h", text: "📚 Wiki" });
+            for (const r of wres) this.wikiCard(r);
+            if (res.length) this.list.createDiv({ cls: "sb-group-h", text: "📝 笔记" });
+        }
         for (const r of res) {
             // 外部库的块：没有 TFile，用 obsidian:// 链接跳到那个库
             const ext = r.ext;
             const f = ext ? null : this.app.vault.getAbstractFileByPath(r.path);
             if (!ext && !(f instanceof TFile)) continue;
             const base = ext ? ext.rel.split("/").pop().replace(/\.md$/, "") : f.basename;
-            const uri = ext ? `obsidian://open?vault=${encodeURIComponent(ext.vault)}&file=${encodeURIComponent(ext.rel.replace(/\.md$/, ""))}` : "";
+            const uri = ext ? obsUri(ext.vault, ext.rel) : "";
             const linkText = ext ? `[${base}](${uri})` : `[[${base}]]`;
             const jd = journalDate(base);
             const c = this.list.createDiv({ cls: "sb-card" });
@@ -652,6 +885,33 @@ class RelatedView extends ItemView {
             c.onclick = (evt) => (ext ? window.open(uri) : this.plugin.openAt(f, r.line, evt));
             if (!ext) c.addEventListener("mouseover", (evt) => this.app.workspace.trigger("hover-link", { event: evt, source: VIEW_RELATED, hoverParent: this, targetEl: c, linktext: f.path, state: { scroll: r.line } }));
         }
+    }
+    // Wiki 条目：引用 / 插入链接时，出处用条目后面括号里的原笔记块链接（你自己的原话），不用 wiki 页这个二手转述
+    wikiCard(r) {
+        const ext = r.ext;
+        const f = ext ? null : this.app.vault.getAbstractFileByPath(r.path);
+        if (!ext && !(f instanceof TFile)) return;
+        const rel = ext ? ext.rel : r.path;
+        const page = rel.split("/").pop().replace(/\.md$/, "");
+        const pageUri = ext ? obsUri(ext.vault, rel) : "";
+        const pageLink = ext ? `[${page}](${pageUri})` : `[[${page}]]`;
+        const { claim, sources } = wikiSources(r.text);
+        // 外部库：块链接在稿子库里跳不过去，改成 obsidian:// 打开那篇
+        const srcLinks = sources.map((x) => (ext ? `[${x.label}](${obsUri(ext.vault, x.file)})` : `[[${x.target}${x.alias ? "|" + x.alias : ""}]]`));
+        const c = this.list.createDiv({ cls: "sb-card sb-wiki" });
+        const meta = c.createDiv({ cls: "sb-meta" });
+        meta.createEl("span", { text: `📚 ${page.replace(/（wiki）$/, "")}` + (ext ? ` · ${ext.vault}` : "") });
+        meta.createEl("span", { cls: "sb-hint", text: sources.length ? `出处 ${sources.length}` : "无出处" });
+        const t = plain(claim);
+        c.createDiv({ cls: "sb-text", text: t.length > 220 ? t.slice(0, 219) + "…" : t });
+        const row = c.createDiv({ cls: "sb-actions" });
+        const record = () => { if (sources.length) for (const x of sources) this.plugin.recordSource(x.file, ext); else this.plugin.recordSource(page, ext); };
+        const link = row.createEl("button", { text: sources.length ? "↪ 链出处" : "↪ 插入链接", attr: { "aria-label": sources.length ? "插入原笔记的块链接" : "这条没有出处（多半是 wiki 的通识补充），插入 wiki 页链接" } });
+        link.onclick = (evt) => { evt.stopPropagation(); this.plugin.insertAtCursor(srcLinks.length ? srcLinks.join(" · ") : pageLink); record(); };
+        const quote = row.createEl("button", { text: "❝ 引用" });
+        quote.onclick = (evt) => { evt.stopPropagation(); this.plugin.insertAtCursor(`\n> ${t.slice(0, 300)}\n> —— ${srcLinks.length ? srcLinks.join(" · ") : pageLink + "（wiki 整理，无原笔记出处）"}\n`); record(); };
+        c.onclick = (evt) => (ext ? window.open(pageUri) : this.plugin.openAt(f, r.line, evt));
+        if (!ext) c.addEventListener("mouseover", (evt) => this.app.workspace.trigger("hover-link", { event: evt, source: VIEW_RELATED, hoverParent: this, targetEl: c, linktext: f.path, state: { scroll: r.line } }));
     }
 }
 
@@ -701,7 +961,7 @@ module.exports = class SecondBrain extends Plugin {
             if (this.settings.autoWeeklyReport) setTimeout(() => this.weeklyReport(false), 20000);
         });
     }
-    onunload() { document.body.removeClass("sb-writing"); }
+    onunload() { document.body.removeClass("sb-writing"); clearTimeout(this.lookupTimer); }
     async saveSettings() { await this.saveData(this.settings); }
     // 外部素材库：设置里每行「库名|绝对路径」
     extraVaults() {
@@ -737,6 +997,53 @@ module.exports = class SecondBrain extends Plugin {
         setTimeout(() => note.hide(), 6000);
         if (!keep && !this.writing) this.index = null;
     }
+    // ----- 给别的插件用（LLM Wiki 找「待摄入」）-----
+    // 把 files 切成块，算每块和每组查询的语义相似度（组内取最高）：queries = { 组名: [查询句…] }
+    // 返回 [{ path, line, end, title 是不是标题块, text, h, sims: { 组名: 0~1 } }]。缓存里没有向量的块现算；没开语义 / 连不上 Ollama 就抛错，调用方自己退回按关键词找
+    async semanticBlocks(files, queries) {
+        const s = this.settings;
+        if (!s.semantic || !s.embedModel) throw new Error("第二大脑没开语义检索");
+        const store = this.index?.store || (this.lookup ||= new VectorStore(s.embedModel, s.embedDims, true));
+        clearTimeout(this.lookupTimer);
+        this.lookupTimer = setTimeout(() => { this.lookup = null; }, 10 * 60 * 1000);   // 十分钟没人用就放掉
+        const qkeys = Object.keys(queries), qtexts = [], qgroup = [];
+        for (const k of qkeys) for (const q of queries[k]) { qtexts.push(String(q).slice(0, 1200)); qgroup.push(k); }
+        this.qcache ||= new Map();
+        const needQ = [...new Set(qtexts.filter((q) => !this.qcache.has(q)))];
+        for (let i = 0; i < needQ.length; i += 32) {
+            const vs = await this.embedTexts(needQ.slice(i, i + 32), true);
+            needQ.slice(i, i + 32).forEach((q, k) => this.qcache.set(q, vs[k]));
+        }
+        const qv = qtexts.map((q) => this.qcache.get(q));
+        const tmp = new BlockIndex(this);
+        const out = [];
+        for (const f of files) {
+            for (const b of await tmp.blocksOf(f, true)) {
+                const text = b.text.slice(0, 1200);   // 和建索引时一样截断，哈希才对得上缓存
+                if (!tokenize(text).length) continue;
+                out.push({ path: f.path, line: b.line, end: b.end, title: b.title, text, h: hashOf(text) });
+            }
+            await sleep(0);
+        }
+        const todo = [...new Map(out.filter((b) => store.idx(b.h) < 0).map((b) => [b.h, b.text])).entries()];
+        for (let i = 0; i < todo.length; i += 32) {
+            const batch = todo.slice(i, i + 32);
+            const vs = await this.embedTexts(batch.map((x) => x[1]), false);
+            store.addMany(batch.map((x, k) => ({ h: x[0], vec: vs[k] })));
+        }
+        const vecs = store.vecsOf(out.map((b) => store.idx(b.h)));
+        out.forEach((b, j) => {
+            const v = vecs[j];
+            b.sims = {};
+            for (const k of qkeys) b.sims[k] = 0;
+            if (!v) return;
+            qv.forEach((q, qi) => {
+                let d = 0; for (let x = 0; x < q.length; x++) d += q[x] * v[x];
+                if (d > b.sims[qgroup[qi]]) b.sims[qgroup[qi]] = d;
+            });
+        });
+        return out;
+    }
     // 插入了哪条素材：记进正在写的这篇的属性「素材」；在稿子库里，再记到主库里挂着这篇稿子的选题页（属性「用到的素材」）
     async recordSource(base, ext) {
         const v = this.writingView();
@@ -769,6 +1076,39 @@ module.exports = class SecondBrain extends Plugin {
             if (nt) nfs.writeFileSync(hits[0].p, nt);
         } catch (e) { console.warn("[second-brain] 选题页", e); }
     }
+    // LLM Wiki 的文件夹（装了 llm-wiki 就跟它的设置走）
+    wikiFolder() { return String(this.app.plugins.plugins["llm-wiki"]?.settings?.folder || "Wiki").replace(/\/$/, ""); }
+    // 每日回顾用：wiki 页里值得回头看的条目（小节标题里有这些字的，取下面的顶层列表项连同子项）
+    async wikiReviewItems() {
+        const KINDS = [[/存疑/, "存疑"], [/冲突/, "冲突"], [/你自己的判断|你的判断/, "你的判断"], [/没回答|没展开/, "没回答的问题"]];
+        const folder = this.wikiFolder() + "/";
+        const out = [];
+        for (const f of this.app.vault.getMarkdownFiles()) {
+            if (!f.path.startsWith(folder) || !/（wiki）$/.test(f.basename)) continue;
+            const c = this.app.metadataCache.getFileCache(f) || {};
+            const hs = c.headings || [];
+            if (!hs.some((h) => KINDS.some(([re]) => re.test(h.heading)))) continue;
+            const L = (await this.app.vault.cachedRead(f)).split("\n");
+            const tops = [];
+            for (const it of c.listItems || []) {
+                if (it.parent < 0) tops.push({ s: it.position.start.line, e: it.position.end.line });
+                else if (tops.length) tops[tops.length - 1].e = Math.max(tops[tops.length - 1].e, it.position.end.line);
+            }
+            hs.forEach((h, i) => {
+                const kind = KINDS.find(([re]) => re.test(h.heading))?.[1];
+                if (!kind) return;
+                const next = hs.slice(i + 1).find((x) => x.level <= h.level);
+                const a = h.position.start.line, b = next ? next.position.start.line : L.length;
+                for (const t of tops) if (t.s > a && t.s < b) {
+                    const text = L.slice(t.s, t.e + 1).join("\n");
+                    if (plain(text).length >= 12) out.push({ file: f, line: t.s, text, page: f.basename.replace(/（wiki）$/, ""), kind });
+                }
+            });
+        }
+        return out;
+    }
+    inWikiFolder(b) { return (b.ext ? b.ext.rel : b.path).startsWith(this.wikiFolder() + "/"); }
+    isWikiBlock(b) { return this.inWikiFolder(b) && /（wiki）\.md$/.test(b.ext ? b.ext.rel : b.path); }
     excludeList() { return String(this.settings.excludeFolders).split(/[,，]\s*/).map((s) => s.trim()).filter(Boolean); }
     privateRe() {
         const names = String(this.settings.privateLinks).split(/[,，]\s*/).map((s) => s.trim()).filter(Boolean);
@@ -784,29 +1124,182 @@ module.exports = class SecondBrain extends Plugin {
         }
         return out;
     }
-    // 回顾用的块：顶层列表项里，不是任务、不是卡片、不私密、有点内容的
-    async reviewBlocks(file) {
-        const cache = this.app.metadataCache.getFileCache(file) || {};
-        const L = (await this.app.vault.cachedRead(file)).split("\n");
-        const priv = this.privateRe();
-        const items = cache.listItems || [];
-        const tops = [];
-        for (const it of items) {
-            if (it.parent < 0) tops.push({ line: it.position.start.line, end: it.position.end.line });
-            else if (tops.length) tops[tops.length - 1].end = Math.max(tops[tops.length - 1].end, it.position.end.line);
+    // 把一张卡变回普通文字：卡片去掉 #card（及 #reversed 等制卡标签），挖空去掉 ==…== / {{cN::…}} / {N:…} 的标记，文字原样留着
+    // 改之前核对原文没变；成功后给一个可以撤销的提示
+    async uncard(it) {
+        const unCloze = (t) => t.replace(/\{\{c\d+::([\s\S]*?)(?:::[^}]*)?\}\}/g, "$1").replace(/\{(\d+):([^{}\n]*?)\}/g, "$2").replace(/==([^=\n]+)==/g, "$1");
+        const transform = (text) => {
+            const L = text.split("\n");
+            if (it.kind === "card") {
+                const k = L.findIndex((l) => /#(card|flashcard|reversed)(-reminder|-reverse|\/reverse)?(?![\w-])/i.test(l));
+                if (k < 0) return null;
+                L[k] = L[k].replace(/\s*#(card|flashcard|reversed)(-reminder|-reverse|\/reverse)?(?![\w-])/gi, "");
+                // 答案里的 ==高亮== 原来被这张卡包着，去掉 #card 后会被 Flashcards 当成新的挖空卡，一起去掉
+                return unCloze(L.join("\n"));
+            }
+            const out = unCloze(text);
+            return out === text ? null : out;
+        };
+        const swap = async (from, to) => {
+            let ok = false;
+            await this.app.vault.process(it.file, (data) => {
+                const L = data.split("\n"), n = from.split("\n").length;
+                if (L.slice(it.line, it.line + n).join("\n") !== from) return data;
+                L.splice(it.line, n, ...to.split("\n"));
+                ok = true;
+                return L.join("\n");
+            });
+            return ok;
+        };
+        const next = transform(it.text);
+        if (next == null) { new Notice("这一块里没找到 #card 或挖空标记"); return false; }
+        if (!(await swap(it.text, next))) { new Notice("原文已经改过了，没动。刷新一下每日回顾再试"); return false; }
+        this.pool = null;
+        const frag = createFragment((f) => {
+            f.appendText(`「${it.file.basename}」这一块已不再是卡片 `);
+            const b = f.createEl("button", { text: "撤销" });
+            b.onclick = async () => { if (await swap(next, it.text)) { this.pool = null; new Notice("已撤销"); } else new Notice("原文又改过了，没法撤销"); };
+        });
+        new Notice(frag, 10000);
+        return true;
+    }
+    // ----- Anki（AnkiConnect）-----
+    async anki(action, params = {}) {
+        const r = await Promise.race([
+            requestUrl({ url: this.settings.ankiUrl, method: "POST", contentType: "application/json", body: JSON.stringify({ action, version: 6, params }) }),
+            sleep(4000).then(() => { throw new Error("Anki 没响应"); }),
+        ]);
+        if (r.json?.error) throw new Error(r.json.error);
+        return r.json?.result;
+    }
+    // 块对应的 Anki 笔记：Flashcards 把「块 id → nid」记在笔记属性 flashcards 里；块 id 在块首行末尾，或紧跟在块后面单独一行（^q-xxxx）
+    nidOf(it) {
+        const c = this.app.metadataCache.getFileCache(it.file) || {};
+        const fc = c.frontmatter?.flashcards;
+        if (!fc || typeof fc !== "object") return null;
+        const end = it.end ?? it.line;
+        const cand = [];
+        it.text.split("\n").forEach((l, i) => { const m = l.match(/\s\^([\w-]+)\s*$/) || l.match(/^\^([\w-]+)\s*$/); if (m) cand.push({ id: m[1], line: it.line + i }); });
+        for (const [id, b] of Object.entries(c.blocks || {})) if (b.position.start.line >= it.line && b.position.start.line <= end + 1) cand.push({ id, line: b.position.start.line });
+        const rank = (x) => (x.line === it.line ? 0 : x.line === end + 1 ? 1 : 2);
+        cand.sort((a, b) => rank(a) - rank(b) || a.line - b.line);
+        for (const x of cand) { const e = fc[x.id] || fc[x.id.toLowerCase()]; if (e?.nid) return Number(e.nid); }
+        return null;
+    }
+    // 今天到期的卡所属的笔记（两分钟内复用）
+    async ankiDueNotes() {
+        if (this.dueCache && Date.now() - this.dueCache.at < 2 * 60 * 1000) return this.dueCache.notes;
+        const ids = await this.anki("findCards", { query: "is:due -is:suspended -is:buried" });
+        const info = ids.length ? await this.anki("cardsInfo", { cards: ids }) : [];
+        this.dueCache = { at: Date.now(), notes: new Set(info.map((x) => x.note)) };
+        return this.dueCache.notes;
+    }
+    // 卡片状态的说法；复习卡的「还有几天」用 Anki 搜索 prop:due<=k 二分出来（AnkiConnect 不直接给日期）
+    async ankiState(card) {
+        if (card.queue === -1) return "已暂停";
+        if (card.queue < -1) return "已搁置";
+        if (card.queue === 0) return "新卡 · 揭开后可以作答";
+        if (card._due) return (card.queue === 2 ? "今天到期" : "学习中，到期了") + " · 揭开后可以作答";
+        if (card.queue !== 2) return "学习中，稍后到期";
+        let lo = 1, hi = Math.max(2, card.interval * 2 + 30), left = null;
+        try {
+            if ((await this.anki("findCards", { query: `cid:${card.cardId} prop:due<=${hi}` })).length) {
+                while (lo < hi) { const mid = (lo + hi) >> 1; if ((await this.anki("findCards", { query: `cid:${card.cardId} prop:due<=${mid}` })).length) hi = mid; else lo = mid + 1; }
+                left = lo;
+            }
+        } catch (e) { /* 算不出来就不写天数 */ }
+        return `${left != null ? `还有 ${left} 天到期` : "没到期"} · 间隔 ${card.interval} 天 · 复习过 ${card.reps} 次`;
+    }
+    // 随机漫步的素材：#card 卡片、==挖空== 所在的列表项（连同子项），和 Wiki 页的顶层条目。全库扫一遍要读文件，结果留 10 分钟
+    async walkPool() {
+        if (this.pool && Date.now() - this.pool.at < 10 * 60 * 1000) return this.pool;
+        const mc = this.app.metadataCache;
+        const ex = this.excludeList(), priv = this.privateRe(), wf = this.wikiFolder() + "/";
+        const isEx = (p) => ex.some((x) => p === x || p.startsWith(x.replace(/\/?$/, "/")));
+        const pool = { card: [], cloze: [], wiki: [], at: Date.now() };
+        const split = (v) => String(v || "").split(/[,，\n]/).map((x) => x.trim()).filter(Boolean);
+        let langRe = null;
+        try { langRe = new RegExp(this.settings.langPattern || "^$"); } catch (e) { console.warn("[second-brain] 语言类规则写错了", e); }
+        const langExcept = new Set(split(this.settings.langExcept));
+        const langName = (n) => !!langRe && langRe.test(n) && !langExcept.has(n);
+        const CLOZE = /==[^=\s][^=\n]*==|\{\{c\d+::/;
+        const CARD = /#(card|flashcard|reversed)\b/i;
+        let n = 0;
+        for (const f of this.app.vault.getMarkdownFiles()) {
+            if (isEx(f.path)) continue;
+            if (++n % 50 === 0) await sleep(0);   // 让出界面
+            const c = mc.getFileCache(f) || {};
+            const items = c.listItems || [];
+            const isWiki = f.path.startsWith(wf);
+            if (isWiki && !/（wiki）$/.test(f.basename)) continue;
+            if (isWiki && !items.length) continue;
+            const L = (await this.app.vault.cachedRead(f)).split("\n");
+            const skip = new Set();
+            for (const sec of c.sections || []) if (sec.type === "code" || sec.type === "yaml") for (let i = sec.position.start.line; i <= sec.position.end.line; i++) skip.add(i);
+            // 第 k 行所在的列表项，连同它的子项；不在列表里就取那一段。先一遍算好每行属于谁、每项的子树到哪一行（大文件上逐行去找会卡死界面）
+            const owner = new Array(L.length).fill(null), endOf = new Map(), byLine = new Map();
+            for (const sec of c.sections || []) for (let i = sec.position.start.line; i <= sec.position.end.line && i < L.length; i++) owner[i] = { s: sec.position.start.line, e: sec.position.end.line };
+            for (const it of items) {
+                const st = it.position.start.line;
+                byLine.set(st, it);
+                endOf.set(st, it.position.end.line);
+                for (let i = st; i <= it.position.end.line && i < L.length; i++) owner[i] = st;
+            }
+            for (let i = items.length - 1; i >= 0; i--) {
+                const it = items[i], p = it.parent;
+                if (p >= 0 && endOf.has(p)) endOf.set(p, Math.max(endOf.get(p), endOf.get(it.position.start.line)));
+            }
+            const blockAt = (k) => {
+                const o = owner[k];
+                if (o == null) return { s: k, e: k };
+                return typeof o === "number" ? { s: o, e: endOf.get(o) } : o;
+            };
+            // 语言类：卡片本身、上层或下层（同一块里）链到「X语 / X文 + 记录 / 表达」的页（中文的除外）；
+            // langGuess 开着时，没挂这类双链、但挖掉的全是外文生词 / 英文句子的挖空也算（单词本里的生词常常不挂标签）
+            const linksAt = new Map();
+            for (const l of c.links || []) { const k = l.position.start.line; if (!linksAt.has(k)) linksAt.set(k, []); linksAt.get(k).push(l.link.split("|")[0].split("#")[0].trim()); }
+            const lineItem = new Map(items.map((x) => [x.position.start.line, x]));
+            const chain = (s0) => { const out = [s0]; let x = lineItem.get(s0), d = 0; while (x && x.parent >= 0 && x.parent !== x.position.start.line && d++ < 30) { out.push(x.parent); x = lineItem.get(x.parent); } return out; };
+            const isLang = (kind, s0, e0, text) => {
+                const lines = [...chain(s0)];
+                for (let k = s0 + 1; k <= e0; k++) lines.push(k);
+                const names = lines.flatMap((k) => linksAt.get(k) || []);
+                if (names.some(langName)) return true;
+                if (!this.settings.langGuess || kind !== "cloze") return false;
+                // 链到 Concepts/ 下的知识概念页（如 [[Transformer]]），就是在学知识，不算背单词
+                if (names.some((n) => this.app.metadataCache.getFirstLinkpathDest(n, f.path)?.path.startsWith("Concepts/"))) return false;
+                const blanks = [...text.matchAll(/==([^=\n]+)==|\{\{c\d+::([^}]*)\}\}/g)].map((m) => (m[1] ?? m[2]).trim());
+                // 外文：纯英文字母，或者是日文（带假名，可以夹汉字，如 知り合い）
+                const foreign = (x) => /^[A-Za-z぀-ヿ][A-Za-z぀-ヿ\s'’.,!?-]*$/.test(x) || (/[぀-ヿ]/.test(x) && /^[぀-ヿ一-鿿\s]+$/.test(x));
+                if (!blanks.length || !blanks.every(foreign)) return false;
+                const first = plain(text.split("\n")[0]);
+                const latin = (first.match(/[A-Za-z]/g) || []).length, cjk = (first.match(/[一-鿿]/g) || []).length;
+                const sentence = (first.match(/[A-Za-z]+ +[A-Za-z]+/g) || []).length >= 2;   // 像英文句子，而不是用顿号隔开的一串术语
+                return !names.length || (latin > cjk && sentence);
+            };
+            // 上下文：包着这块的各层母块那一行，从外到内
+            const ctxOf = (s0) => chain(s0).slice(1).reverse().map((k) => ({ line: k, text: (L[k] || "").replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?/, "").replace(/(^|\s)\^[\w-]+\s*$/, "").replace(/\s*#(card|flashcard|reversed)\b/gi, "").trim() })).filter((x) => x.text);
+            const seen = new Set(), taken = [];
+            const add = (kind, k) => {
+                const b = blockAt(k);
+                // 和 Flashcards 一样：已经包含在上层卡片 / 挖空里的子项不再单算一张
+                if (seen.has(b.s) || (kind !== "wiki" && taken.some((r) => b.s > r.s && b.s <= r.e))) return;
+                seen.add(b.s);
+                taken.push(b);
+                const text = L.slice(b.s, b.e + 1).join("\n");
+                if (plain(text).length < 6 || (priv && priv.test(text))) return;
+                pool[kind].push({ kind, file: f, line: b.s, end: b.e, text, lang: kind !== "wiki" && isLang(kind, b.s, b.e, text), ctx: ctxOf(b.s) });
+            };
+            if (isWiki) {
+                for (const it of items) if (it.parent < 0 && !/^\s*[-*+]\s+范围：/.test(L[it.position.start.line] || "")) add("wiki", it.position.start.line);
+                continue;
+            }
+            // #card 按文字找：「自己#card」「。#card」这种前面没空格的，Obsidian 不认成标签，但 Flashcards 照样制卡
+            L.forEach((line, k) => { if (!skip.has(k) && CARD.test(line)) add("card", k); });
+            L.forEach((line, k) => { if (!skip.has(k) && CLOZE.test(line) && !CARD.test(line)) add("cloze", k); });
         }
-        const out = [];
-        for (const b of tops) {
-            const first = L[b.line] || "";
-            if (TASK_RE.test(first)) continue;
-            const text = L.slice(b.line, b.end + 1).join("\n");
-            if (CARD_RE.test(text) || (priv && priv.test(text))) continue;
-            const p = plain(text);
-            if (p.length < 12 || p.length > 900) continue;
-            if (/^(\[\[[^\]]*\]\]\s*)+$/.test(first.replace(/^\s*[-*+]\s+/, "").trim()) && b.end === b.line) continue;   // 只有一个双链
-            out.push({ line: b.line, text });
-        }
-        return out;
+        this.pool = pool;
+        return pool;
     }
     orphans() {
         const inbound = new Set();
@@ -834,7 +1327,7 @@ module.exports = class SecondBrain extends Plugin {
     async openReview(reveal) {
         let leaf = this.app.workspace.getLeavesOfType(VIEW_REVIEW)[0];
         if (!leaf) { leaf = this.app.workspace.getRightLeaf(false); await leaf.setViewState({ type: VIEW_REVIEW, active: reveal }); }
-        else if (leaf.view?.render) await leaf.view.render();
+        else { await leaf.loadIfDeferred?.(); if (leaf.view?.render) await leaf.view.render(); }   // 后台标签是延迟加载的，先加载出来才能重画
         if (reveal) this.app.workspace.revealLeaf(leaf);
     }
 
@@ -880,6 +1373,7 @@ module.exports = class SecondBrain extends Plugin {
             this.statusEl.hide();
             if (this.index) this.index.stopEmbed = true;   // 没算完的向量下次进写作模式接着算
             this.index = null;   // 平时不占内存
+            this.lookup = null;  // 写作模式往缓存里追加过向量，查询用的那份哈希表要重读
         }
     }
     async openClaudian() {
@@ -938,6 +1432,8 @@ module.exports = class SecondBrain extends Plugin {
         let snap = {};
         try { snap = JSON.parse(await adapter.read(REPORT_SNAP)); } catch (e) { snap = {}; }
         if (!force && snap.last && snap.last.week === week) return;
+        // 对比的基准是上一周的快照；同一周里手动刷新时用 prev，免得和本周自己比、变化量全成 0
+        const base = snap.last && snap.last.week === week ? snap.prev : snap.last;
         const since = M().subtract(7, "days");
         const mc = this.app.metadataCache;
         const files = this.app.vault.getMarkdownFiles();
@@ -947,11 +1443,12 @@ module.exports = class SecondBrain extends Plugin {
         // 新建 / 长大的笔记
         const sizes = {};
         for (const f of files) sizes[f.path] = f.stat.size;
-        const created = files.filter((f) => f.stat.ctime >= since.valueOf() && !journalDate(f.basename) && !isEx(f.path));
+        const inWiki = (p) => p.startsWith(this.wikiFolder() + "/");   // Wiki 页在下面单独一节，这里不重复算
+        const created = files.filter((f) => f.stat.ctime >= since.valueOf() && !journalDate(f.basename) && !isEx(f.path) && !inWiki(f.path));
         const byFolder = {};
         for (const f of created) { const k = f.path.includes("/") ? f.path.split("/")[0] : "（根目录）"; byFolder[k] = (byFolder[k] || 0) + 1; }
-        const prevSizes = snap.last?.sizes || {};
-        const grown = files.filter((f) => prevSizes[f.path] != null && !journalDate(f.basename) && !isEx(f.path))
+        const prevSizes = base?.sizes || {};
+        const grown = files.filter((f) => prevSizes[f.path] != null && !journalDate(f.basename) && !isEx(f.path) && !inWiki(f.path))
             .map((f) => ({ f, d: f.stat.size - prevSizes[f.path] })).filter((x) => x.d > 200).sort((a, b) => b.d - a.d).slice(0, 10);
         // 日记
         const js = this.journals().filter((j) => j.date.isAfter(since) && j.date.isSameOrBefore(M(), "day"));
@@ -966,7 +1463,7 @@ module.exports = class SecondBrain extends Plugin {
                 unres[name] = (unres[name] || 0) + n;
             }
         }
-        const prevUnres = snap.last?.unres || {};
+        const prevUnres = base?.unres || {};
         // 看板标记词、命名空间路径、残缺链接不算「候选建页」（学生等缩写照常列出）
         const ignore = new Set(["towatch", "tolisten", "toread", "tobuy", "toinstall", "podcast", "cue", "todo", "待续", ...String(this.settings.privateLinks).split(/[,，]\s*/)]);
         const candidate = (k) => !ignore.has(k.toLowerCase()) && !/[\/\[\]]/.test(k);
@@ -974,7 +1471,7 @@ module.exports = class SecondBrain extends Plugin {
         const bigUnres = Object.entries(unres).filter(([k, n]) => n >= 3 && candidate(k)).length;
         // 孤岛
         const orphans = this.orphans().map((f) => f.path);
-        const prevOrph = new Set(snap.last?.orphans || []);
+        const prevOrph = new Set(base?.orphans || []);
         const newOrph = orphans.filter((p) => !prevOrph.has(p));
         // 空页面（常被引用）
         const inbound = {};
@@ -982,8 +1479,9 @@ module.exports = class SecondBrain extends Plugin {
         const thin = files.filter((f) => f.stat.size < 300 && (inbound[f.path] || 0) >= 3 && !journalDate(f.basename) && !isEx(f.path)
             && !/书|论文|人物|媒体|组织|作品|课程/.test(String(mc.getFileCache(f)?.frontmatter?.type || ""))).length;
         // 卡片
-        let cards = 0;
-        for (const f of files) for (const t of mc.getFileCache(f)?.tags || []) if (t.tag === "#card") cards++;
+        // 已同步到 Anki 的卡片（含挖空）：Flashcards 记在属性 flashcards 里的条数。不数 #card 标签：「自己#card」这种 Obsidian 不认成标签，会漏掉一大半
+        let ankiNotes = 0;
+        for (const f of files) { const fc = mc.getFileCache(f)?.frontmatter?.flashcards; if (fc && typeof fc === "object") ankiNotes += Object.values(fc).filter((x) => x?.nid).length; }
 
         const d = (a, b) => b == null ? "" : ` (${a - b >= 0 ? "+" : ""}${a - b})`;
         const link = (p) => `[[${p.replace(/\.md$/, "")}|${p.split("/").pop().replace(/\.md$/, "")}]]`;
@@ -993,11 +1491,14 @@ module.exports = class SecondBrain extends Plugin {
         L.push(`- 🆕 新笔记 **${created.length}** 篇${created.length ? "：" + Object.entries(byFolder).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join("、") : ""}`);
         if (created.length) L.push(`\t- ${created.slice(0, 20).map((f) => link(f.path)).join(" · ")}${created.length > 20 ? " …" : ""}`);
         if (grown.length) L.push(`- 🌱 长得最多：${grown.map((x) => `${link(x.f.path)} +${(x.d / 1024).toFixed(1)}KB`).join(" · ")}`);
-        L.push(`- 🔗 未解析链接：${Object.keys(unres).length} 个${d(Object.keys(unres).length, snap.last ? Object.keys(prevUnres).length : null)}，其中被提到 ≥3 次、像是概念的 ${bigUnres} 个`);
+        L.push(`- 🔗 未解析链接：${Object.keys(unres).length} 个${d(Object.keys(unres).length, base ? Object.keys(prevUnres).length : null)}，其中被提到 ≥3 次、像是概念的 ${bigUnres} 个`);
         if (rising.length) L.push(`\t- 本周被提得更多、还没建页的：${rising.map(([k, n]) => `[[${k}]]×${n}`).join(" · ")}`);
-        L.push(`- 🏝 孤岛笔记：${orphans.length} 篇${d(orphans.length, snap.last ? prevOrph.size : null)}${newOrph.length && snap.last ? `，新增 ${newOrph.slice(0, 10).map(link).join(" · ")}` : ""}`);
+        L.push(`- 🏝 孤岛笔记：${orphans.length} 篇${d(orphans.length, base ? prevOrph.size : null)}${newOrph.length && base ? `，新增 ${newOrph.slice(0, 10).map(link).join(" · ")}` : ""}`);
         L.push(`- 📭 常被引用的空页面：${thin} 篇（见 [[Bases/待充实页面.base|待充实页面]]）`);
-        L.push(`- 🃏 Anki 卡片：${cards} 张${d(cards, snap.last?.cards)}`);
+        L.push(`- 🃏 已同步到 Anki 的卡片（含挖空）：${ankiNotes} 条${d(ankiNotes, base?.ankiNotes)}`);
+        // LLM Wiki 的这一周（装了 llm-wiki 才有）；上面「还没建页」列过的词，wiki 的新主题建议里不再重复
+        const wiki = this.app.plugins.plugins["llm-wiki"];
+        if (wiki?.weeklyLines) { try { L.push(...await wiki.weeklyLines(new Set(rising.map(([k]) => k)))); } catch (e) { console.warn("[second-brain] 周报 wiki", e); } }
         L.push("");
 
         // 写进报告：最新一周放最上面，保留 8 周
@@ -1008,7 +1509,8 @@ module.exports = class SecondBrain extends Plugin {
         const headTxt = `---\ntype: 看板\ncssclasses: [no-backlinks]\n---\n\n> 由「第二大脑」插件每周第一次打开 Obsidian 时生成（命令「生成本周库周报」可手动刷新）。只统计，不评价。\n\n`;
         const content = headTxt + [L.join("\n"), ...oldWeeks].join("\n");
         if (f instanceof TFile) await this.app.vault.modify(f, content); else await this.app.vault.create(REPORT_NOTE, content);
-        snap.last = { week, date: M().format("YYYY-MM-DD"), sizes, unres, orphans, cards };
+        if (snap.last && snap.last.week !== week) snap.prev = snap.last;
+        snap.last = { week, date: M().format("YYYY-MM-DD"), sizes, unres, orphans, ankiNotes };
         await adapter.write(REPORT_SNAP, JSON.stringify(snap));
         if (force) new Notice(`库周报已更新：${REPORT_NOTE}`);
     }
@@ -1026,7 +1528,7 @@ class SBSettings extends PluginSettingTab {
         text("日记文件夹", "", "journalFolder");
         text("不参与的文件夹 / 文件", "逗号分隔", "excludeFolders");
         text("私密链接", "带这些双链的块不进回顾、不进相关笔记（逗号分隔）", "privateLinks");
-        num("随机旧块条数", "reviewCount");
+        num("随机漫步条数", "reviewCount");
         num("孤岛笔记条数", "orphanCount");
         tog("每天自动放一个每日回顾标签", "每天第一次打开 Obsidian 时，在右侧栏加一个标签（不抢焦点）", "autoOpenReview");
         tog("每周自动生成库周报", REPORT_NOTE, "autoWeeklyReport");
@@ -1037,6 +1539,14 @@ class SBSettings extends PluginSettingTab {
         text("向量模型", "Ollama 里的模型名。换模型要重新算一遍向量（旧的缓存留着，换回来不用重算）", "embedModel");
         num("向量维度", "embedDims");
         text("字面命中的加分权重", "0 = 纯语义；默认 0.15", "hybridWeight");
+        new Setting(c).setName("随机漫步").setHeading();
+        text("语言类双链（正则）", "卡片本身、上层或下层链到名字符合它的页就算语言类，连同下面的子块。默认 ^.{1,4}[语文](记录|表达)$：英文记录、日语记录、英文表达、拉丁语记录…", "langPattern");
+        text("不算语言类的", "逗号分隔，默认中文记录、中文表达（留在「知识」里）", "langExcept");
+        tog("没挂双链的外文挖空也算语言类", "挖掉的全是英文生词 / 日文、或整句是英文句子的挖空", "langGuess");
+        new Setting(c).setName("Anki").setHeading();
+        tog("随机漫步里复习 Anki 卡片", "卡片 / 挖空揭开后可以按「重来 / 困难 / 良好 / 简单」作答，直接写进 Anki 的复习记录（要 Anki 开着、装了 AnkiConnect）。没到期的卡只能看", "ankiReview");
+        text("AnkiConnect 地址", "", "ankiUrl");
+        num("复习用时（秒）", "ankiSeconds");
         new Setting(c).setName("外部素材库").setDesc("每行一个：库名|绝对路径。写作模式会把那个库里的笔记也当素材（只读）；库名要和 Obsidian 里的库名一致，点卡片才能跳过去").addTextArea((t) => {
             t.setValue(String(s.extraVaults || "")).onChange(async (v) => { s.extraVaults = v; await p.saveSettings(); });
             t.inputEl.rows = 3; t.inputEl.style.width = "100%";

@@ -1,0 +1,5 @@
+/* 看板全宽：书签 / type: 看板 里带 Dataview 的笔记，不受「可读行宽」限制（main.js 给视图加 board-wide 类） */
+.board-wide { --file-line-width: 100%; }
+.board-wide .markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.board-wide .markdown-source-view.mod-cm6.is-readable-line-width .cm-sizer,
+.board-wide .markdown-source-view.mod-cm6.is-readable-line-width .cm-contentContainer > .cm-content { max-width: 100%; }

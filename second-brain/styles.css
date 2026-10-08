@@ -5,7 +5,6 @@
 .sb-hint { color: var(--text-muted); font-size: .85em; }
 .sb-sec { margin: 10px 0 14px; }
 .sb-sec-h { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; border-bottom: 1px solid var(--background-modifier-border); padding-bottom: 3px; margin-bottom: 6px; }
-.sb-year-h { color: var(--text-muted); font-size: .85em; margin: 6px 0 3px; }
 .sb-card { background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 6px 8px; margin: 5px 0; cursor: pointer; }
 .sb-card:hover { border-color: var(--interactive-accent); }
 .sb-meta { color: var(--text-muted); font-size: .8em; margin-bottom: 2px; }
@@ -15,3 +14,41 @@
 .sb-rel-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 3px 0; }
 .sb-modal-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .sb-status { cursor: pointer; color: var(--text-accent); }
+
+/* 写作模式：Wiki 条目单列 */
+.sb-group-h { margin: 8px 2px 4px; font-size: var(--font-ui-smaller); font-weight: 600; color: var(--text-muted); }
+.sb-card.sb-wiki { border-left: 3px solid var(--interactive-accent); }
+.sb-card.sb-wiki .sb-meta { display: flex; justify-content: space-between; gap: 6px; }
+
+/* 随机漫步：Anki 状态和作答按钮 */
+.sb-anki { margin-top: 4px; font-size: .78em; color: var(--text-accent); }
+.sb-anki.is-off { color: var(--text-faint); }
+.sb-anki.is-done { color: var(--color-green); }
+.sb-anki button { font-size: .95em; padding: 0 6px; height: auto; }
+.sb-actions .sb-ease.is-1 { color: var(--color-red); }
+.sb-actions .sb-ease.is-2 { color: var(--color-orange); }
+.sb-actions .sb-ease.is-3 { color: var(--color-green); }
+.sb-actions .sb-ease.is-4 { color: var(--color-blue); }
+
+/* 随机漫步：按 Markdown 渲染 */
+.sb-walk .sb-md { white-space: normal; max-height: 24em; overflow-y: auto; }
+.sb-md > :first-child { margin-top: 0; }
+.sb-md > :last-child { margin-bottom: 0; }
+.sb-md p, .sb-md ul, .sb-md ol { margin: 2px 0; }
+.sb-md ul, .sb-md ol { padding-left: 1.3em; }
+.sb-md img { max-width: 100%; border-radius: 4px; margin: 4px 0; }
+
+/* 随机漫步：知识 / 语言 切换；右键去掉卡片后 */
+.sb-walk-tabs { display: inline-flex; gap: 2px; margin-left: 6px; }
+.sb-walk-tabs button { font-size: .75em; padding: 0 7px; height: 18px; box-shadow: none; background: transparent; color: var(--text-muted); }
+.sb-walk-tabs button.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.sb-card.is-removed { opacity: .6; cursor: default; }
+
+/* 随机漫步：母块面包屑 */
+.sb-crumbs { font-size: .76em; color: var(--text-faint); margin: 0 0 3px; line-height: 1.4; }
+.sb-crumb { cursor: pointer; }
+.sb-crumb:hover { color: var(--text-accent); text-decoration: underline; }
+
+/* 随机漫步：答完收走，后面的往上顶 */
+.sb-card.sb-walk { overflow: hidden; transition: height .25s ease, opacity .2s ease, margin .25s ease, padding .25s ease; }
+.sb-card.sb-walk.is-leaving { opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }

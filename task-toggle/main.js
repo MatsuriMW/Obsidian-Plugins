@@ -3,6 +3,8 @@
 //   · DOING 记下开始时间，DONE 自动写成「开始-现在」的时间段 —— 长期项目看板、螺旋日程都能按这个算真实用时
 //   · 复选框条目：[ ] ↔ [x]
 //   · 标题、表格、代码块、分隔线、frontmatter 里不动；选中多行 = 每行各切一次
+// ⌘⇧/ 搁置类状态：PAUSED → SUSPENDED → CANCELLED → FAILED → PAUSED；不管原来是什么状态（TODO / DOING / DONE / 没有）都先切到 PAUSED
+//   · DOING / DONE 留下的时间戳去掉（不然螺旋日程会当成钉了时间的任务）；复选框换成关键字
 const { Plugin } = require("obsidian");
 
 const KW = /^(TODO|DOING|DONE|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|CANCELED|CANCELLED|FAILED|SUSPENDED)(?=\s|$)\s*/;
@@ -34,6 +36,24 @@ function nextLine(line) {
   return prefix + "TODO " + body;   // WAITING / CANCELED 等 → 重新开始
 }
 
+const PARK = ["PAUSED", "SUSPENDED", "CANCELLED", "FAILED"];
+
+function parkLine(line) {
+  const m = line.match(/^(\s*(?:[-*+]|\d+[.)])\s+|\s*)(.*)$/);
+  let [, prefix, rest] = m;
+  rest = rest.replace(/^\[.\]\s*/, "");
+  const st = rest.match(/^\*\*\d{1,2}[:：]\d{2}\*\*\s*/);
+  if (st) { prefix += st[0]; rest = rest.slice(st[0].length); }
+  const k = rest.match(KW);
+  let kw = k ? k[1] : null, body = k ? rest.slice(k[0].length) : rest;
+  if (kw === "CANCELED") kw = "CANCELLED";
+  if (kw === "DOING" || kw === "NOW" || kw === "IN-PROGRESS" || kw === "DONE") {
+    body = body.replace(new RegExp("^" + HM + "(?:\\s*[-–~～]\\s*" + HM + ")?\\s*"), "");
+  }
+  const i = PARK.indexOf(kw);
+  return prefix + PARK[(i + 1) % PARK.length] + " " + body;
+}
+
 function skippable(editor, n) {
   const line = editor.getLine(n);
   if (/^\s*(#{1,6}\s|\||```|~~~|\$\$|<)/.test(line)) return true;
@@ -55,8 +75,14 @@ module.exports = class TaskToggle extends Plugin {
       hotkeys: [{ modifiers: ["Mod"], key: "/" }],
       editorCallback: (editor) => this.toggle(editor),
     });
+    this.addCommand({
+      id: "park",
+      name: "切换搁置状态（PAUSED → SUSPENDED → CANCELLED → FAILED）",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "/" }],
+      editorCallback: (editor) => this.toggle(editor, parkLine),
+    });
   }
-  toggle(editor) {
+  toggle(editor, next = nextLine) {
     const lines = new Set();
     for (const s of editor.listSelections()) {
       const a = Math.min(s.anchor.line, s.head.line), b = Math.max(s.anchor.line, s.head.line);
@@ -66,8 +92,8 @@ module.exports = class TaskToggle extends Plugin {
     for (const n of lines) {
       if (skippable(editor, n)) continue;
       const old = editor.getLine(n);
-      if (!old.trim()) { changes.push({ from: { line: n, ch: 0 }, to: { line: n, ch: old.length }, text: old + "TODO " }); delta.set(n, 5); continue; }
-      const nw = nextLine(old);
+      if (!old.trim()) { const kw = next === nextLine ? "TODO " : "PAUSED "; changes.push({ from: { line: n, ch: 0 }, to: { line: n, ch: old.length }, text: old + kw }); delta.set(n, kw.length); continue; }
+      const nw = next(old);
       if (nw === old) continue;
       changes.push({ from: { line: n, ch: 0 }, to: { line: n, ch: old.length }, text: nw });
       delta.set(n, nw.length - old.length);

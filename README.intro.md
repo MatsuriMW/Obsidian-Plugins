@@ -14,9 +14,9 @@
 
 ### 知识库与写作
 
-- **第二大脑**（[`second-brain`](second-brain)）：每日回顾（那年今日 / 随机旧块 / 孤岛笔记）；写作模式按光标所在段落实时找库里意思相近的块（本机 Ollama 向量 + BM25 混合）；每周生成库周报。
+- **第二大脑**（[`second-brain`](second-brain)）：跑在本机的语义检索层（本地向量模型 EmbeddingGemma + BM25 混合，约 5.8 万块），把写作、LLM Wiki、Anki 复习连起来：写作模式跟着光标实时找库里意思相近的块，Wiki 条目单列、引用落到原笔记；替 LLM Wiki 按意思挑出待摄入的块、找回失效的块链接；每日回顾从卡片 / 挖空 / Wiki 里随机漫步，Anki 到期卡优先，作答直接写进 Anki；每周生成库周报。[用法和原理 →](second-brain/README.md)
 - **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：目标是提供和 Logseq / Roam Research 一样的反链面板体验，以及比 Logseq 更好的导出功能。反链以块为单位、按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文（⌘点跳原文、Shift 点侧栏打开），点块就地编辑；页面按关系紧密度排，日记按月 / 按年折叠，可以按共现页面筛选和分组。导出 PDF 时可以把「链接到当前文件」的全部内容一起带上，并选字体、字号、强调色。[完整说明 →](backlink-defaults/README.md)
-- **LLM Wiki**（[`llm-wiki`](llm-wiki)）：左侧栏的 Wiki 面板，按主题列页面、提示哪些新笔记还没摄入，一键让本机 Claude 摄入或回答问题。
+- **LLM Wiki**（[`llm-wiki`](llm-wiki)）：仿 Karpathy 的 LLM Wiki，让本机 Claude 把散在日记和笔记里的内容整理成带出处块链接的主题条目。左侧栏面板按主题列页面；待摄入的新材料借第二大脑按意思找、精确到块，只把相关的块交给 Claude；体检能在本地找回失效的块链接；一键提问、新开主题、补条目。
 - **Outline Block**（[`outline-block`](outline-block)）：⌘⌥L 把一段长文整理成层级列表并加双链，层级按反链面板的逻辑来定；先预览再替换。
 - **块引用增强**（[`block-ref-plus`](block-ref-plus)）：仿思源，`[[页#^id]]` 显示被引用块的当前内容，被引用的块旁边显示引用次数。
 

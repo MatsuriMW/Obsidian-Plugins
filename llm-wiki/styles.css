@@ -53,3 +53,8 @@
 .wiki-kind.is-ingest, .wiki-kind.is-create { color: var(--color-green); }
 .wiki-kind.is-ask { color: var(--color-blue); }
 .wiki-kind.is-lint, .wiki-kind.is-fix { color: var(--color-orange); }
+
+/* 新材料按块列出 */
+.wiki-row.wiki-block { padding-left: 20px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.wiki-meta.is-sem { color: var(--text-accent); }
+.wiki-block-more { padding: 0 6px 2px 20px; }
