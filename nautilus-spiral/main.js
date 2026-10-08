@@ -371,6 +371,9 @@ function schedule(items, cfg, now, dayRel, bounds = {}) {
 
 const pad = (n) => String(n).padStart(2, "0");
 const clock = (t) => `${pad(Math.floor(t / 60) % 24)}:${pad(Math.round(t % 60))}`;
+// 第二大脑每日回顾记进日记的复习：「DONE 14:10-14:12 复习卡片 23 张（…）」。螺旋上画成青色，顶部汇总张数和用时
+const REVIEW_RE = /^复习卡片\s*(\d+)\s*张/;
+const isReview = (t) => t.kind === "task" && t.state === "done" && REVIEW_RE.test(t.label || "");
 function dur(m) {
   m = Math.round(m);
   const h = Math.floor(m / 60), r = m % 60;
@@ -988,6 +991,14 @@ class SpiralView extends ItemView {
         models && `模型：${models}`,
       ].filter(Boolean).join("\n") } });
     }
+    // 🃏 复习卡片（第二大脑的每日回顾记进日记的，每张按「复习用时」秒算）
+    const reviews = items.filter(isReview);
+    if (reviews.length) {
+      const n = reviews.reduce((k, t) => k + +(REVIEW_RE.exec(t.label) || [0, 0])[1], 0);
+      const m = reviews.reduce((k, t) => k + (t.dur || 0), 0);
+      cap.createDiv({ cls: "naut-review-line", text: `🃏 复习 ${n} 张 · ${dur(m)}`,
+        attr: { title: "第二大脑每日回顾里复习的卡片，每张按 5 秒算（第二大脑设置「复习用时」），螺旋上的青色段" } });
+    }
     // 🎮 游戏时间（插件每分钟看一眼在不在玩，记在 game-log.json）
     const games = (gameLog && gameLog.days[dayKey]) || [];
     if (games.length) {
@@ -1079,7 +1090,7 @@ class SpiralView extends ItemView {
       p.addEventListener("click", () => this.plugin.openItem(file, item));
     };
     for (const e of items.filter((i) => i.kind === "event")) drawSeg(e.start, e.end, e.state === "done" ? "naut-event naut-done-event" : e.prio ? "naut-prio" : "naut-event", e);
-    for (const t of items.filter((i) => i.kind === "task" && i.state === "done")) for (const [a, b] of t.segments) drawSeg(a, b, "naut-done", t);
+    for (const t of items.filter((i) => i.kind === "task" && i.state === "done")) for (const [a, b] of t.segments) drawSeg(a, b, isReview(t) ? "naut-done naut-review" : "naut-done", t);
     // 没做完的：做过的几段画淡一点，后面排的画实的
     for (const t of plan.queue) t.segments.forEach(([a, b], i) => drawSeg(a, b, (t.prio ? "naut-prio" : "naut-task") + (i < t.workedN ? " naut-worked" : ""), t));
     for (const t of plan.suspended) for (const [a, b] of t.worked || []) drawSeg(a, b, "naut-task naut-worked", t);
@@ -1184,7 +1195,7 @@ class SpiralView extends ItemView {
     section("做过 · 已挪走", orphans.map((o) => ({ item: o, cls: "is-done", time: `${clock(o.segs[0][0])}–${clock(o.segs.at(-1)[1])}`, dur: dur(o.segs.reduce((n, [a, b]) => n + b - a, 0)) })));
     const doneTasks = items.filter((i) => i.kind === "task" && i.state === "done").sort((a, b) => (a.doneAt ?? 1e9) - (b.doneAt ?? 1e9));
     section(`已完成 ${doneTasks.length}`, doneTasks.map((t) => ({
-      item: t, cls: "is-done",
+      item: t, cls: isReview(t) ? "is-done is-review" : "is-done",
       time: t.actual ? `${clock(t.actual[0])}–${clock(t.actual[1])}` : t.doneAt != null ? clock(t.doneAt) : "—",
       dur: dur(t.dur),
     })));

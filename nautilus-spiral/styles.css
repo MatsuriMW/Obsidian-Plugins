@@ -126,3 +126,9 @@
 .naut-kbd { flex: none; font-size: var(--font-ui-smaller); color: var(--text-muted); }
 .naut-ai-more { margin-top: 8px; }
 .naut-ai-more > summary { cursor: pointer; color: var(--text-muted); font-size: var(--font-ui-small); }
+
+/* 复习卡片（第二大脑每日回顾记进日记的）：青色 */
+.naut-root { --naut-review: #39c5cf; }
+.naut-seg.naut-review { stroke: var(--naut-review); }
+.naut-row.is-review { border-left-color: var(--naut-review); }
+.naut-review-line { font-size: var(--font-ui-smaller); color: var(--naut-review); margin-top: 2px; cursor: help; }

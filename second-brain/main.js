@@ -662,6 +662,8 @@ class ReviewView extends ItemView {
     getViewType() { return VIEW_REVIEW; }
     getDisplayText() { return "每日回顾"; }
     getIcon() { return "history"; }
+    // 关掉每日回顾：不等 3 分钟，立刻让 Anki 同步、把这一轮复习记进日记
+    async onClose() { this.plugin.reviewClosed(); }
     async onOpen() {
         this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt));
         await this.render();
@@ -1394,9 +1396,10 @@ module.exports = class SecondBrain extends Plugin {
         new Notice(frag, 10000);
         return true;
     }
-    // ----- 复习计时：记进今天的日记，螺旋日程把它当「实际花在这段」画出来 -----
-    // 一轮 = 第一次揭开 / 作答到最后一次；最后一次操作 3 分钟后这一轮算结束，写一行
-    //   DONE 14:00-14:12 复习卡片 23 张（作答 18 · 重来 2 · 只看 5）
+    // ----- 复习计时：记进今天的日记，螺旋日程把它当「实际花在这段」画出来（青色） -----
+    // 一轮 = 第一次揭开 / 作答到最后一次；最后一次操作 3 分钟后（或关掉每日回顾时）这一轮算结束，写一行
+    //   DONE 14:10-14:12 复习卡片 23 张（作答 18 · 重来 2 · 只看 5）
+    // 用时不按钟表算，按张数 × 每张秒数（设置「复习用时（秒）」，默认 5 秒，和写进 Anki 的一样），这一段结束在最后一次操作，不足一分钟按一分钟
     // 插在今天日记属性区后面的第一行。10 分钟内又接着复习，就延长上一行，不另起
     // st：这张卡的状态；kind = look（揭开）/ answer（作答）。先揭开再作答的卡只算一次作答
     reviewTick(st, kind, ease) {
@@ -1411,6 +1414,10 @@ module.exports = class SecondBrain extends Plugin {
         s.end = Date.now();
         clearTimeout(this.reviewTimer);
         this.reviewTimer = setTimeout(() => this.flushReview(), 3 * 60 * 1000);
+    }
+    reviewClosed() {
+        if (this.syncTimer) this.ankiSync();
+        if (this.reviewTimer) this.flushReview();
     }
     // 日记路径和「今天」跟螺旋日程一致（凌晨分界前算前一天）；螺旋日程没装就用第二大脑自己的日记文件夹
     reviewJournalPath(t) {
@@ -1430,8 +1437,11 @@ module.exports = class SecondBrain extends Plugin {
         const last = this.lastReview;
         const merge = last && last.path === path && s.start - last.end < 10 * 60 * 1000;
         const hm = (t) => window.moment(t).format("HH:mm");
+        const per = Math.max(1, Number(this.settings.ankiSeconds) || 5);
         const lineOf = (x) => {
-            const endT = Math.max(x.end, x.start + 60 * 1000);   // 至少一分钟，螺旋上才画得出来
+            const mins = Math.max(1, Math.round((x.answer + x.look) * per / 60));   // 至少一分钟，螺旋上才画得出来
+            const endT = x.end;
+            x = { ...x, start: endT - mins * 60 * 1000 };
             const parts = [x.answer ? `作答 ${x.answer}` : "", x.again ? `重来 ${x.again}` : "", x.look ? `只看 ${x.look}` : ""].filter(Boolean);
             return `- DONE ${hm(x.start)}-${hm(endT)} 复习卡片 ${x.answer + x.look} 张（${parts.join(" · ")}）`;
         };
@@ -1900,8 +1910,8 @@ class SBSettings extends PluginSettingTab {
         tog("没挂双链的外文挖空也算语言类", "挖掉的全是英文生词 / 日文、或整句是英文句子的挖空", "langGuess");
         new Setting(c).setName("Anki").setHeading();
         tog("随机漫步里复习 Anki 卡片", "卡片 / 挖空揭开后可以按「重来 / 困难 / 良好 / 简单」作答，直接写进 Anki 的复习记录（要 Anki 开着、装了 AnkiConnect）。没到期的卡只能看", "ankiReview");
-        tog("复习计时记进日记", "每日回顾里一轮复习（最后一次操作 3 分钟后算结束）在今天日记顶部记一行「DONE 14:00-14:12 复习卡片 N 张」，螺旋日程按实际用时画出来；10 分钟内接着复习就延长那一行", "reviewLog");
-        tog("答完自动同步 Anki", "最后一次作答 3 分钟后让 Anki 同步一次（AnkiWeb），手机上马上能看到。要在 Anki 里登录过 AnkiWeb", "ankiAutoSync");
+        tog("复习计时记进日记", "每日回顾里一轮复习（最后一次操作 3 分钟后，或关掉每日回顾时算结束）在今天日记顶部记一行「DONE 14:10-14:12 复习卡片 N 张」，用时按每张「复习用时（秒）」算，螺旋日程用青色画出来；10 分钟内接着复习就延长那一行", "reviewLog");
+        tog("答完自动同步 Anki", "最后一次作答 3 分钟后（或关掉每日回顾时）让 Anki 同步一次（AnkiWeb），手机上马上能看到。要在 Anki 里登录过 AnkiWeb", "ankiAutoSync");
         text("AnkiConnect 地址", "", "ankiUrl");
         num("复习用时（秒）", "ankiSeconds");
         new Setting(c).setName("作答反馈").setHeading();
