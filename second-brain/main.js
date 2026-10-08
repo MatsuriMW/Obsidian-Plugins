@@ -520,12 +520,42 @@ class ReviewView extends ItemView {
     getViewType() { return VIEW_REVIEW; }
     getDisplayText() { return "每日回顾"; }
     getIcon() { return "history"; }
-    async onOpen() { await this.render(); }
+    async onOpen() {
+        this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt));
+        await this.render();
+    }
+    // 键盘作答：点一下卡片选中它，Space 揭开，1 / 2 / 3 / 4 = 重来 / 困难 / 良好 / 简单；↑↓ 换一张。只在这个面板是当前焦点时生效
+    onKey(evt) {
+        if (this.app.workspace.getActiveViewOfType(ReviewView) !== this) return;
+        if (evt.metaKey || evt.ctrlKey || evt.altKey || evt.isComposing) return;
+        if (evt.target instanceof HTMLElement && evt.target.closest("input, textarea, select, [contenteditable='true']")) return;
+        const cards = [...this.contentEl.querySelectorAll(".sb-walk:not(.is-leaving)")];
+        const c = this.selected?.isConnected && !this.selected.hasClass("is-leaving") ? this.selected : null;
+        if (evt.key === "ArrowDown" || evt.key === "ArrowUp") {
+            if (!cards.length) return;
+            evt.preventDefault();
+            const i = c ? cards.indexOf(c) + (evt.key === "ArrowDown" ? 1 : -1) : 0;
+            this.select(cards[Math.max(0, Math.min(cards.length - 1, i))], true);
+            return;
+        }
+        if (!c) return;
+        const btn = evt.key === " " ? c.querySelector(".sb-reveal") : /^[1-4]$/.test(evt.key) ? c.querySelector(`.sb-ease.is-${evt.key}`) : null;
+        if (evt.key === " " || btn) evt.preventDefault();   // 选着卡片时 Space 不滚动面板
+        if (btn && !btn.disabled) btn.click();
+    }
+    select(c, scroll) {
+        if (this.selected && this.selected !== c) this.selected.removeClass("is-selected");
+        this.selected = c || null;
+        if (!c) return;
+        c.addClass("is-selected");
+        if (scroll) c.scrollIntoView({ block: "nearest" });
+    }
     async render() {
         // 渲染是异步的，连着触发两次会交错、叠出两份：每次编号，等完异步回来发现有更新的一次就不再往面板里写
         const seq = (this.renderSeq = (this.renderSeq || 0) + 1);
         const stale = () => seq !== this.renderSeq;
-        const el = this.contentEl; el.empty(); el.addClass("sb-view");
+        const el = this.contentEl; el.empty(); el.addClass("sb-view", "sb-review");
+        this.selected = null;
         const today = M().format("YYYY-MM-DD");
         const head = el.createDiv({ cls: "sb-head" });
         head.createEl("b", { text: `🗓 每日回顾 · ${today}` });
@@ -552,7 +582,8 @@ class ReviewView extends ItemView {
         const body = c.createDiv({ cls: "sb-text" });
         const t = plain(text);
         body.setText(t.length > 220 ? t.slice(0, 219) + "…" : t);
-        c.onclick = (evt) => this.plugin.openAt(file, line, evt);
+        // 只有 ⌘ 点击才打开原文：平时点、拖着选文字都不跳
+        c.onclick = (evt) => { if (Keymap.isModEvent(evt)) this.plugin.openAt(file, line, evt); };
         c.addEventListener("mouseover", (evt) => this.app.workspace.trigger("hover-link", { event: evt, source: VIEW_REVIEW, hoverParent: this, targetEl: c, linktext: file.path, state: { scroll: line } }));
         return c;
     }
@@ -596,10 +627,16 @@ class ReviewView extends ItemView {
         requestAnimationFrame(() => { c.style.height = "0px"; });
         setTimeout(() => {
             const box = c.parentElement;
+            const wasSel = this.selected === c, at = box ? [...box.querySelectorAll(".sb-walk")].indexOf(c) : -1;
             c.remove();
             const next = box === this.walkBox ? this.walkQueue?.shift() : null;
             if (next) this.walkCard(box, next);
             else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "这一批做完了，点 ↻ 再来一批", cls: "sb-hint" });
+            // 用键盘作答时：选中顶上来的那张，接着按 Space / 1-4
+            if (wasSel) {
+                const rest = box ? [...box.querySelectorAll(".sb-walk:not(.is-leaving)")] : [];
+                this.select(rest[Math.min(at, rest.length - 1)], true);
+            }
         }, 260);
     }
     walkCard(parent, it) {
@@ -609,17 +646,17 @@ class ReviewView extends ItemView {
         const jd = journalDate(it.file.basename);
         const where = jd ? jd.format("YYYY-MM-DD") : it.file.basename.replace(/（wiki）$/, "");
         meta.createEl("span", { text: `${{ card: "🃏 卡片", cloze: "✂️ 挖空", wiki: "📚 Wiki" }[it.kind]} · ${where}` });
-        // 母块：包着这张卡的各层，从外到内；点哪一层跳到哪一层
+        // 母块：包着这张卡的各层，从外到内；⌘ 点哪一层跳到哪一层
         if (it.ctx?.length) {
             const bc = c.createDiv({ cls: "sb-crumbs" });
             it.ctx.forEach((x, i) => {
                 if (i) bc.createSpan({ cls: "sb-crumb-sep", text: " › " });
                 const t = plain(x.text);
                 const a = bc.createSpan({ cls: "sb-crumb", text: t.length > 40 ? t.slice(0, 39) + "…" : t, attr: { "aria-label": t.length > 40 ? t : "" } });
-                a.onclick = (evt) => { evt.stopPropagation(); p.openAt(it.file, x.line, evt); };
+                a.onclick = (evt) => { evt.stopPropagation(); if (Keymap.isModEvent(evt)) p.openAt(it.file, x.line, evt); };
             });
         }
-        // 按 Markdown 渲染（图片、加粗、链接、列表都正常显示）；点里面的双链跳过去，点别处打开原文
+        // 按 Markdown 渲染（图片、加粗、链接、列表都正常显示）；点里面的双链跳过去，⌘ 点别处打开原文
         const body = c.createDiv({ cls: "sb-text sb-md markdown-rendered" });
         body.addEventListener("click", (evt) => {
             const a = evt.target.closest("a.internal-link");
@@ -644,11 +681,13 @@ class ReviewView extends ItemView {
             if (st.reviewable) this.answerButtons(row, anki, st);
         };
         if (hiddenOf(null) !== full) {
-            const b = row.createEl("button", { text: "👁 揭开" });
+            const b = row.createEl("button", { text: "👁 揭开", cls: "sb-reveal", attr: { "aria-label": "选中卡片后按 Space" } });
             b.onclick = (evt) => { evt.stopPropagation(); reveal(); };
         } else st.revealed = true;
         if (anki) this.fillAnki(it, anki, row, st, () => { if (!st.revealed && it.kind === "cloze" && st.target) show(hiddenOf(st.target)); });
-        c.onclick = (evt) => p.openAt(it.file, it.line, evt);
+        // 点一下（包括点按钮）= 选中，好用键盘作答；只有 ⌘ 点击才打开原文，平时点、拖着选文字都不跳
+        c.addEventListener("mousedown", () => this.select(c));
+        c.onclick = (evt) => { if (Keymap.isModEvent(evt)) p.openAt(it.file, it.line, evt); };
         // 右键：不再作为卡片（只去掉 #card / 挖空符号，文字留着）
         if (it.kind !== "wiki") c.addEventListener("contextmenu", (evt) => {
             evt.preventDefault(); evt.stopPropagation();
@@ -1341,9 +1380,38 @@ module.exports = class SecondBrain extends Plugin {
         return this.index;
     }
     async openAt(file, line, evt) {
-        // 写作模式下默认开新标签，免得把正在写的那篇换掉
-        const leaf = this.app.workspace.getLeaf(evt && Keymap.isModEvent(evt) ? Keymap.isModEvent(evt) : "tab");
-        await leaf.openFile(file, { eState: { line } });
+        const ws = this.app.workspace;
+        const mod = evt && Keymap.isModEvent(evt);
+        // 这篇已经在主区开着：切过去定位，不再开一个新标签（⌘⌥ 拆分 / 新窗口照旧另开）
+        let leaf = mod === "split" || mod === "window" ? null : ws.getLeavesOfType("markdown").find((l) => {
+            const root = l.getRoot();
+            return root !== ws.leftSplit && root !== ws.rightSplit && (l.view?.file?.path || l.getViewState().state?.file) === file.path;
+        });
+        if (leaf) {
+            await leaf.loadIfDeferred?.();
+            ws.setActiveLeaf(leaf, { focus: true });
+            await ws.revealLeaf(leaf);
+            leaf.view.setEphemeralState?.({ line });
+        } else {
+            // 默认开新标签，免得把正在写 / 正在看的那篇换掉
+            leaf = ws.getLeaf(mod || "tab");
+            await leaf.openFile(file, { eState: { line } });
+        }
+        await this.settleScroll(leaf.view, line);
+    }
+    // 阅读视图是边滚边渲染的：大文件第一次打开，前面段落的高度还是估的，一次滚不到位（以前要点第二次才对）。
+    // 滚完看顶上是不是那一行，不是就再定位一次，直到对上或者滚不动了（快到文末时顶不上去）
+    async settleScroll(view, line) {
+        if (view?.getMode?.() !== "preview") return;
+        let last;
+        for (let i = 0; i < 6; i++) {
+            await sleep(i ? 120 : 60);
+            const at = view.currentMode?.getScroll?.();
+            if (at == null) continue;
+            if (Math.abs(at - line) < 1 || at === last) return;
+            last = at;
+            view.setEphemeralState({ line });
+        }
     }
     async openReview(reveal) {
         let leaf = this.app.workspace.getLeavesOfType(VIEW_REVIEW)[0];

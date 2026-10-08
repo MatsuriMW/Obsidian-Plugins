@@ -52,3 +52,8 @@
 /* 随机漫步：答完收走，后面的往上顶 */
 .sb-card.sb-walk { overflow: hidden; transition: height .25s ease, opacity .2s ease, margin .25s ease, padding .25s ease; }
 .sb-card.sb-walk.is-leaving { opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
+
+/* 每日回顾：只有 ⌘ 点击才跳原文，平时是选文字的光标；点一下选中一张，键盘作答（Space 揭开、1-4 作答） */
+.sb-review .sb-card { cursor: auto; user-select: text; }
+.sb-review .sb-card button { cursor: pointer; }
+.sb-card.sb-walk.is-selected { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }

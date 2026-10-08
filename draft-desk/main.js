@@ -262,9 +262,9 @@ const NAMES = Object.fromEntries(GROUPS.flatMap((g) => g.items));
 // 改写预设：风格提示词 + 要求
 const REWRITE = {
     expand: { style: "form", ask: "按风格提示词把它扩写、补充：说得简略的地方展开，补上过渡、必要的解释和例子。范围里以 `> [!补料]` 开头的折叠标注是查来的材料，可以拿来扩写（标注本身原样保留）。不改主张，不加稿子、补料和我的笔记里都没有的事实、数据、引语。" },
-    formal: { style: "书面语风格提示词", ask: "按书面语风格提示词把它改得正式、书面：口语词、重复、语气词换成书面表达，句子更紧凑，意思和论证顺序不变。" },
-    // 文白交杂以书面语风格为底（那份里「文白混杂」一节是从博文里整理的真实用法），另一份只说要往前推多少
-    wenbai: { style: ["书面语风格提示词", "文白交杂风格提示词"], ask: "按风格提示词改写成文白交杂：底子是书面语风格，文言词和文言句式自然地长在白话里，放在下判断、转折、收束的地方，不要处处都文。意思和论证顺序不变。" },
+    formal: { style: "文章稿风格提示词", ask: "按文章稿风格提示词把它改得正式、书面：口语词、重复、语气词换成书面表达，句子更紧凑，意思和论证顺序不变。" },
+    // 文白交杂以文章稿总章为底（总章「用词」一节的文白混杂是从博文里整理的真实用法），另一份只说要往前推多少
+    wenbai: { style: ["文章稿风格提示词", "文白交杂风格提示词"], ask: "按风格提示词改写成文白交杂：底子是文章稿风格，文言词和文言句式自然地长在白话里，放在下判断、转折、收束的地方，不要处处都文。意思和论证顺序不变。" },
     join: { style: "form", ask: "把范围里的列表块（母块、子块的层级）改写成连贯的整段文字：每个信息点都保留、顺序不变，可以补连接词和过渡，不加新观点。范围里本来就不是列表的部分原样保留。" },
 };
 const IRON_RULES = [
@@ -345,12 +345,10 @@ module.exports = class DraftDesk extends Plugin {
         return this.privateNames().some((n) => rel.startsWith(n + "/") || rel.split("/").pop().replace(/\.md$/, "") === n || text.includes(`[[${n}]]`) || text.includes(`[[${n}|`));
     }
     fm(file) { return this.app.metadataCache.getFileCache(file)?.frontmatter || {}; }
-    // 按稿子属性「形式」选风格：口播稿 → 口播稿风格；博客 / 长文 → 书面语风格；其他 → 文稿风格。没有「形式」就看文件名
+    // 风格：《文章稿风格提示词》是总章，所有稿子都读；口播稿再叠加《口播稿风格提示词》（看属性「形式」，没有就看文件名）
     styleForForm(file) {
         const form = [this.fm(file)["形式"]].flat().join(" ") || file.basename;
-        if (/口播/.test(form)) return "口播稿风格提示词";
-        if (/博客|长文|深度/.test(form)) return "书面语风格提示词";
-        return "文稿风格提示词";
+        return /口播|播客|视频|演讲/.test(form) ? ["文章稿风格提示词", "口播稿风格提示词"] : ["文章稿风格提示词"];
     }
     // 选题名：属性「选题」→ 主库选题页里 稿件: 写着这篇的 → 稿名
     topicName(file) {
@@ -524,7 +522,7 @@ module.exports = class DraftDesk extends Plugin {
         const file = view.file, ed = view.editor, sc = this.scope(view);
         if (!sc.text.trim()) throw new Error("范围里没有内容");
         const preset = REWRITE[id];
-        const styles = [preset.style].flat().map((n) => this.readStyle(n === "form" ? this.styleForForm(file) : n));
+        const styles = [preset.style].flat().flatMap((n) => (n === "form" ? this.styleForForm(file) : [n])).map((n) => this.readStyle(n));
         const task = this.beginTask(key, `正在${NAMES[id]}…`);
         const prompt = [
             `下面是我的稿子《${file.basename.replace(/\s+v\d+$/i, "")}》的${sc.whole ? "全文" : "一段"}。${preset.ask}`,
@@ -769,9 +767,9 @@ module.exports = class DraftDesk extends Plugin {
     // ----- ① grill-me 压测 / ② QWS 追问补料：交给 Claudian，不动稿子 -----
     async grill(view) {
         const file = view.file, out = this.outFolder(file);
-        const style = this.readStyle(this.styleForForm(file));
+        const styles = this.styleForForm(file).map((n) => this.readStyle(n).path);
         await this.sendToClaudian([
-            `请用 grill-me 的方式压测我这篇稿子：「${file.path}」（就在当前库里）。风格标准见「${style.path}」。先读完稿子和风格提示词再开始。`,
+            `请用 grill-me 的方式压测我这篇稿子：「${file.path}」（就在当前库里）。风格标准见${styles.map((p) => `「${p}」`).join("和")}（第一份是总章）。先读完稿子和风格提示词再开始。`,
             "",
             "Interview me relentlessly about every aspect of this draft until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer. Ask the questions one at a time.",
             "",
