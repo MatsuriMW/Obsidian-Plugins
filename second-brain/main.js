@@ -36,7 +36,7 @@ const DEFAULTS = {
     ankiReview: true,         // 随机漫步里的卡片 / 挖空可以直接作答，结果写进 Anki（走 AnkiConnect 的 answerCards）
     ankiUrl: "http://127.0.0.1:8765",
     ankiSeconds: 5,           // 写进 Anki 复习记录的用时（秒）；AnkiConnect 要打过补丁才认，原版会忽略、记成约 0 秒
-    ankiAutoSync: true,       // 答完卡自动让 Anki 同步到 AnkiWeb（最后一次作答 30 秒后同步一次）
+    ankiAutoSync: true,       // 答完卡自动让 Anki 同步到 AnkiWeb（最后一次作答 3 分钟后同步一次）
     fxSound: true,            // 作答后播一小段提示音：良好 / 简单往上走，重来 / 困难往下走（Web Audio 现场合成，没有音频文件）
     fxAnim: true,             // 在作答按钮那儿放一小簇烟花：答对是亮色往上炸，答错是暗色往下落
     fxVolume: 55,             // 0-100
@@ -1358,11 +1358,11 @@ module.exports = class SecondBrain extends Plugin {
         return true;
     }
     // ----- Anki（AnkiConnect）-----
-    // 答完卡自动同步：最后一次作答 30 秒后让 Anki 同步一次，连着答不会每张都同步
+    // 答完卡自动同步：最后一次作答 3 分钟后让 Anki 同步一次，连着答不会每张都同步
     scheduleAnkiSync() {
         if (!this.settings.ankiAutoSync) return;
         clearTimeout(this.syncTimer);
-        this.syncTimer = setTimeout(() => this.ankiSync(), 30 * 1000);
+        this.syncTimer = setTimeout(() => this.ankiSync(), 3 * 60 * 1000);
     }
     async ankiSync() {
         clearTimeout(this.syncTimer); this.syncTimer = null;
@@ -1805,7 +1805,7 @@ class SBSettings extends PluginSettingTab {
         tog("没挂双链的外文挖空也算语言类", "挖掉的全是英文生词 / 日文、或整句是英文句子的挖空", "langGuess");
         new Setting(c).setName("Anki").setHeading();
         tog("随机漫步里复习 Anki 卡片", "卡片 / 挖空揭开后可以按「重来 / 困难 / 良好 / 简单」作答，直接写进 Anki 的复习记录（要 Anki 开着、装了 AnkiConnect）。没到期的卡只能看", "ankiReview");
-        tog("答完自动同步 Anki", "最后一次作答 30 秒后让 Anki 同步一次（AnkiWeb），手机上马上能看到。要在 Anki 里登录过 AnkiWeb", "ankiAutoSync");
+        tog("答完自动同步 Anki", "最后一次作答 3 分钟后让 Anki 同步一次（AnkiWeb），手机上马上能看到。要在 Anki 里登录过 AnkiWeb", "ankiAutoSync");
         text("AnkiConnect 地址", "", "ankiUrl");
         num("复习用时（秒）", "ankiSeconds");
         new Setting(c).setName("作答反馈").setHeading();
