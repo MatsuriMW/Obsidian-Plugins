@@ -36,6 +36,9 @@ const DEFAULTS = {
     ankiReview: true,         // 随机漫步里的卡片 / 挖空可以直接作答，结果写进 Anki（走 AnkiConnect 的 answerCards）
     ankiUrl: "http://127.0.0.1:8765",
     ankiSeconds: 5,           // 写进 Anki 复习记录的用时（秒）；AnkiConnect 要打过补丁才认，原版会忽略、记成约 0 秒
+    fxSound: true,            // 作答后播一小段提示音：良好 / 简单往上走，重来 / 困难往下走（Web Audio 现场合成，没有音频文件）
+    fxAnim: true,             // 在作答按钮那儿放一小簇烟花：答对是亮色往上炸，答错是暗色往下落
+    fxVolume: 55,             // 0-100
     lastAutoOpen: "",
     dismissedOrphans: [],
 };
@@ -100,6 +103,111 @@ async function bikeHasOpen(file) {
     const r = await osa(`const b = Application("Bike"); b.running() && b.documents.byName(${JSON.stringify(file.name)}).exists() ? "yes" : "no"`);
     return r === "yes";
 }
+
+// ---------- 作答动效 ----------
+// 提示音用 Web Audio 现场合成（正弦 / 三角波滑音），不用带音频文件：插件就三个文件，拷来拷去不丢东西；音量、音高都是参数，好调
+// 小烟花是一块铺满窗口的 canvas，点完就删：pointer-events 关掉，不挡任何操作
+const FX = {
+    ctx: null,
+    // Electron 里 AudioContext 可能是 suspended（还没交互过），点按钮算一次交互，这里顺手唤醒
+    audio() {
+        const C = window.AudioContext || window.webkitAudioContext;
+        if (!C) return null;
+        if (!this.ctx) this.ctx = new C();
+        if (this.ctx.state === "suspended") this.ctx.resume();
+        return this.ctx;
+    },
+    // 一个音：f0 滑到 f1（Hz），delay 秒后起，dur 秒长；cut 给低通截止，加上就闷一点
+    note(ac, f0, f1, dur, delay, gain, type, cut) {
+        const t0 = ac.currentTime + (delay || 0);
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = type || "sine";
+        o.frequency.setValueAtTime(f0, t0);
+        if (f1 && f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        let node = o;
+        if (cut) { const f = ac.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cut; o.connect(f); node = f; }
+        node.connect(g); g.connect(ac.destination);
+        o.start(t0); o.stop(t0 + dur + 0.05);
+    },
+    // 昂扬：C-E-G-C 往上走的琶音（三角波，亮一点），顶上再挂一个高八度的亮片
+    up(vol) {
+        if (!vol) return;
+        const ac = this.audio(); if (!ac) return;
+        const v = 0.17 * vol;
+        for (const [f, d] of [[523.25, 0], [659.25, 0.07], [783.99, 0.14], [1046.5, 0.21]]) this.note(ac, f, f, 0.32, d, v, "triangle");
+        this.note(ac, 1568, 2093, 0.45, 0.27, v * 0.4, "sine");
+    },
+    // 低沉：往下掉的两声，低通压掉高频，闷着走
+    down(vol) {
+        if (!vol) return;
+        const ac = this.audio(); if (!ac) return;
+        const v = 0.22 * vol;
+        this.note(ac, 196, 165, 0.46, 0, v, "sine", 700);
+        this.note(ac, 131, 110, 0.58, 0.1, v * 0.75, "sine", 480);
+    },
+    // rect 是作答按钮的位置（点击时先取好，按钮随后就被清掉了）；up = 亮色往上炸，否则暗色往下落
+    burst(rect, up) {
+        const cv = document.createElement("canvas");
+        cv.className = "sb-fx";
+        const dpr = window.devicePixelRatio || 1, W = window.innerWidth, H = window.innerHeight;
+        cv.width = W * dpr; cv.height = H * dpr;
+        cv.style.width = W + "px"; cv.style.height = H + "px";
+        document.body.appendChild(cv);
+        const g = cv.getContext("2d");
+        g.scale(dpr, dpr);
+        const ox = rect.left + rect.width / 2, oy = rect.top + rect.height / 2;
+        const cols = up ? ["#ffd166", "#ff9f43", "#ff6b6b", "#1dd1a1", "#48dbfb"] : ["#8b97a6", "#6b7785", "#9a8074", "#7d6b6b"];
+        const N = up ? 26 : 13, ps = [];
+        for (let i = 0; i < N; i++) {
+            // 往上炸：整圈散开；往下落：只在下半圈，慢一点
+            const a = up ? (Math.PI * 2 * i) / N + Math.random() * 0.4 : Math.PI * (0.12 + Math.random() * 0.76);
+            const sp = up ? 1.8 + Math.random() * 3.4 : 0.6 + Math.random() * 1.5;
+            ps.push({
+                x: ox, y: oy,
+                vx: Math.cos(a) * sp,
+                vy: up ? Math.sin(a) * sp : Math.abs(Math.sin(a)) * sp + 0.5,
+                r: up ? 1.6 + Math.random() * 2.2 : 1.2 + Math.random() * 1.5,
+                c: cols[i % cols.length],
+                life: 1, dec: 0.016 + Math.random() * 0.012,   // 约 0.6-1.0 秒散完
+            });
+        }
+        let ring = up ? 0 : -1, last = performance.now();
+        const step = (now) => {
+            const k = Math.min(34, now - last) / 16.7; last = now;
+            g.clearRect(0, 0, W, H);
+            // 往上炸时先有一圈扩散的光环
+            if (ring >= 0) {
+                ring += 2.6 * k;
+                if (ring < 42) {
+                    g.globalAlpha = 0.5 * (1 - ring / 42);
+                    g.strokeStyle = "#ffd166"; g.lineWidth = 2 * (1 - ring / 42) + 0.5;
+                    g.beginPath(); g.arc(ox, oy, ring, 0, 6.2832); g.stroke();
+                } else ring = -1;
+            }
+            let alive = false;
+            for (const p of ps) {
+                if (p.life <= 0) continue;
+                p.x += p.vx * k; p.y += p.vy * k;
+                p.vy += (up ? 0.075 : 0.1) * k;
+                p.vx *= up ? 0.985 : 0.995; p.vy *= 0.985;
+                p.life -= p.dec * k;
+                if (p.life <= 0) continue;
+                alive = true;
+                g.globalAlpha = Math.min(1, p.life) * (up ? 1 : 0.5);
+                g.fillStyle = p.c;
+                g.beginPath(); g.arc(p.x, p.y, p.r * (up ? p.life + 0.3 : 1), 0, 6.2832); g.fill();
+            }
+            if (alive || ring >= 0) requestAnimationFrame(step); else cv.remove();
+        };
+        requestAnimationFrame(step);
+        setTimeout(() => cv.remove(), 2000);   // 兜底：面板被关掉也不会留一块 canvas 在那儿
+    },
+};
+// 设置里的音量（0-100）换成 0-1；没设过算 55
+const fxVol = (s) => { const v = Number(s?.fxVolume); return Number.isFinite(v) ? Math.max(0, Math.min(1, v / 100)) : 0.55; };
 
 // ---------- 语义向量 ----------
 const hashOf = (s) => ncrypto.createHash("sha1").update(s).digest("hex").slice(0, 20);
@@ -631,7 +739,7 @@ class ReviewView extends ItemView {
             c.remove();
             const next = box === this.walkBox ? this.walkQueue?.shift() : null;
             if (next) this.walkCard(box, next);
-            else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "这一批做完了，点 ↻ 再来一批", cls: "sb-hint" });
+            else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "做完了，↻ 再来一批", cls: "sb-hint" });
             // 用键盘作答时：选中顶上来的那张，接着按 Space / 1-4
             if (wasSel) {
                 const rest = box ? [...box.querySelectorAll(".sb-walk:not(.is-leaving)")] : [];
@@ -675,13 +783,13 @@ class ReviewView extends ItemView {
         const st = { revealed: false, card: null, reviewable: false, done: () => this.dismissWalk(c) };
         show(hiddenOf(null));
         const row = c.createDiv({ cls: "sb-actions" });
-        const anki = it.kind === "wiki" || !p.settings.ankiReview ? null : c.createDiv({ cls: "sb-anki", text: "Anki：查询中…" });
+        const anki = it.kind === "wiki" || !p.settings.ankiReview ? null : c.createDiv({ cls: "sb-anki", text: "…" });
         const reveal = () => {
             st.revealed = true; show(full); row.empty();
             if (st.reviewable) this.answerButtons(row, anki, st);
         };
         if (hiddenOf(null) !== full) {
-            const b = row.createEl("button", { text: "👁 揭开", cls: "sb-reveal", attr: { "aria-label": "选中卡片后按 Space" } });
+            const b = row.createEl("button", { text: "👁 揭开", cls: "sb-reveal" });
             b.onclick = (evt) => { evt.stopPropagation(); reveal(); };
         } else st.revealed = true;
         if (anki) this.fillAnki(it, anki, row, st, () => { if (!st.revealed && it.kind === "cloze" && st.target) show(hiddenOf(st.target)); });
@@ -704,17 +812,17 @@ class ReviewView extends ItemView {
         const p = this.plugin;
         el.empty(); el.removeClass("is-off");
         const nid = p.nidOf(it);
-        if (!nid) { el.setText("还没同步到 Anki（先跑一次 Flashcards: Update Anki from vault）"); el.addClass("is-off"); return; }
+        if (!nid) { el.setText("没同步到 Anki"); el.addClass("is-off"); return; }
         let cards;
         try {
             const ids = await p.anki("findCards", { query: `nid:${nid}` });
-            if (!ids.length) { el.setText("Anki 里找不到这张卡（可能已经删了）"); el.addClass("is-off"); return; }
+            if (!ids.length) { el.setText("Anki 里没这张卡"); el.addClass("is-off"); return; }
             cards = await p.anki("cardsInfo", { cards: ids });
             const due = await p.anki("areDue", { cards: ids });
             cards.forEach((x, i) => (x._due = due[i]));
         } catch (e) {
             el.addClass("is-off");
-            el.createSpan({ text: "Anki 没开，打开 Anki 再复习 " });
+            el.createSpan({ text: "Anki 没开 " });
             const open = el.createEl("button", { text: "打开 Anki" });
             open.onclick = (evt) => {
                 evt.stopPropagation();
@@ -729,7 +837,7 @@ class ReviewView extends ItemView {
         st.card = card;
         if (cards.length > 1 && it.kind === "cloze") { st.target = card.ord + 1; onTarget(); }
         const label = await p.ankiState(card);
-        el.setText(`Anki：${label}`);
+        el.setText(label);
         st.reviewable = card.queue === 0 || (card.queue > 0 && card._due);
         if (!st.reviewable) el.addClass("is-off");
         if (st.reviewable && st.revealed) { row.empty(); this.answerButtons(row, el, st); }
@@ -740,6 +848,7 @@ class ReviewView extends ItemView {
             const b = row.createEl("button", { text, cls: `sb-ease is-${ease}` });
             b.onclick = async (evt) => {
                 evt.stopPropagation();
+                const rect = b.getBoundingClientRect();   // 先取位置：按钮马上要被清掉，烟花得知道在哪儿炸
                 row.querySelectorAll("button").forEach((x) => (x.disabled = true));
                 try {
                     const ok = await p.anki("answerCards", { answers: [{ cardId: st.card.cardId, ease, duration: Number(p.settings.ankiSeconds) || 0 }] });
@@ -748,14 +857,18 @@ class ReviewView extends ItemView {
                     p.dueCache = null;
                     row.empty();
                     el.removeClass("is-off"); el.addClass("is-done");
-                    el.setText(`✓ 已记入 Anki（${text}）· ${after.queue === 2 ? `下次 ${after.interval} 天后` : "学习中，几分钟后再出现"}`);
+                    el.setText(after.queue === 2 ? `✓ ${after.interval} 天后` : "✓ 一会儿再来");
+                    // 答对了放小烟花 + 昂扬的提示音；答错了不用烟花，只给一记低沉的
+                    const good = ease >= 3;
+                    if (p.settings.fxAnim) FX.burst(rect, good);
+                    if (p.settings.fxSound) good ? FX.up(fxVol(p.settings)) : FX.down(fxVol(p.settings));
                     setTimeout(() => st.done?.(), 900);   // 让人看一眼结果，再收走
                     // 核对用时有没有记上：AnkiConnect 从 AnkiWeb 自动更新后，本地补丁会被覆盖，用时又变回约 0 秒
                     if (Number(p.settings.ankiSeconds) > 0) {
                         try {
                             const rv = (await p.anki("getReviewsOfCards", { cards: [st.card.cardId] }))?.[String(st.card.cardId)] || [];
                             const last = rv.reduce((m, x) => (!m || x.id > m.id ? x : m), null);
-                            if (last && last.time < 1000) el.setText(el.getText() + " · ⚠️ 用时没记上（AnkiConnect 更新后补丁没了，让 Claude 重新打一次）");
+                            if (last && last.time < 1000) el.setText(el.getText() + " · ⚠️ 用时没记上（AnkiConnect 补丁掉了）");
                         } catch (e) { /* 查不到就算了 */ }
                     }
                 } catch (e) {
@@ -769,7 +882,7 @@ class ReviewView extends ItemView {
     async renderWiki(el, today, stale = () => false) {
         const items = await this.plugin.wikiReviewItems();
         if (!items.length || stale()) return;
-        const s = this.section(el, "📚 Wiki 回看", "存疑 · 冲突 · 你的判断 · 没回答的问题");
+        const s = this.section(el, "📚 Wiki 回看");
         const rand = rng(today + "#w" + this.shift);
         for (const it of shuffle(items, rand).slice(0, 2)) this.card(s, it.file, it.line, it.text, `📚 ${it.page} · ${it.kind}`);
     }
@@ -777,7 +890,7 @@ class ReviewView extends ItemView {
     async renderOrphans(el, today) {
         const n = this.plugin.settings.orphanCount;
         const orphans = this.plugin.orphans();
-        const s = this.section(el, "🏝 孤岛笔记", `共 ${orphans.length} 篇没人链接`);
+        const s = this.section(el, "🏝 孤岛笔记", `${orphans.length} 篇`);
         const rand = rng(today + "#o" + this.orphanShift);
         for (const f of shuffle(orphans, rand).slice(0, n)) {
             const fm = this.app.metadataCache.getFileCache(f)?.frontmatter || {};
@@ -1258,9 +1371,9 @@ module.exports = class SecondBrain extends Plugin {
     async ankiState(card) {
         if (card.queue === -1) return "已暂停";
         if (card.queue < -1) return "已搁置";
-        if (card.queue === 0) return "新卡 · 揭开后可以作答";
-        if (card._due) return (card.queue === 2 ? "今天到期" : "学习中，到期了") + " · 揭开后可以作答";
-        if (card.queue !== 2) return "学习中，稍后到期";
+        if (card.queue === 0) return "新卡";
+        if (card._due) return card.queue === 2 ? "今天到期" : "学习中";
+        if (card.queue !== 2) return "学习中";
         let lo = 1, hi = Math.max(2, card.interval * 2 + 30), left = null;
         try {
             if ((await this.anki("findCards", { query: `cid:${card.cardId} prop:due<=${hi}` })).length) {
@@ -1268,7 +1381,7 @@ module.exports = class SecondBrain extends Plugin {
                 left = lo;
             }
         } catch (e) { /* 算不出来就不写天数 */ }
-        return `${left != null ? `还有 ${left} 天到期` : "没到期"} · 间隔 ${card.interval} 天 · 复习过 ${card.reps} 次`;
+        return left != null ? `${left} 天后` : `间隔 ${card.interval} 天`;
     }
     // 随机漫步的素材：#card 卡片、==挖空== 所在的列表项（连同子项），和 Wiki 页的顶层条目。全库扫一遍要读文件，结果留 10 分钟
     async walkPool() {
@@ -1654,6 +1767,12 @@ class SBSettings extends PluginSettingTab {
         tog("随机漫步里复习 Anki 卡片", "卡片 / 挖空揭开后可以按「重来 / 困难 / 良好 / 简单」作答，直接写进 Anki 的复习记录（要 Anki 开着、装了 AnkiConnect）。没到期的卡只能看", "ankiReview");
         text("AnkiConnect 地址", "", "ankiUrl");
         num("复习用时（秒）", "ankiSeconds");
+        new Setting(c).setName("作答反馈").setHeading();
+        tog("提示音", "「良好 / 简单」一小段往上走的音，「重来 / 困难」低一点、往下走。Web Audio 现场合成，不带音频文件", "fxSound");
+        tog("小烟花", "在作答按钮那儿炸一小簇：答对亮色往上散，答错暗色往下落", "fxAnim");
+        new Setting(c).setName("音量").setDesc("0 = 静音")
+            .addSlider((sl) => sl.setLimits(0, 100, 5).setValue(Number(s.fxVolume) || 0).setDynamicTooltip().onChange(async (v) => { s.fxVolume = v; await p.saveSettings(); }))
+            .addButton((b) => b.setButtonText("试听").onClick(() => { FX.up(fxVol(s)); setTimeout(() => FX.down(fxVol(s)), 800); }));
         new Setting(c).setName("外部素材库").setDesc("每行一个：库名|绝对路径。写作模式会把那个库里的笔记也当素材（只读）；库名要和 Obsidian 里的库名一致，点卡片才能跳过去").addTextArea((t) => {
             t.setValue(String(s.extraVaults || "")).onChange(async (v) => { s.extraVaults = v; await p.saveSettings(); });
             t.inputEl.rows = 3; t.inputEl.style.width = "100%";

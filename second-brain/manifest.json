@@ -1,7 +1,7 @@
 {
   "id": "second-brain",
   "name": "第二大脑（自用）",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "1.5.0",
   "description": "本机语义检索层（EmbeddingGemma 向量 + BM25），连起写作、LLM Wiki 和 Anki：写作模式实时找相近的块、Wiki 条目单列；替 LLM Wiki 按意思挑待摄入的块；每日回顾从卡片 / 挖空 / Wiki 随机漫步，Anki 到期卡优先、作答写进 Anki；库周报。",
   "author": "马自立",

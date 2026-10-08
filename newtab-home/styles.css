@@ -1,0 +1,102 @@
+.workspace-split.mod-root .empty-state-container > .empty-state-title,
+.workspace-split.mod-root .empty-state-container > .empty-state-action-list { display: none; }
+.workspace-split.mod-root .empty-state-container:has(> .nth-home) { width: 100%; max-width: 640px; padding: 0 24px; }
+
+.nth-c-blue   { --nth: var(--color-blue-rgb); }
+.nth-c-red    { --nth: var(--color-red-rgb); }
+.nth-c-yellow { --nth: var(--color-yellow-rgb); }
+.nth-c-green  { --nth: var(--color-green-rgb); }
+.nth-c-purple { --nth: var(--color-purple-rgb); }
+.nth-c-orange { --nth: var(--color-orange-rgb); }
+
+.nth-home { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+.nth-logo {
+	font-family: "Snell Roundhand", "Apple Chancery", "Savoye LET", cursive;
+	font-style: italic; font-weight: 400; font-size: 4.4em; line-height: 1.2;
+	color: var(--text-normal); margin-bottom: 22px; padding: 0 0.2em; user-select: none;
+}
+
+/* 搜索条：仿 Chrome 新标签页的 Google 搜索框，展开的建议浮在下面的按钮上 */
+.nth-search-wrap { position: relative; width: 100%; height: 48px; margin-bottom: 36px; }
+.nth-search {
+	position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 24px;
+	transition: box-shadow 0.15s, border-color 0.15s;
+}
+.nth-search:hover, .nth-search:focus-within, .nth-search.is-open {
+	border-color: transparent;
+	box-shadow: 0 1px 6px rgba(32, 33, 36, 0.22), 0 2px 14px rgba(0, 0, 0, 0.06);
+}
+.theme-dark .nth-search:hover, .theme-dark .nth-search:focus-within, .theme-dark .nth-search.is-open {
+	background: var(--background-secondary);
+	box-shadow: 0 1px 6px rgba(0, 0, 0, 0.5), 0 2px 14px rgba(0, 0, 0, 0.3);
+}
+.nth-search-bar { display: flex; align-items: center; gap: 12px; height: 46px; padding: 0 20px; cursor: text; }
+.nth-search-icon { display: flex; color: var(--text-faint); }
+.nth-search-icon svg { width: 18px; height: 18px; }
+.nth-search-bar input[type="text"] {
+	flex: 1; height: 100%; padding: 0; margin: 0;
+	border: none; outline: none; box-shadow: none; background: transparent;
+	font-size: var(--font-ui-medium); color: var(--text-normal);
+}
+.nth-search-bar input[type="text"]:focus, .nth-search-bar input[type="text"]:hover { border: none; box-shadow: none; background: transparent; }
+
+.nth-results { display: none; margin: 0 20px; padding: 4px 0 10px; border-top: 1px solid var(--background-modifier-border); }
+.nth-search.is-open .nth-results { display: block; }
+.nth-results-label { padding: 8px 0 4px; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.nth-result {
+	display: flex; align-items: center; gap: 10px;
+	margin: 0 -12px; padding: 7px 12px; border-radius: 10px;
+	cursor: pointer; font-size: var(--font-ui-small);
+}
+.nth-result.is-selected { background: var(--background-modifier-hover); }
+.nth-result-icon { display: flex; flex: none; color: var(--text-faint); }
+.nth-result-icon svg { width: 16px; height: 16px; }
+.nth-result-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-normal); }
+.nth-result-name .suggestion-highlight { color: var(--text-accent); font-weight: 600; background: none; }
+.nth-result-ext { flex: none; padding: 0 6px; border-radius: 6px; font-size: var(--font-ui-smaller); color: var(--text-muted); background: var(--background-modifier-hover); }
+.nth-result-path { flex: 0 10 auto; min-width: 0; margin-left: auto; padding-left: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+.nth-result.is-fulltext .nth-result-icon, .nth-result.is-fulltext .nth-result-name { color: var(--text-accent); }
+
+/* 最近打开：右侧的 × 删掉这一条，最后一行「清除最近打开」全清 */
+.nth-result.is-clear .nth-result-icon, .nth-result.is-clear .nth-result-name { color: var(--text-muted); }
+.nth-result.is-clear:hover .nth-result-icon, .nth-result.is-clear:hover .nth-result-name { color: var(--text-normal); }
+.nth-result-x {
+	display: flex; align-items: center; justify-content: center; flex: none;
+	width: 20px; height: 20px; margin-left: auto; border-radius: 6px;
+	color: var(--text-faint); opacity: 0; transition: opacity 0.12s;
+}
+.nth-result-path ~ .nth-result-x { margin-left: 8px; }
+.nth-result:hover .nth-result-x { opacity: 1; }
+.nth-result-x:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.nth-result-x svg { width: 14px; height: 14px; }
+
+/* 四个按钮：照原生新标签页的胶囊样式，每个一种颜色 */
+.nth-actions { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.nth-action {
+	display: flex; align-items: center; gap: 12px;
+	width: 260px; padding: 8px 20px 8px 9px;
+	border: 1px solid rgba(var(--nth), 0.28);
+	border-radius: 999px;
+	background: rgba(var(--nth), 0.05);
+	color: var(--text-normal); font-size: var(--font-ui-medium);
+	cursor: pointer; user-select: none;
+	transition: background 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+}
+.nth-action:hover { background: rgba(var(--nth), 0.13); border-color: rgba(var(--nth), 0.55); box-shadow: 0 2px 10px rgba(var(--nth), 0.18); }
+.nth-action:active { transform: scale(0.98); }
+.nth-action:focus-visible { outline: 2px solid rgba(var(--nth), 0.7); outline-offset: 2px; }
+.nth-action-icon {
+	display: flex; align-items: center; justify-content: center; flex: none;
+	width: 32px; height: 32px; border-radius: 50%;
+	background: rgba(var(--nth), 0.16); color: rgb(var(--nth));
+}
+.nth-action-icon svg { width: 17px; height: 17px; }
+
+/* LLM Wiki 放在主区域时：结果不限高，页名和摘要不截成一行 */
+.workspace-split.mod-root .wiki-root .wiki-result-body { max-height: none; }
+.workspace-split.mod-root .wiki-root .wiki-page,
+.workspace-split.mod-root .wiki-root .wiki-summary { white-space: normal; overflow: visible; text-overflow: clip; }

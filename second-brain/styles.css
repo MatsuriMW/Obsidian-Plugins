@@ -53,6 +53,12 @@
 .sb-card.sb-walk { overflow: hidden; transition: height .25s ease, opacity .2s ease, margin .25s ease, padding .25s ease; }
 .sb-card.sb-walk.is-leaving { opacity: 0; margin-top: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
 
+/* 作答反馈：小烟花铺在窗口上（pointer-events 关掉，不挡任何操作）；按钮按下去有个回弹 */
+.sb-fx { position: fixed; left: 0; top: 0; pointer-events: none; z-index: 9999; }
+.sb-actions .sb-ease { transition: transform .08s ease, opacity .15s ease; }
+.sb-actions .sb-ease:active { transform: scale(.92); }
+.sb-actions .sb-ease:disabled { opacity: .4; }
+
 /* 每日回顾：只有 ⌘ 点击才跳原文，平时是选文字的光标；点一下选中一张，键盘作答（Space 揭开、1-4 作答） */
 .sb-review .sb-card { cursor: auto; user-select: text; }
 .sb-review .sb-card button { cursor: pointer; }
