@@ -1,6 +1,6 @@
 // 第二大脑（自用）
 //   · 每日回顾：随机漫步（只从 #card 卡片、==挖空==、Wiki 条目里抽）/ Wiki 回看 / 孤岛笔记（右侧栏，每天第一次打开 Obsidian 时自动放一个标签，不抢焦点）
-//   · 写作模式：打开 Claudian + 「相关笔记」面板（按光标所在段落实时找库里相近的块），退出时收起。平时不建索引
+//   · 写作模式：打开 Claudian + 「相关笔记」面板（按光标所在段落实时找库里相近的块），面板上的「🧰 文本工具」在稿子右边分屏开 My Text Tools 工作台；退出时一起收起。平时不建索引
 //     可以把别的库当素材源（设置「外部素材库」）：在稿子库里写，右边列的是主库里的日记和笔记；插入的链接 / 引用会记进稿子的属性「素材」
 //   · 库周报：每周第一次打开时生成 计划与总结/库周报.md（新笔记、长得最多的页、候选建页词、孤岛变化）
 // 相关度 = 语义向量（本机 Ollama 的 embedding 模型，按意思找）+ BM25（中文按字的二元组切，按字面找）混合；Ollama 没开就只用 BM25。
@@ -10,6 +10,7 @@ const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto
 
 const VIEW_REVIEW = "sb-daily-review";
 const VIEW_RELATED = "sb-related";
+const MTT_ID = "my-text-tools", VIEW_MTT = "my-text-tools-view";   // My Text Tools 工作台，收进写作模式里，不单独常驻
 const JOURNAL_RE = /^(\d{4})[_-](\d{1,2})[_-](\d{1,2})$/;
 const REPORT_NOTE = "计划与总结/库周报.md";
 const REPORT_SNAP = "计划与总结/.库周报快照.json";
@@ -829,6 +830,10 @@ class RelatedView extends ItemView {
         const f = this.plugin.writingFile();
         const b1 = t.createEl("button", { text: "🤖 Claudian" });
         b1.onclick = () => this.plugin.openClaudian();
+        if (this.plugin.app.plugins.plugins[MTT_ID]) {
+            const bt = t.createEl("button", { text: "🧰 文本工具" });
+            bt.onclick = () => this.plugin.openTextTools();
+        }
         if (f && this.plugin.isTopic(f)) {
             const b2 = t.createEl("button", { text: "🎤 QWS 采访" });
             b2.onclick = () => this.plugin.runQws(f, "qws");
@@ -950,8 +955,8 @@ module.exports = class SecondBrain extends Plugin {
         this.registerInterval(window.setInterval(() => { if (this.writing) this.relatedViews().forEach((v) => v.update()); }, 1500));
 
         this.app.workspace.onLayoutReady(async () => {
-            // 上次退出时留下的相关笔记面板收掉（写作模式不跨重启保留）
-            this.app.workspace.getLeavesOfType(VIEW_RELATED).forEach((l) => l.detach());
+            // 上次退出时留下的相关笔记面板、文本工具工作台收掉（写作模式不跨重启保留，免得一打开库就冒出来）
+            this.closeWritingPanes();
             const today = M().format("YYYY-MM-DD");
             if (!this.settings.enableReview) return;
             if (this.settings.autoOpenReview && this.settings.lastAutoOpen !== today) {
@@ -1361,11 +1366,11 @@ module.exports = class SecondBrain extends Plugin {
             if (!leaf) { leaf = ws.getRightLeaf(true); await leaf.setViewState({ type: VIEW_RELATED, active: false }); }
             ws.rightSplit?.expand();
             this.statusEl.setText("✍️ 写作模式（点这里退出）"); this.statusEl.show();
-            new Notice("写作模式：已打开 Claudian 和相关笔记");
+            new Notice("写作模式：已打开 Claudian 和相关笔记（文本工具在面板上）");
         } else {
             this.writing = false;
             document.body.removeClass("sb-writing");
-            ws.getLeavesOfType(VIEW_RELATED).forEach((l) => l.detach());
+            this.closeWritingPanes();
             if (this.prevLayout) {
                 if (!this.prevLayout.left) ws.leftSplit?.expand();
                 if (this.prevLayout.right) ws.rightSplit?.collapse();
@@ -1375,6 +1380,24 @@ module.exports = class SecondBrain extends Plugin {
             this.index = null;   // 平时不占内存
             this.lookup = null;  // 写作模式往缓存里追加过向量，查询用的那份哈希表要重读
         }
+    }
+    closeWritingPanes() {
+        [VIEW_RELATED, VIEW_MTT].forEach((t) => this.app.workspace.getLeavesOfType(t).forEach((l) => l.detach()));
+    }
+    // My Text Tools 工作台：在正在写的那篇右边分屏打开，输入框带上这篇（或选中的部分）；已开着就切过去
+    async openTextTools() {
+        const mtt = this.app.plugins.plugins[MTT_ID];
+        if (!mtt) { new Notice("没找到 My Text Tools 插件"); return; }
+        const ws = this.app.workspace, md = this.writingView();
+        let leaf = ws.getLeavesOfType(VIEW_MTT)[0];
+        if (!leaf) {
+            if (md?.leaf) ws.setActiveLeaf(md.leaf, { focus: false });
+            leaf = ws.getLeaf("split", "vertical");
+            await leaf.setViewState({ type: VIEW_MTT, active: true });
+        }
+        await leaf.loadIfDeferred?.();
+        ws.revealLeaf(leaf);
+        if (md?.editor) leaf.view?.updateInput?.(md.editor, md.file);
     }
     async openClaudian() {
         const id = "realclaudian";

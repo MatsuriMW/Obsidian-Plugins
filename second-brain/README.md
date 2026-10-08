@@ -29,6 +29,7 @@ flowchart LR
 ## 写作模式
 
 - 打开要写的那篇，点左侧 ✍️ 或运行命令「写作模式：开 / 关」。会收起左栏，打开 Claudian 和「相关笔记」面板，退出时恢复原样。
+- 面板顶上的「🧰 文本工具」在稿子右边分屏打开 My Text Tools 工作台（输入框带上这篇）。工作台收进写作模式里：左侧栏不再单独放它的图标，退出写作模式时一起关掉；重启 Obsidian 时上次留下的工作台和相关笔记面板也会收掉，不会一打开库就冒出来。
 - 面板跟着光标走：光标所在的列表项（连同子项）或段落就是查询，每 1.5 秒看一眼有没有变。
 - **📚 Wiki 栏**：LLM Wiki 整理好的条目单列在最前，最多 3 条，标着有几条出处。
   - 「↪ 链出处」「❝ 引用」用的是条目后面括号里**原笔记的块链接**，而不是 wiki 页这个二手转述。
@@ -107,4 +108,4 @@ const blocks = await sb.semanticBlocks(files, { 国债: ["国债：国债、美�
 
 - [Ollama](https://ollama.com) + `embeddinggemma` 模型。没开就只按字面找。
 - [AnkiConnect](https://ankiweb.net/shared/info/2055492159)，复习用时要按上面打补丁。不装就只能浏览，不能作答。
-- Claudian（写作模式右上）、`qws-bridge`（选题页上的采访 / grill-me）、`llm-wiki`（Wiki 栏、Wiki 回看、周报 Wiki 一节）都是可选的，没装就不显示对应部分。
+- Claudian（写作模式右上）、My Text Tools（写作模式的「🧰 文本工具」）、`qws-bridge`（选题页上的采访 / grill-me）、`llm-wiki`（Wiki 栏、Wiki 回看、周报 Wiki 一节）都是可选的，没装就不显示对应部分。
