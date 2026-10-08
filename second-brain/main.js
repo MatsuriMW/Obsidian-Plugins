@@ -834,6 +834,8 @@ class RelatedView extends ItemView {
             const bt = t.createEl("button", { text: "🧰 文本工具" });
             bt.onclick = () => this.plugin.openTextTools();
         }
+        const dd = this.plugin.app.plugins.plugins["draft-desk"];
+        if (dd?.renderButtons) dd.renderButtons(t, () => this.plugin.writingView());
         if (f && this.plugin.isTopic(f)) {
             const b2 = t.createEl("button", { text: "🎤 QWS 采访" });
             b2.onclick = () => this.plugin.runQws(f, "qws");
@@ -1048,6 +1050,20 @@ module.exports = class SecondBrain extends Plugin {
             });
         });
         return out;
+    }
+    // ----- 给别的插件用（稿件台：填坑、概念锚点检索）-----
+    // 在外部素材库（比如主库）里找和 query 意思相近的块：[{ vault, rel, line, text, score }]。没开语义 / 连不上 Ollama 就只按字面找
+    // 不在写作模式时借用索引，十分钟没人用就放掉
+    async searchExtra(query, { vault = null, limit = 12, perFile = 2, exclude = null } = {}) {
+        const idx = await this.ensureIndex();
+        if (!this.writing) {
+            clearTimeout(this.idxTimer);
+            this.idxTimer = setTimeout(() => { if (!this.writing) this.index = null; }, 10 * 60 * 1000);
+        }
+        let qvec = null;
+        if (idx.store && idx.store.n) { try { qvec = (await this.embedTexts([String(query).slice(0, 1200)], true))[0]; } catch (e) { /* 连不上 Ollama：只按字面找 */ } }
+        return idx.search(String(query), { limit, perFile, qvec, only: (b) => b.ext && (!vault || b.ext.vault === vault) && !(exclude && exclude(b.ext.rel, b.line)) })
+            .map((b) => ({ vault: b.ext.vault, rel: b.ext.rel, line: b.line, text: b.text, score: b.score }));
     }
     // 插入了哪条素材：记进正在写的这篇的属性「素材」；在稿子库里，再记到主库里挂着这篇稿子的选题页（属性「用到的素材」）
     async recordSource(base, ext) {
