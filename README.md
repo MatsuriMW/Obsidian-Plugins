@@ -1,87 +1,108 @@
 # Obsidian Plugins
 
-马自立自用的 Obsidian 插件，装在主库「马自立」的 `.obsidian/plugins/` 下。大部分是自己从零写的，另外几个是改过的社区插件。
+马自立（[@MatsuriMW](https://github.com/MatsuriMW)）自己写的、以及改过的 Obsidian 插件，一共 30 多个。它们为一件事服务：**把 Obsidian 变成一个以块为单位写东西、能自己整理知识、还能帮你排时间的个人系统。**
 
-插件代码由 `sync.sh` 从库里同步，不要直接改插件目录里的文件。README 也是 `sync.sh` 生成的：上面这段介绍改 `README.intro.md`，下面清单的顺序和分组改 `order.txt`。
+这些插件解决的是我自己每天碰到的问题，分成四块：
 
-## 重点插件
+- **编辑与大纲**：Obsidian 原生的列表编辑和反链比 Logseq / Roam 弱一截，这一组把「块」的体验补回来：整块选中和移动、Roam 式反链面板、块引用显示内容、列表与段落互转。
+- **知识库与 AI**：笔记越记越多，就越难再找到、再用上。这一组在本机建一个语义检索层（笔记不出这台电脑），再让 Claude 把散落的笔记整理成带出处的 Wiki、在写作时推荐相关段落、把卡片复习接进 Anki。
+- **日程与任务**：在日记里用 TODO / DOING / DONE 写任务，插件把它们画成一圈螺旋日程，按预计时长自动排进今天的空档，并记下实际用时。
+- **界面与导航**：Chrome 式标签页分组、可以自定义的新标签页、按插件整理的快捷键总览等，让窗口管理更顺手。
 
-### 日程与任务
+## 推荐度怎么看
 
-- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）：给每一分钟安排一份工作。把今天日记里的事件和待办画成一圈螺旋，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条一眼看出今天还排不排得下，DOING / DONE 另外记下实际用时。也能把 macOS 日历的事件排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。[用法和原理 →](nautilus-spiral/README.md)
-- **任务提醒**（[`nautilus-notify`](nautilus-notify)）：螺旋日程的搭档，用 macOS 通知横幅提醒：快开始的事件、过点没做的待办、做太久的 DOING、排不下的容量预警、下一件该做什么、今日简报和收尾。
-- **Done To Top**（[`done-to-top`](done-to-top)）+ **日记整理**（[`journal-tidy`](journal-tidy)）：顶格任务按 DONE / DOING / TODO 分区归位，写着「明天 / 后天」的整块搬到那天的日记，光标所在块也能用 `/明天` 直接发送到明天的日记；日记整理再把日记里的问句汇总起来，交给本机 Claude 联网查证后写上回答。
+| 推荐度 | 意思 |
+|---|---|
+| ★★★ | 装上就能用，不依赖我的库结构，推荐任何人试试 |
+| ★★ | 好用，但要配合别的工具（Claude Code、Anki、某个社区插件），或者要按一套写法记笔记 |
+| ★ | 和我的库结构、写作流程绑得比较深，更适合参考代码、改成你自己的版本 |
 
-### 知识库与写作
+## 先看这几个
 
-- **第二大脑**（[`second-brain`](second-brain)）：跑在本机的语义检索层（本地向量模型 EmbeddingGemma + BM25 混合，约 5.8 万块），把写作、LLM Wiki、Anki 复习连起来：写作模式跟着光标实时找库里意思相近的块，Wiki 条目单列、引用落到原笔记；替 LLM Wiki 按意思挑出待摄入的块、找回失效的块链接；每日回顾从卡片 / 挖空 / Wiki 里随机漫步，Anki 到期卡优先，作答直接写进 Anki；每周生成库周报。[用法和原理 →](second-brain/README.md)
-- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：目标是提供和 Logseq / Roam Research 一样的反链面板体验，以及比 Logseq 更好的导出功能。反链以块为单位、按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文（⌘点跳原文、Shift 点侧栏打开），点块就地编辑；页面按关系紧密度排，日记按月 / 按年折叠，可以按共现页面筛选和分组。导出 PDF 时可以把「链接到当前文件」的全部内容一起带上，并选字体、字号、强调色。[完整说明 →](backlink-defaults/README.md)
-- **LLM Wiki**（[`llm-wiki`](llm-wiki)）：仿 Karpathy 的 LLM Wiki，让本机 Claude 把散在日记和笔记里的内容整理成带出处块链接的主题条目。左侧栏面板按主题列页面；待摄入的新材料借第二大脑按意思找、精确到块，只把相关的块交给 Claude；体检能在本地找回失效的块链接；一键提问、新开主题、补条目。
-- **Outline Block**（[`outline-block`](outline-block)）：⌘⌥L 把一段长文整理成层级列表并加双链，层级按反链面板的逻辑来定；先预览再替换。
-- **块引用增强**（[`block-ref-plus`](block-ref-plus)）：仿思源，`[[页#^id]]` 显示被引用块的当前内容，被引用的块旁边显示引用次数。
-
-### 界面与操作
-
-- **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）：照 Chrome 做的标签页分组：命名、颜色、折叠、拖色块移动整组、移至新窗口，加上 Chrome 的右键菜单。
-- **书签图标**（[`bookmark-icons`](bookmark-icons)）：书签面板里每个看板换成各自的彩色图标，不再是一排一样的文件图标；笔记属性 `icon` / `icon-color` 可以自己指定。
-- **Palette Enhancements**（[`palette-split-open`](palette-split-open)）：Better Command Palette 文件搜索增强：⌘⌥↵ 右侧拆分打开；文件名搜不到时自动搜正文；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。
-- **快捷键总览**（[`hotkey-atlas`](hotkey-atlas)）：给「设置 → 快捷键」加按插件的聚类和透视：按插件分组，每组显示有几个快捷键、几个改过、几处冲突；按来源（自制 / 改版 / 社区 / 核心）和单个插件筛选；只在某个场景生效的情境快捷键也按插件列出来。
-
-### 改得最多的社区插件
-
-- **Telegram Inbox（自用）**（[`telegram-inbox-local`](telegram-inbox-local)）：发给 Telegram 机器人的消息记进日记。自用补丁：时间按消息发出的时刻记，`done 写稿` 直接把今天没做完的那条改成 DONE，和螺旋日程、Done To Top 配合。
-- **SuperTags（自用）**（[`supertags-local`](supertags-local)）：Tana 式 supertag。改写了处理流程：标签按边界匹配、行内 / 子项字段写进新页、同名笔记不重复建、Bike 开着日记时等它存完再处理。
+- **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换。
+- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）★★★：Obsidian 自带的反链只给你一行上下文，这个面板按块显示整段内容，点面包屑逐级展开，能就地编辑，按关系紧密度排序。导出 PDF 时还能把所有提到这页的内容一起带上。[完整说明 →](backlink-defaults/README.md)
+- **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
+- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
+- **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
 
 ## 全部插件
 
-### 自己做的
+### 编辑与大纲：把 Obsidian 用得像 Logseq / Roam
 
-| 插件 | 版本 | 说明 |
-|---|---|---|
-| **螺旋日程** ([`nautilus-spiral`](nautilus-spiral)) | 0.1.0 | 给每一分钟安排一份工作：把今天日记里的事件和待办画成螺旋日程，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条显示今天排不排得下，DOING / DONE 另记实际用时。可以把 macOS 日历的事件一起排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。 |
-| **第二大脑（自用）** ([`second-brain`](second-brain)) | 0.3.1 | 本机语义检索层（EmbeddingGemma 向量 + BM25），连起写作、LLM Wiki 和 Anki：写作模式实时找相近的块、Wiki 条目单列；替 LLM Wiki 按意思挑待摄入的块；每日回顾从卡片 / 挖空 / Wiki 随机漫步，Anki 到期卡优先、作答写进 Anki；库周报。 |
-| **Backlinks and Export** ([`backlink-defaults`](backlink-defaults)) | 0.2.0 | 反链面板做到和 Logseq / Roam Research 一样，导出比 Logseq 更好。反链：以块为单位按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文，可就地编辑；页面按关系紧密度在前，日记按月 / 按年折叠；共现筛选和分组；「转为链接」后不打断阅读位置。导出 PDF：可附上「链接到当前文件」的全部内容，可选字体、字号、强调色和精致排版。 |
-| **Chrome Tab Groups** ([`chrome-tab-groups`](chrome-tab-groups)) | 1.0.0 | 仿 Chrome 的标签页管理：标签页分组（命名、颜色、折叠、拖色块移动整组、移至新窗口）、右键菜单（在右侧新建、向新拆分视图添加、添加到组、复制标签页）、搜索标签页。 |
-| **LLM Wiki** ([`llm-wiki`](llm-wiki)) | 0.2.0 | 左侧栏的 Wiki 面板：按主题列出 Wiki/ 里的页面；待摄入的新材料借「第二大脑」按意思找、精确到块，只把相关的块交给本机 Claude 摄入；一键提问；本地体检 wiki 规则，失效的块链接在本地找回。 |
-| **Outline Block** ([`outline-block`](outline-block)) | 1.1.0 | ⌘⌥L：把光标所在的那一个长段落块，整理成层级列表并给核心概念加双链，层级按反链面板来定：引出 [[X]] 的那一项，展开讲 X 的内容都挂成它的子项（调用本机 Claude）。⌘⌥⇧L：整篇笔记（或选中的部分）按同一套规则整理，自动按标题/段落分份并行处理再拼回。先预览再替换。 |
-| **Done To Top** ([`done-to-top`](done-to-top)) | 1.3.0 | 按状态把顶格任务块归位：DONE 在最上面、DOING 在中间、TODO 在 DOING 下面，分区之间用「- ---」隔开；一键整理；切换四象限的重要 / 紧急；「发送到明天」把光标所在块移到明天的日记（编辑器里打 /明天 也能叫出来）；「以下全部发送到今天」（⌥2）把光标所在行及以下整段追加到今天的日记，光标在分隔线上就跳过这条线。 |
-| **日记整理** ([`journal-tidy`](journal-tidy)) | 1.1.0 | 手动一键整理日记：任务按 DONE / DOING / TODO 分区；写了 [[菜谱]] 这类 SuperTag 的项下面补上它的字段（如「学会:: 否」）留给你填；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。 |
-| **任务提醒** ([`nautilus-notify`](nautilus-notify)) | 0.1.0 | 用 macOS 通知横幅提醒今天日记里的任务：快开始的事件、过点没做的待办、做太久的 DOING、完成时的祝贺、排不下的容量预警、下一件该做什么、今日简报和收尾提醒。分析全部来自螺旋日程插件。 |
-| **块引用增强** ([`block-ref-plus`](block-ref-plus)) | 0.1.0 | 仿思源：[[页#^id]] 显示被引用块的当前内容（动态锚文本）；被引用的块旁边显示引用次数，点开可跳到引用处。只改显示，不改文件。 |
-| **Palette Enhancements** ([`palette-split-open`](palette-split-open)) | 1.1.0 | Better Command Palette 文件搜索增强：⌘⌥↵ 在右侧拆分打开（最多 3 栏）；文件名没有匹配时改做全库内容搜索，结果直接在面板里选；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索；⌘⇧O / ⌘⇧M / ⌘⇧K 一键只搜 Wiki 条目、书签里的笔记、#card 和挖空卡片。 |
-| **快捷键总览** ([`hotkey-atlas`](hotkey-atlas)) | 0.1.0 | 给「设置 → 快捷键」加按插件的聚类和透视：按插件分组，每组显示有几个快捷键、几个是我改过的、几处冲突，点标题折叠；按来源（自制 / 改版 / 社区 / 核心）和单个插件筛选；写死在插件里、只在某个场景生效的情境快捷键也按插件列出来，可搜索。改快捷键仍用原来的那一套。 |
-| **书签图标** ([`bookmark-icons`](bookmark-icons)) | 0.1.0 | 书签面板里每个笔记换成各自的图标（淡色底小方块），不再都是同一个文件图标；笔记属性 icon / icon-color 可以自己指定。只改显示。 |
-| **追问成稿（QWS / grill-me）** ([`qws-bridge`](qws-bridge)) | 1.0.0 | 把当前笔记和它的全部反链整理成素材包，交给 Claudian 用 QWS 采访或 grill-me 盘问。 |
-| **稿件台** ([`draft-desk`](draft-desk)) | 0.1.0 | 写稿时按步骤调用工具，挂在第二大脑的写作模式面板上，也都能从命令面板调：① 脉络（grill-me 压测、方向发散）② 落实（填坑、概念锚点检索、QWS 补料）④ 扩写（扩写 / 补充、正式化、文白交杂）⑤ 修整（一键规范排版、列表块连成段落）。选中了就只处理选中部分，没选中就处理整篇。 |
-| **List Paste Merge** ([`list-paste-merge`](list-paste-merge)) | 1.0.0 | 在列表项里粘贴列表时，和当前行的列表符号合并，不会多出一个「- 」或「1. 」；缩进跟随当前行，顶层条目改成当前列表的符号并接着编号。 |
-| **看板直达** ([`board-jump`](board-jump)) | 0.1.0 | 一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接 |
-| **编辑体验 Logseq 化** ([`esc-select-block`](esc-select-block)) | 2.3.1 | 仿 Logseq：Esc 选中光标所在的整个列表块（含所有子项；普通段落不算块），选中后 ↑↓ 在列表块之间切换（跳过中间的段落和标题）、⇧↑↓ 扩选、Enter 回到编辑；选中文字后输入成对符号（括号、引号、书名号等，含中文，不分输入法）会把文字包起来而不是替换，连按两次 [ 就是双链；包好后按 Enter 是确认，光标跳到右半边符号后面接着写，不换行；⌘K 在当前块下面顶格插入分割线。 |
-| **任务状态快切** ([`task-toggle`](task-toggle)) | 0.2.0 | ⌘/ 在编辑器里直接切换任务状态（无 → TODO → DOING 时间 → DONE 时间段 → 无），和 Bike 的宏一样；⌘⇧/ 在 PAUSED / SUSPENDED / CANCELLED / FAILED 之间切换（任何状态都能切进来）；不写文件、不等保存，可以连按 |
-| **Close Sidebar Files** ([`close-sidebar-files`](close-sidebar-files)) | 1.0.0 | 一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。 |
-| **看板聚焦** ([`board-zoom`](board-zoom)) | 0.1.0 | 从 DataView 看板点开某一条时，自动用 Bullet 插件 zoom in 聚焦到那个列表块。 |
-| **日记翻页 + 刷新** ([`diary-nav`](diary-nav)) | 0.1.0 | ⌘R 刷新当前页面；在日记里，前进/后退 = 后一天/前一天的日记，其他页面照常前进/后退 |
-| **Hover Outline** ([`hover-outline`](hover-outline)) | 1.0.0 | 仿 Claude Code 对话框左上角的隐藏式目录：编辑区左上角平时只有一列短横线，鼠标移上去展开成目录卡片（当前位置那栏是黑的，其余淡显），点击跳转后那一行停在正中并选中，刚点的那栏 handle 变长，卡片一直开着直到鼠标离开（手机上点一下展开）。目录 = 开头 + 标题（默认到 h3，有 h4 以下时卡片顶上出现层级切换）+ 结尾，每项最多 7 个字；日记按分割线分段，分区规则同 Done To Top 的一键整理（DONE / DOING / TODO / 其余取分割线下第一条）；有 dataview 代码块的笔记不显示。 |
-| **List Outdent Plain** ([`list-outdent-plain`](list-outdent-plain)) | 1.1.0 | ⌘[ 在已经顶格的列表项上再按一次：去掉列表符号（连同复选框），变成一段顶格的普通文字；它下面的子项跟着往前提一级。不是顶格列表项时照常减少缩进。注册成命令，快捷键可以在设置里改。 |
-| **新标签页选项** ([`newtab-home`](newtab-home)) | 0.2.0 | 把 ⌘T 新标签页里原生的「创建新文件 / 打开文件 / 查找最近文件 / 关闭」换成：仿 Chrome 的文件搜索条（↵ 打开，最后一行全文搜索，最近打开可单条删除或一键清除），以及打开任务看板、LLM Wiki（宽屏）、每日回顾、书架（织文阅者），都在这个新标签页里打开，且都能后退回到这个新标签页。 |
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **编辑体验 Logseq 化**<br>[`esc-select-block`](esc-select-block) | 让列表编辑接近 Logseq：Esc 选中整块，↑↓ 在块之间移动；选中文字后输入括号、引号会把文字包起来；⌘K 插分割线；跳到母块、把几块收进一个新母块；块可以在无序列表、有序列表（1. / 4.1 / a.）和普通段落之间转换 | ★★★ | 无（和 Bullet 一起用更顺手） |
+| **Backlinks and Export**<br>[`backlink-defaults`](backlink-defaults) | Logseq / Roam 式反链面板：以块为单位显示，点面包屑逐级展开上下文，可以就地编辑，按关系紧密度排序、按共现页面筛选；导出 PDF 时能把所有反链内容一起带上 | ★★★ | 无 |
+| **块引用增强**<br>[`block-ref-plus`](block-ref-plus) | 块引用显示被引用块的当前内容，被引用的块旁边标出被引用了几次（仿思源笔记） | ★★★ | 无 |
+| **Hover Outline**<br>[`hover-outline`](hover-outline) | 编辑区左上角的隐藏式目录（仿 Claude Code）：平时只有一列短横线，鼠标移上去展开，点一下跳过去并把那一行停在正中 | ★★★ | 无 |
+| **List Paste Merge**<br>[`list-paste-merge`](list-paste-merge) | 在列表里粘贴一段列表时不会多出一层「- 」，缩进和编号自动接上 | ★★★ | 无 |
+| **List Outdent Plain**<br>[`list-outdent-plain`](list-outdent-plain) | 在顶格列表项上再按 ⌘[，它就变成普通段落，子项跟着往前提一级 | ★★★ | 无 |
+| **任务状态快切**<br>[`task-toggle`](task-toggle) | ⌘/ 循环切换 TODO → DOING → DONE，自动写上开始和结束时间；⌘⇧/ 切换暂停、取消等状态 | ★★ | 用 Logseq 式任务关键词 |
+| **Outline Block**<br>[`outline-block`](outline-block) | 一键把一大段文字整理成层级列表并加上双链，先预览再替换 | ★★ | 本机 Claude Code（`claude` 命令行） |
 
-### 改过的社区插件（改动从多到少）
+### 知识库与 AI：本地语义检索、LLM Wiki、复习和写作
 
-| 插件 | 版本 | 说明 |
-|---|---|---|
-| **Telegram Inbox（自用）** ([`telegram-inbox-local`](telegram-inbox-local)) | 1.9.2 | Receive messages from Telegram bot and add them to daily note. |
-| **SuperTags（自用）** ([`supertags-local`](supertags-local)) | 1.3.0-local | Tana 式 supertag：日记里一行带 #标签 → 建成带属性的笔记。自用改版：边界匹配、每个标签可定义字段（键 + 默认值，日记整理时自动插到 [[标签名]] 下面）、Bike 安全。 |
-| **Journals** ([`journals`](journals)) | 9999.0.0 | 日记、日历和周期笔记。自用补丁：日记始终以编辑模式打开（并入了原 Journal Edit Mode）；日历上标出每篇日记整理完没有（实心点 = 最后一条是分割线且没有没做完的任务，空心圈 = 没整理完）；侧栏日历去掉标签头、分割线和多余留白。 |
-| **Flashcards** ([`flashcards-obsidian`](flashcards-obsidian)) | 9999.0.0 | Create and sync Anki flashcards from your notes. |
-| **Expandomatic** ([`expandomatic`](expandomatic)) | 9999.0.0 | Expand selection outward through word, sentence, paragraph, section, document — like VSCode's expand selection. |
-| **MDFlow（自用）** ([`mdflow-local`](mdflow-local)) | 1.4.1-local | 把 Markdown 排成公众号、X Articles、小红书图片。本地自用版，不从插件市场更新。 |
-| **TODOseq** ([`todoseq`](todoseq)) | 9999.0.0 | Lightweight keyword-based task tracker using Logseq style keywords. |
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **第二大脑（自用）**<br>[`second-brain`](second-brain) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑 | ★★ | Ollama + EmbeddingGemma；Anki + AnkiConnect（可选） |
+| **LLM Wiki**<br>[`llm-wiki`](llm-wiki) | 仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检 | ★★ | 本机 Claude Code；配合第二大脑效果更好 |
+| **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、一键只搜某一类笔记 | ★★ | Better Command Palette |
+| **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
+| **追问成稿（QWS / grill-me）**<br>[`qws-bridge`](qws-bridge) | 把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚 | ★ | Claudian 插件 + QWS / grill-me skill |
+| **日记整理**<br>[`journal-tidy`](journal-tidy) | 一键整理日记：任务分区、给带标签的条目补上字段，再把日记里的问题交给 Claude 联网查证、写上回答 | ★ | 本机 Claude Code；Logseq 式任务 |
 
-### 只锁定版本（没改代码，只是不让插件市场覆盖）
+### 日程与任务
 
-| 插件 | 版本 | 说明 |
-|---|---|---|
-| **Breadcrumbs** ([`breadcrumbs`](breadcrumbs)) | 9999.0.0 | Add structured hierarchies to your notes. |
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **螺旋日程**<br>[`nautilus-spiral`](nautilus-spiral) | 螺旋日程：把今天日记里的事件和待办画成一圈螺旋，待办按预计时长自动排进空档，一眼看出今天还排不排得下，并记下实际用时；可以读入 macOS 日历 | ★★ | 日记里用 Logseq 式任务写法；macOS 日历、Raycast 可选 |
+| **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你 | ★ | 螺旋日程；macOS |
+| **Done To Top**<br>[`done-to-top`](done-to-top) | 日记里的任务按 DONE / DOING / TODO 自动分区；写着「明天」的事一键发到明天的日记 | ★★ | Logseq 式任务关键词 |
+| **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
+| **看板直达**<br>[`board-jump`](board-jump) | 常用看板一键直达：每个看板一条命令，外加看板切换器和 obsidian:// 链接 | ★★ | 看板笔记带 `type: 看板` 属性 |
+| **看板聚焦**<br>[`board-zoom`](board-zoom) | 从 Dataview 看板点开某一条时，自动聚焦到那个列表块 | ★ | Dataview + Bullet |
+
+### 界面与导航
+
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **Chrome Tab Groups**<br>[`chrome-tab-groups`](chrome-tab-groups) | Chrome 式标签页分组：命名、配色、折叠、整组拖动、移到新窗口，右键菜单也和 Chrome 一样 | ★★★ | 仅桌面端 |
+| **新标签页选项**<br>[`newtab-home`](newtab-home) | ⌘T 新标签页换成一个搜索条和一列快捷按钮，按钮可以设成打开某篇笔记、某个插件页面或执行某条命令；背景图可以自己上传 | ★★★ | 仅桌面端 |
+| **快捷键总览**<br>[`hotkey-atlas`](hotkey-atlas) | 快捷键设置页按插件分组，显示每个插件改过几个键、哪里有冲突；只在特定场景生效的按键也一并列出 | ★★★ | 无 |
+| **书签图标**<br>[`bookmark-icons`](bookmark-icons) | 书签面板里每篇笔记显示各自的彩色图标，不再是一排一样的文件图标 | ★★★ | 无 |
+| **Close Sidebar Files**<br>[`close-sidebar-files`](close-sidebar-files) | 一键关掉右侧栏里打开的笔记，插件面板保持不动 | ★★★ | 无 |
+
+### 改过的社区插件
+
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **Telegram Inbox（自用）**<br>[`telegram-inbox-local`](telegram-inbox-local) | 发给 Telegram 机器人的消息自动记进日记。改动：时间按消息发出的时刻记；发「done 写稿」直接把今天那条任务标成完成；去掉复制多条消息时自带的「名字, [日期]」抬头 | ★★ | 自己的 Telegram 机器人 |
+| **SuperTags（自用）**<br>[`supertags-local`](supertags-local) | Tana 式 supertag：在日记里写一行带 #标签 的内容，就建成一篇带字段的笔记。改动：标签按词边界匹配、每个标签可以定义字段、同名笔记不重复建、兼容 Bike | ★★ | 无 |
+| **Journals**<br>[`journals`](journals) | 日记日历。改动：日历上标出每篇日记整理完没有，⌘⇧J 列出近两个月没整理完的；日记总是以编辑模式打开；侧栏日历更紧凑 | ★★ | 无 |
+| **Flashcards**<br>[`flashcards-obsidian`](flashcards-obsidian) | 从笔记生成并同步 Anki 卡片。改动：卡片的上下文会带上包着它的各层母块，在 Anki 里也知道这张卡在讲什么 | ★★ | Anki + AnkiConnect |
+| **Expandomatic**<br>[`expandomatic`](expandomatic) | 选区按 词 → 句 → 段 → 节 → 全文 逐级扩大，和 VSCode 的扩选一样。改动：和「编辑体验 Logseq 化」的块选中配合调整过 | ★★★ | 无 |
+| **MDFlow（自用）**<br>[`mdflow-local`](mdflow-local) | 把 Markdown 排成公众号文章、X Articles 和小红书图片。本地版，不跟插件市场更新 | ★★ | 无 |
+| **TODOseq**<br>[`todoseq`](todoseq) | 用 Logseq 式关键词（TODO / DOING / DONE）做轻量任务跟踪。改动：切换状态的快捷键让给了「任务状态快切」 | ★★ | 无 |
+
+### 附：没改代码、只固定了版本的社区插件
+
+| 插件 | 作用 | 推荐度 | 需要什么 |
+|---|---|---|---|
+| **Breadcrumbs**<br>[`breadcrumbs`](breadcrumbs) | 没改代码，只把版本固定住，不让插件市场自动更新 | — | 无 |
 
 ## 安装
 
-把对应目录复制到库的 `.obsidian/plugins/` 下，完全退出并重新打开 Obsidian，再到「第三方插件」里启用。
+1. 把想要的插件目录复制到你的库的 `.obsidian/plugins/` 下
+2. 完全退出并重新打开 Obsidian
+3. 到「设置 → 第三方插件」里启用
+
+几点说明：
+
+- 标了「仅桌面端」或要调用本机程序（Claude Code、Ollama、macOS 日历）的插件只能在电脑上用，主要在 macOS 上测过。
+- 用到 Claude 的插件调用的是本机的 [Claude Code](https://claude.com/claude-code) 命令行（`claude -p`），要先装好并登录。
+- 改过的社区插件把版本号锁成了 `9999.0.0` 或带 `-local` 后缀，这样插件市场不会用原版覆盖它们。想用原版的话，去插件市场装原作者的版本就行。
+- 快捷键都注册成了 Obsidian 命令，可以在「设置 → 快捷键」里搜到、改掉。
+
+## 致谢
+
+改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、TODOseq（Stephen Cross）、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。

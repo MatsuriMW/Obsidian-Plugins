@@ -33,9 +33,12 @@ for line in "${(@f)$(grep -v -e '^#[^#]' -e '^$' "$DST/order.txt")}"; do
   (( ${mine[(Ie)$line]} )) && members[${#titles}]+="$line "
 done
 listed=" ${(j: :)${(v)members}} "
+community=1; for i in {1..${#titles}}; do [[ ${titles[$i]} == *社区插件 ]] && { community=$i; break; }; done
+# catalog.tsv：插件 id <TAB> 推荐度 <TAB> 作用 <TAB> 需要什么
+cat_get() { awk -F'\t' -v id="$1" -v c="$2" '$1==id {print $c}' "$DST/catalog.tsv" | sed 's/|/\\|/g'; }
 for n in $mine; do
   [[ $listed == *" $n "* ]] && continue
-  if [[ $(g $n author) == *改自* ]]; then members[2]+="$n "; else members[1]+="$n "; fi
+  if [[ $(g $n author) == *改自* ]]; then members[$community]+="$n "; else members[1]+="$n "; fi
 done
 {
   cat "$DST/README.intro.md"
@@ -46,16 +49,14 @@ done
     echo
     echo "### ${titles[$i]}"
     echo
-    echo "| 插件 | 版本 | 说明 |"
-    echo "|---|---|---|"
+    echo "| 插件 | 作用 | 推荐度 | 需要什么 |"
+    echo "|---|---|---|---|"
     for n in ${=members[$i]}; do
-      echo "| **$(g $n name)** ([\`$n\`]($n)) | $(g $n version) | $(g $n description) |"
+      typeset use=$(cat_get $n 3) star=$(cat_get $n 2) need=$(cat_get $n 4)
+      echo "| **$(g $n name)**<br>[\`$n\`]($n) | ${use:-$(g $n description)} | ${star:-} | ${need:-} |"
     done
   done
-  echo
-  echo "## 安装"
-  echo
-  echo "把对应目录复制到库的 \`.obsidian/plugins/\` 下，完全退出并重新打开 Obsidian，再到「第三方插件」里启用。"
+  [[ -f "$DST/README.outro.md" ]] && { echo; cat "$DST/README.outro.md"; }
 } > "$DST/README.md"
 
 cd "$DST"

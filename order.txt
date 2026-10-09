@@ -1,33 +1,42 @@
 # README 清单的分组和顺序（sync.sh 读）
 # 「## 标题」开一个分组，下面每行一个插件 id，越靠前越先展示
-# 没列在这里的新插件：作者写了「改自」的排到「改过的社区插件」末尾，其余排到「自己做的」末尾
+# 没列在这里的新插件：作者写了「改自」的排到标题带「社区」的分组末尾，其余排到第一个分组末尾
+# 每个插件的作用、推荐度、需要什么写在 catalog.tsv
 
-## 自己做的
-nautilus-spiral
-second-brain
+## 编辑与大纲：把 Obsidian 用得像 Logseq / Roam
+esc-select-block
 backlink-defaults
-chrome-tab-groups
-llm-wiki
-outline-block
-done-to-top
-journal-tidy
-nautilus-notify
 block-ref-plus
+hover-outline
+list-paste-merge
+list-outdent-plain
+task-toggle
+outline-block
+
+## 知识库与 AI：本地语义检索、LLM Wiki、复习和写作
+second-brain
+llm-wiki
 palette-split-open
+draft-desk
+qws-bridge
+journal-tidy
+
+## 日程与任务
+nautilus-spiral
+nautilus-notify
+done-to-top
+diary-nav
+board-jump
+board-zoom
+
+## 界面与导航
+chrome-tab-groups
+newtab-home
 hotkey-atlas
 bookmark-icons
-qws-bridge
-draft-desk
-list-paste-merge
-board-jump
-esc-select-block
-task-toggle
 close-sidebar-files
-board-zoom
-diary-nav
-hover-outline
 
-## 改过的社区插件（改动从多到少）
+## 改过的社区插件
 telegram-inbox-local
 supertags-local
 journals
@@ -36,5 +45,5 @@ expandomatic
 mdflow-local
 todoseq
 
-## 只锁定版本（没改代码，只是不让插件市场覆盖）
+## 附：没改代码、只固定了版本的社区插件
 breadcrumbs

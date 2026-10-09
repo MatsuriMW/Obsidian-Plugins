@@ -1,33 +1,26 @@
 # Obsidian Plugins
 
-马自立自用的 Obsidian 插件，装在主库「马自立」的 `.obsidian/plugins/` 下。大部分是自己从零写的，另外几个是改过的社区插件。
+马自立（[@MatsuriMW](https://github.com/MatsuriMW)）自己写的、以及改过的 Obsidian 插件，一共 30 多个。它们为一件事服务：**把 Obsidian 变成一个以块为单位写东西、能自己整理知识、还能帮你排时间的个人系统。**
 
-插件代码由 `sync.sh` 从库里同步，不要直接改插件目录里的文件。README 也是 `sync.sh` 生成的：上面这段介绍改 `README.intro.md`，下面清单的顺序和分组改 `order.txt`。
+这些插件解决的是我自己每天碰到的问题，分成四块：
 
-## 重点插件
+- **编辑与大纲**：Obsidian 原生的列表编辑和反链比 Logseq / Roam 弱一截，这一组把「块」的体验补回来：整块选中和移动、Roam 式反链面板、块引用显示内容、列表与段落互转。
+- **知识库与 AI**：笔记越记越多，就越难再找到、再用上。这一组在本机建一个语义检索层（笔记不出这台电脑），再让 Claude 把散落的笔记整理成带出处的 Wiki、在写作时推荐相关段落、把卡片复习接进 Anki。
+- **日程与任务**：在日记里用 TODO / DOING / DONE 写任务，插件把它们画成一圈螺旋日程，按预计时长自动排进今天的空档，并记下实际用时。
+- **界面与导航**：Chrome 式标签页分组、可以自定义的新标签页、按插件整理的快捷键总览等，让窗口管理更顺手。
 
-### 日程与任务
+## 推荐度怎么看
 
-- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）：给每一分钟安排一份工作。把今天日记里的事件和待办画成一圈螺旋，事件钉在时刻上，待办按顺序和预计时长从「现在」填进空档，没做完的跟着时间往后流；容量条一眼看出今天还排不排得下，DOING / DONE 另外记下实际用时。也能把 macOS 日历的事件排进来，▶ 一键开始并开 Raycast 专注。日记可以在 Bike 里写。[用法和原理 →](nautilus-spiral/README.md)
-- **任务提醒**（[`nautilus-notify`](nautilus-notify)）：螺旋日程的搭档，用 macOS 通知横幅提醒：快开始的事件、过点没做的待办、做太久的 DOING、排不下的容量预警、下一件该做什么、今日简报和收尾。
-- **Done To Top**（[`done-to-top`](done-to-top)）+ **日记整理**（[`journal-tidy`](journal-tidy)）：顶格任务按 DONE / DOING / TODO 分区归位，写着「明天 / 后天」的整块搬到那天的日记，光标所在块也能用 `/明天` 直接发送到明天的日记；日记整理再把日记里的问句汇总起来，交给本机 Claude 联网查证后写上回答。
+| 推荐度 | 意思 |
+|---|---|
+| ★★★ | 装上就能用，不依赖我的库结构，推荐任何人试试 |
+| ★★ | 好用，但要配合别的工具（Claude Code、Anki、某个社区插件），或者要按一套写法记笔记 |
+| ★ | 和我的库结构、写作流程绑得比较深，更适合参考代码、改成你自己的版本 |
 
-### 知识库与写作
+## 先看这几个
 
-- **第二大脑**（[`second-brain`](second-brain)）：跑在本机的语义检索层（本地向量模型 EmbeddingGemma + BM25 混合，约 5.8 万块），把写作、LLM Wiki、Anki 复习连起来：写作模式跟着光标实时找库里意思相近的块，Wiki 条目单列、引用落到原笔记；替 LLM Wiki 按意思挑出待摄入的块、找回失效的块链接；每日回顾从卡片 / 挖空 / Wiki 里随机漫步，Anki 到期卡优先，作答直接写进 Anki；每周生成库周报。[用法和原理 →](second-brain/README.md)
-- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）：目标是提供和 Logseq / Roam Research 一样的反链面板体验，以及比 Logseq 更好的导出功能。反链以块为单位、按 Markdown 渲染，带面包屑，点面包屑逐级展开上下文（⌘点跳原文、Shift 点侧栏打开），点块就地编辑；页面按关系紧密度排，日记按月 / 按年折叠，可以按共现页面筛选和分组。导出 PDF 时可以把「链接到当前文件」的全部内容一起带上，并选字体、字号、强调色。[完整说明 →](backlink-defaults/README.md)
-- **LLM Wiki**（[`llm-wiki`](llm-wiki)）：仿 Karpathy 的 LLM Wiki，让本机 Claude 把散在日记和笔记里的内容整理成带出处块链接的主题条目。左侧栏面板按主题列页面；待摄入的新材料借第二大脑按意思找、精确到块，只把相关的块交给 Claude；体检能在本地找回失效的块链接；一键提问、新开主题、补条目。
-- **Outline Block**（[`outline-block`](outline-block)）：⌘⌥L 把一段长文整理成层级列表并加双链，层级按反链面板的逻辑来定；先预览再替换。
-- **块引用增强**（[`block-ref-plus`](block-ref-plus)）：仿思源，`[[页#^id]]` 显示被引用块的当前内容，被引用的块旁边显示引用次数。
-
-### 界面与操作
-
-- **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）：照 Chrome 做的标签页分组：命名、颜色、折叠、拖色块移动整组、移至新窗口，加上 Chrome 的右键菜单。
-- **书签图标**（[`bookmark-icons`](bookmark-icons)）：书签面板里每个看板换成各自的彩色图标，不再是一排一样的文件图标；笔记属性 `icon` / `icon-color` 可以自己指定。
-- **Palette Enhancements**（[`palette-split-open`](palette-split-open)）：Better Command Palette 文件搜索增强：⌘⌥↵ 右侧拆分打开；文件名搜不到时自动搜正文；Tab 在文件名结果下面再加一层全文搜索，再按一次打开 Obsidian 全局搜索。
-- **快捷键总览**（[`hotkey-atlas`](hotkey-atlas)）：给「设置 → 快捷键」加按插件的聚类和透视：按插件分组，每组显示有几个快捷键、几个改过、几处冲突；按来源（自制 / 改版 / 社区 / 核心）和单个插件筛选；只在某个场景生效的情境快捷键也按插件列出来。
-
-### 改得最多的社区插件
-
-- **Telegram Inbox（自用）**（[`telegram-inbox-local`](telegram-inbox-local)）：发给 Telegram 机器人的消息记进日记。自用补丁：时间按消息发出的时刻记，`done 写稿` 直接把今天没做完的那条改成 DONE，和螺旋日程、Done To Top 配合。
-- **SuperTags（自用）**（[`supertags-local`](supertags-local)）：Tana 式 supertag。改写了处理流程：标签按边界匹配、行内 / 子项字段写进新页、同名笔记不重复建、Bike 开着日记时等它存完再处理。
+- **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换。
+- **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）★★★：Obsidian 自带的反链只给你一行上下文，这个面板按块显示整段内容，点面包屑逐级展开，能就地编辑，按关系紧密度排序。导出 PDF 时还能把所有提到这页的内容一起带上。[完整说明 →](backlink-defaults/README.md)
+- **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
+- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
+- **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
