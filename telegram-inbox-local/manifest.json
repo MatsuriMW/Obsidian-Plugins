@@ -1,9 +1,9 @@
 {
 	"id": "telegram-inbox-local",
-	"name": "Telegram Inbox（自用）",
-	"version": "1.9.2",
+	"name": "Telegram Inbox · 陪伴版",
+	"version": "1.10.0",
 	"minAppVersion": "1.5.11",
-	"description": "Receive messages from Telegram bot and add them to daily note.",
+	"description": "发给 Telegram 机器人的消息记进日记；它读得到你的日记和日程，累的时候陪你说说话、开心的时候一起呱、睡前回顾今天。",
 	"author": "马自立",
 	"isDesktopOnly": false
 }

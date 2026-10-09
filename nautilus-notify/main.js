@@ -44,7 +44,10 @@ const DEFAULTS = {
   pushPeriod: true, pushPeriodAt: "12:00", periodPath: "健康/经期记录.md", periodWho: "TA",
   pushInsight: true, pushInsightAt: "21:30", insightPath: "计划与总结/周洞察.md",   // 每周日
   claudePath: "~/.local/bin/claude",
-  comfort: true, comfortProfile: "健康/陪伴档案.md",   // Telegram 里说累、难受时陪你聊
+  comfort: true, comfortProfile: "健康/陪伴档案.md",   // Telegram 里说累、难受、开心时陪你聊
+  chitchat: true,                           // 哈喽、呱、谢谢：马上回一句
+  chatIdleMin: 20,                          // 自动进入的对话模式多久没说话就回到记录模式
+  chat: null,                               // 当前这段对话（对话模式）
 };
 const NO_DUR_DOING_MIN = 60;
 
@@ -57,8 +60,9 @@ const DONE_RE = /^\s*-\s+(?:\[[xX]\]|DONE)\s/;
 const exWords = (s) => EX_WORDS.filter((w) => s.includes(w));
 const doneExLines = (content) => content.split("\n").filter((l) => DONE_RE.test(l) && !/#card\b/.test(l) && exWords(l).length);
 // 情绪话：Telegram 陪聊的触发词，也用来从日记里捞「最近说过的类似的话」；FEEL_SKIP 先去掉容易误判的词
-const FEEL_RE = /(好?累|难受|好?烦|崩溃|焦虑|难过|伤心|想哭|哭了|emo|撑不住|不想活|想死|没意思|好丧|郁闷|压力好?大|心累|孤独|迷茫|自我怀疑|痛苦|绝望|委屈|失眠|睡不着|不开心|抑郁|好废)/i;
-const FEEL_SKIP = /累计|积累|累积|麻烦|烦请|没意思的话/g;
+const FEEL_RE = /(好?累|难受|好?烦|崩溃|焦虑|难过|伤心|想哭|哭了|emo|撑不住|不想活|想死|没意思|好丧|郁闷|压力好?大|心累|孤独|迷茫|自我怀疑|痛苦|绝望|委屈|失眠|睡不着|不开心|抑郁|好废|想她|想你了|好想你|想宝宝|想女朋友)/i;
+const HAPPY_RE = /(好?开心|太好了|太棒了|好棒|好耶|耶+[!！~～]*$|搞定了?|成了|做完了|哈哈哈+|嘿嘿|nice|好爽|赢了|过了|激动|兴奋|呱)/i;
+const FEEL_SKIP = /累计|积累|累积|麻烦|烦请|没意思的话|成了一个|过了一遍/g;
 const toMin = (hhmm) => { const m = /^(\d{1,2})[:：](\d{2})$/.exec(String(hhmm).trim()); return m ? +m[1] * 60 + +m[2] : null; };
 
 // 通知类别：用来「一键清掉同一类」。命令 id 是 clear-<key>，可以在 Obsidian 里绑快捷键，
@@ -466,7 +470,7 @@ ${txt || "（今天日记里几乎没写东西）"}`;
 
   // ---------- 🫂 陪你聊：Telegram 里说「好累」「好难受」，或者回复陪聊消息时，Telegram Inbox 调这里 ----------
   // 读：陪伴档案（你写给它的「我是谁、怎么回我」）+ 最近三天日记 + 最近一个月说过的情绪话 + 这几天几点收工 + 训练体重
-  async comfort(text, history = []) {
+  async comfort(text, history = [], mood = "low") {
     const day = this.wToday();
     const np = this.nautilus();
     const profile = (await this.wRead(this.settings.comfortProfile)).replace(/^---\n[\s\S]*?\n---\n/, "");
@@ -496,7 +500,7 @@ ${txt || "（今天日记里几乎没写东西）"}`;
     facts.push(`本周练了 ${w.weekDays} 天，上次练是 ${w.gap >= 31 ? "一个月以前" : w.gap === 0 ? "今天" : `${w.gap} 天前`}`);
     const nowM = moment();
     const talk = history.map((h) => `${h.who}：${h.text}`).join("\n");
-    const prompt = `你是他很信任、也很了解他的一个朋友（他是谁写在下面的陪伴档案里）。他刚在 Telegram 里给你发了消息，情绪不太好。现在是 ${nowM.format("M月D日 dddd HH:mm")}。
+    const prompt = `你是他很信任、也很了解他的一个朋友（他是谁写在下面的陪伴档案里）。${mood === "happy" ? "他刚在 Telegram 里给你发了消息，心情很好（他开心的时候会说「呱」）。" : mood === "chat" ? "他在 Telegram 里找你聊天。" : "他刚在 Telegram 里给你发了消息，情绪不太好。"}现在是 ${nowM.format("M月D日 dddd HH:mm")}。
 
 先读他自己写的「陪伴档案」，严格按里面「回我的时候」的要求回复：
 ${profile}
@@ -509,30 +513,142 @@ ${moods.length ? `\n最近一个月他在日记里说过的类似的话：\n${mo
 ${talk ? `你们刚才的对话：\n${talk}\n` : ""}
 他现在说：「${text}」
 
-回复要求：中文；像朋友发消息，4～8 行；只回应他自己的感受和处境，日记里别人说的话、摘抄、转述的内容不要拿来套在他身上，也不要提及别人的隐私；只有他这句话或你们刚才的对话里明确流露出想伤害自己、不想活，才按档案里的危机部分回应，否则一个字都不要提自伤和热线；先接住情绪，引用一两件他最近具体在做的事说明你懂他的处境（不要列清单、不要复述全部日记）；不要说教、不要鸡汤、不要「加油」；建议最多一个且非常小，没必要就不给；可以用一个问题结尾让他多说一点。适量 emoji（2～4 个）。只用 Telegram 支持的 HTML（<b> <i>），不要 Markdown。只输出要发给他的话。`;
+${mood === "chat" ? `回复要求：中文；像朋友聊天，1～6 行，他说得短你也短；他问问题就直接回答（你不能联网，实时信息不知道就直说）；他聊他在做的事、想法，就接着聊，可以用日记里的背景，但不要列清单、不要复述日记；不说教，不主动提醒他还有什么没做；只回应他自己的事，日记里别人说的话不要套在他身上；他说「呱」就呱回去 🐸。适量 emoji（1～3 个）。只用 Telegram 支持的 HTML（<b> <i>），不要 Markdown。只输出要发给他的话。` : mood === "happy" ? `回复要求：中文；像朋友发消息，2～5 行；跟着他一起高兴，不要说教、不要提建议、不要转去聊没做完的事；他说做成了什么就具体地接住，没说就从今天的日记里找一件他刚做成的事一起高兴，或者问他发生了什么好事；可以回一两个「呱」🐸；只回应他自己的事，日记里别人说的话不要套在他身上。适量 emoji（2～4 个）。只用 Telegram 支持的 HTML（<b> <i>），不要 Markdown。只输出要发给他的话。` : `回复要求：中文；像朋友发消息，4～8 行；只回应他自己的感受和处境，日记里别人说的话、摘抄、转述的内容不要拿来套在他身上，也不要提及别人的隐私；只有他这句话或你们刚才的对话里明确流露出想伤害自己、不想活，才按档案里的危机部分回应，否则一个字都不要提自伤和热线；先接住情绪，引用一两件他最近具体在做的事说明你懂他的处境（不要列清单、不要复述全部日记）；不要说教、不要鸡汤、不要「加油」；建议最多一个且非常小，没必要就不给；可以用一个问题结尾让他多说一点。适量 emoji（2～4 个）。只用 Telegram 支持的 HTML（<b> <i>），不要 Markdown。只输出要发给他的话。`}`;
     let reply;
     try { reply = this.tgHtml(await this.runClaude(prompt, 150)); }
     catch (e) {
       console.error("[nautilus-notify] 陪聊", e);
-      reply = "🫂 我在。现在没法细看你今天的日记，但你说累，我信。\n先别管清单，喝口水，能躺就躺一会儿。\n想说的话，接着回我这条。";
+      reply = mood === "chat" ? "🐸 我在听，不过这会儿脑子有点卡，没法好好回你。\n再说一遍，或者等一下再找我？"
+        : mood === "happy" ? "呱呱！🐸 听起来是好事，我跟着一起高兴 ✨\n发生什么了，跟我说说？"
+        : "🫂 我在。现在没法细看你今天的日记，但你说累，我信。\n先别管清单，喝口水，能躺就躺一会儿。\n想说的话，接着回我这条。";
     }
-    return { html: reply, history: [...history, { who: "他", text }, { who: "你", text: reply.replace(/<[^>]+>/g, "") }].slice(-10) };
+    return { html: reply, mood, history: [...history, { who: "他", text }, { who: "你", text: reply.replace(/<[^>]+>/g, "") }].slice(-10) };
   }
-  // 短短一句情绪话才算（任务、链接、长摘录不算）
-  isFeeling(s) {
+  // ================= 对话模式 / 记录模式 =================
+  // 记录模式（默认）：Telegram 发来的都记进日记。对话模式：每句都由 claude 接着聊，对话内容不进日记。
+  // 进对话模式有两种：
+  //   explicit：说「对话模式」「陪我聊天」，一直保持到说「退出」「记录模式」「睡了」
+  //   auto：情绪话、打招呼、「聊聊 / 陪我」、回复它的消息时自动进入，chatIdleMin 分钟没说话就自己回到记录模式
+  chatCommand(said) {
+    const s = String(said || "").trim().replace(/[!！。.~～\s]+$/, "");
+    if (/^(?:进入)?(?:对话|聊天)模式$|^(?:来)?陪我聊(?:聊|天|会儿?)?$|^\/chat$/.test(s)) return "enter";
+    if (/^(?:退出(?:对话|聊天)?(?:模式)?|记录模式|回到记录模式|不聊了|先不聊了|结束对话|\/record|\/exit)$/.test(s)) return "exit";
+    return null;
+  }
+  // 现在是否在对话模式：返回 "explicit" / "auto" / false（auto 超时也算 false，等 tick 或下一句收尾）
+  chatActive() {
+    const c = this.settings.chat;
+    if (!c) return false;
+    if (c.mode === "auto" && Date.now() - c.last > this.settings.chatIdleMin * 60e3) return false;
+    return c.mode;
+  }
+  async chatStart(mode, mood = "chat", seed = []) {
+    const c = this.settings.chat;
+    if (c && this.chatActive()) { if (mode === "explicit") c.mode = "explicit"; c.last = Date.now(); this.saveSoon(); return c; }
+    if (c) await this.chatEnd();   // 超时还没收尾的那段先收掉
+    this.settings.chat = { mode, mood, since: Date.now(), last: Date.now(), history: seed, n: 0 };
+    this.saveSoon();
+    return this.settings.chat;
+  }
+  async chatEnd() {
+    const c = this.settings.chat;
+    if (!c) return null;
+    this.settings.chat = null;
+    this.saveSoon();
+    return c;
+  }
+  // 对话模式里的一句：接着之前的对话回
+  async chatReply(text) {
+    const c = this.settings.chat || (await this.chatStart("auto"));
+    const idleLong = c.mode === "explicit" && Date.now() - c.last > 6 * 3600e3;
+    c.last = Date.now();
+    const mood = this.moodOf(text) || (c.mood === "chat" ? "chat" : c.mood) || "chat";
+    const r = await this.comfort(text, c.history, mood);
+    c.history = r.history;
+    if (mood !== "chat") c.mood = mood;
+    c.n = (c.n || 0) + 1;
+    c.last = Date.now();
+    this.saveSoon();
+    return r.html + (idleLong ? "\n\n<i>（还在对话模式，说「退出」回到记录模式）</i>" : "");
+  }
+  // 自动进入的对话超时了：收尾、说一声
+  async chatTick() {
+    const c = this.settings.chat;
+    if (!c || c.mode !== "auto" || this.chatActive()) return;
+    const ended = await this.chatEnd();
+    if (ended && ended.n) await this.tg(`📝 ${this.settings.chatIdleMin} 分钟没说话，我先回到记录模式啦 🐸\n想接着聊就再找我`, "");
+  }
+
+  // ---------- 🐸 打招呼、呱、谢谢：不用等模型，马上回一句；带上今天的状态 ----------
+  async todayStatus() {
+    const np = this.nautilus();
+    const day = this.wToday();
+    const out = { doing: [], done: 0, open: 0, lastDone: null, trained: false };
+    try {
+      const items = np ? np.core.parseJournal(await this.wRead(this.wJournalPath(day)), np.settings) : [];
+      const tasks = items.filter((i) => i.kind === "task" && !i.container);
+      out.doing = tasks.filter((t) => t.state === "open" && t.doing).map((t) => t.label);
+      out.done = tasks.filter((t) => t.state === "done").length;
+      out.open = tasks.filter((t) => t.state === "open").length;
+      out.lastDone = tasks.filter((t) => t.state === "done" && t.stamp != null).sort((a, b) => b.stamp - a.stamp)[0]?.label || null;
+    } catch (e) { /* 螺旋日程没开就少说两句 */ }
+    out.trained = (await this.workoutStats(day)).gap === 0;
+    return out;
+  }
+  async chitchat(said) {
+    if (!this.settings.chitchat) return null;
+    const s = String(said || "").trim();
+    const pick = (a) => a[Math.floor(Math.random() * a.length)];
+    const short = (x) => this.esc(x.length > 24 ? x.slice(0, 24) + "…" : x);
+    const h = new Date().getHours();
+    let kind = null;
+    if (/^(?:[呱瓜][!！~～。.\s]*)+$/.test(s)) kind = "gua";
+    else if (/^(?:哈喽|哈啰|哈罗|hello|hi|hey|嗨|嘿|你好|在吗|在不在|喂|yo)[!！~～。.?？\s]*$/i.test(s)) kind = "hello";
+    else if (/^(?:谢谢|谢啦|多谢|thx|thanks|thank you|辛苦了|爱你|么么哒?|贴贴|抱抱)[!！~～。.\s]*$/i.test(s)) kind = "thanks";
+    if (!kind) return null;
+    const st = await this.todayStatus();
+    const lines = [];
+    if (kind === "gua") {
+      const n = Math.min(([...s].filter((c) => c === "呱" || c === "瓜").length || 1) + 1, 7);
+      lines.push(`${"呱".repeat(n)}！🐸`);
+      lines.push(pick(["听到呱声就知道你心情不错 😆", "收到一只开心的你 ✨", "呱回去！今天是有什么好事吗？👀", "这个呱听起来很有精神 💚", "开心就多呱两声，我都接着 🫶"]));
+      if (st.doing.length) lines.push(`⭐ 一边做「${short(st.doing[0])}」一边呱，状态很可以`);
+      else if (st.lastDone) lines.push(`🎉 是因为刚搞定「${short(st.lastDone)}」吗`);
+      else if (st.done >= 5) lines.push(`💪 今天已经做完 ${st.done} 件了，呱得理直气壮`);
+      if (st.trained) lines.push(pick(["🏋️ 今天还练了，呱上加呱", "🏋️ 练完身体再呱一声，满分"]));
+    } else if (kind === "hello") {
+      lines.push(h < 5 ? pick(["这么晚还在呀 🌙", "哈喽～夜猫子 🦉"]) : h < 11 ? pick(["早呀 ☀️", "哈喽，早上好 🌤"]) : h < 14 ? "中午好 🍚" : h < 18 ? pick(["下午好 ☕️", "哈喽～ 🙌"]) : pick(["晚上好 🌙", "哈喽～今天辛苦啦 🫶"]));
+      if (st.doing.length) lines.push(`⭐ 你在做「${short(st.doing[0])}」`);
+      if (st.done) lines.push(`✅ 今天已经做完 ${st.done} 件了`);   // 打招呼不提还剩多少，免得有压力
+      if (h < 5) lines.push(pick(["别熬太狠，困了就说一声「睡了」😴", "今天的事可以明天再接着来 🌙"]));
+      lines.push(pick(["想聊什么都可以，回「?」看今天的螺旋 🌀", "我在，随时说 💬", "有事说事，没事呱一声也行 🐸"]));
+    } else {
+      lines.push(pick(["不客气呀 🫶", "嘿嘿，收到 💚", "我一直在 🫂", "贴贴 🐸"]));
+      if (h < 5) lines.push("该睡啦，晚安 🌙");
+    }
+    return lines.join("\n");
+  }
+  // 情绪短句：难受 → low，开心 → happy；任务行、链接、长摘录不算
+  moodOf(s) {
     s = String(s || "").trim();
-    return this.settings.comfort && s.length <= 40 && !/^(?:TODO|DONE|DOING|LATER|NOW|FAILED|WAITING|CANCELED)\b/.test(s) && !/https?:\/\//.test(s) && FEEL_RE.test(s.replace(FEEL_SKIP, ""));
+    if (!this.settings.comfort || s.length > 40 || /^(?:TODO|DONE|DOING|LATER|NOW|FAILED|WAITING|CANCELED)\b/.test(s) || /https?:\/\//.test(s)) return null;
+    const t = s.replace(FEEL_SKIP, "");
+    if (FEEL_RE.test(t)) return "low";
+    if (HAPPY_RE.test(t)) return "happy";
+    return null;
   }
+  isFeeling(s) { return this.moodOf(s) === "low"; }
   // 陪聊消息的 message_id → 对话，回复那条消息就接着聊；6 小时后过期
-  rememberThread(id, history) {
+  rememberThread(id, history, mood = "low") {
     const m = (this.comfortThreads ||= new Map());
-    m.set(id, { history, at: Date.now() });
+    m.set(id, { history, mood, at: Date.now() });
     for (const [k, v] of m) if (Date.now() - v.at > 6 * 3600e3 || m.size > 30) m.delete(k);
   }
   threadOf(id) {
     const t = this.comfortThreads?.get(id);
     return t && Date.now() - t.at < 6 * 3600e3 ? t.history : null;
   }
+  threadMood(id) { return this.comfortThreads?.get(id)?.mood || "low"; }
 
   // 插电时不让 Mac 闲置睡眠（屏幕照样息屏）：睡着了 Obsidian 不运行，什么提醒都发不出去
   keepAwake() {
@@ -755,7 +871,7 @@ ${talk ? `你们刚才的对话：\n${talk}\n` : ""}
 
   async tick({ fromEdit = false, forceBrief = false } = {}) {
     this.keepAwake();   // 设置里开关改了也跟着生效
-    try { await this.reportTick(); await this.pushTick(); } catch (e) { console.error("[nautilus-notify] 定时推送", e); }
+    try { await this.reportTick(); await this.pushTick(); await this.chatTick(); } catch (e) { console.error("[nautilus-notify] 定时推送", e); }
     try { await this.workoutTick({ fromEdit }); } catch (e) { console.error("[nautilus-notify] 训练提醒", e); }
     const np = this.nautilus();
     if (!np) return;
@@ -966,7 +1082,9 @@ class NotifySettings extends PluginSettingTab {
     toggle("🧭 周日周洞察", "claude 读这一周的日记写「这周做了什么」，发到 Telegram，也存一份到下面的笔记", "pushInsight");
     text("　时间（每周日）", "", "pushInsightAt", isClockOrEmpty);
     text("　存到", "", "insightPath");
-    toggle("🫂 陪你聊", "在 Telegram 里说「好累」「好难受」之类的短句，或者回复它的陪聊消息时，读陪伴档案和最近的日记回你", "comfort");
+    toggle("🫂 陪你聊", "在 Telegram 里说「好累」「好难受」「好开心」「搞定了」之类的短句，或者回复它的陪聊消息时，读陪伴档案和最近的日记回你", "comfort");
+    num("💬 自动进入的对话模式，多少分钟没说话回到记录模式", "chatIdleMin");
+    toggle("🐸 打招呼和呱", "「哈喽」「呱呱呱」「谢谢」这类话马上回一句（不用等模型），带上今天在做什么、做完几件；这些话不记进日记", "chitchat");
     text("　陪伴档案笔记", "写着「我是谁、累的时候是因为什么、怎么回我」，直接改它就能改回复的方式", "comfortProfile");
     text("　claude 命令行路径", "周洞察和收工小结用它（用命令行自己的登录）", "claudePath");
     text("定时推送螺旋日程", "这几个时刻把螺旋日程图文版（⭐ 正在做、接下来、排不下……）发到 Telegram，不管人在不在电脑前；用逗号分开，空着就不推", "tgReportTimes", (v) => !v.trim() || v.split(/[,，、\s]+/).filter(Boolean).every((x) => toMin(x) != null));

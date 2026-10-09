@@ -6017,34 +6017,52 @@ function setupCommands(bot, settings, vaultWriter) {
 // [自用补丁] 「任务提醒」插件发来的消息里的按钮（拖延任务：不做了 / 挪明天 / 搁置）
 //   回调交给 nautilus-notify 处理；手机上没有那个插件，就提示去电脑上点
 // [自用补丁] 收工小结：「任务提醒」插件用 claude 读今天的日记写，写好单独回一条；dayOf = 消息发出时刻按日界（凌晨 7 点前算前一天）
+// [自用补丁] 要等一会儿的回复（读日记、调 claude）：先马上回一条「收到，在想……」，每隔几秒换一句进度，
+//   写好后删掉这条提示、把正式回复作为新消息发出（新消息才会在手机上响，光编辑原消息不会提醒）
+async function withThinking(ctx, stages, work) {
+  let ph = null, i = 0;
+  try { ph = await ctx.reply(stages[0], { disable_notification: true }); } catch (e) { /* 发不出提示也照样往下做 */ }
+  const timer = setInterval(() => {
+    ctx.replyWithChatAction("typing").catch(() => {});
+    if (ph && i < stages.length - 1) { i++; ctx.api.editMessageText(ph.chat.id, ph.message_id, stages[i]).catch(() => {}); }
+  }, 4000);
+  ctx.replyWithChatAction("typing").catch(() => {});
+  try {
+    const html = await work();
+    clearInterval(timer);
+    if (ph) await ctx.api.deleteMessage(ph.chat.id, ph.message_id).catch(() => {});
+    if (html) await ctx.reply(html, { parse_mode: "HTML" });
+  } catch (err) {
+    clearInterval(timer);
+    console.error("[telegram-inbox] 生成回复", err);
+    const msg = "😵 刚才卡住了，没写出来：" + String(err && err.message || err).slice(0, 120) + "\n再发一次试试？";
+    if (ph) await ctx.api.editMessageText(ph.chat.id, ph.message_id, msg).catch(() => {});
+    else await ctx.reply(msg).catch(() => {});
+  }
+}
+const THINKING = {
+  low: ["🫂 收到了，我在……", "📖 在看你这几天的日记……", "✍️ 想想怎么跟你说……"],
+  happy: ["🐸 收到！……", "📖 看看你今天都干了啥……", "✍️ 马上……"],
+  chat: ["💭 收到，在想……", "📖 翻了翻你最近的日记……", "✍️ 在组织语言……"],
+  summary: ["🌙 收到，在整理今天……", "📖 在读今天的日记……", "✍️ 在写小结……", "🫶 快好了……"],
+};
 function nnPlugin() { var _n; return (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-notify"]; }
 async function replyDaySummary(ctx, msg) {
   const nn = nnPlugin();
   if (!nn || !nn.daySummary) return;
   const m = (0, import_obsidian7.moment)(msg.date * 1e3);
   if (m.hours() * 60 + m.minutes() < nn.wCutoff()) m.subtract(1, "day");
-  try {
-    await ctx.replyWithChatAction("typing");
-    await ctx.reply(await nn.daySummary(m.startOf("day")), { parse_mode: "HTML" });
-  } catch (err) { console.error("[telegram-inbox] 收工小结", err); }
+  await withThinking(ctx, THINKING.summary, () => nn.daySummary(m.startOf("day")));
 }
-// [自用补丁] 陪你聊：说「好累」「好难受」这类短句、以「聊聊 / 陪我」开头，或者回复陪聊那条消息时，
-//   照常记进日记，再由「任务提醒」插件读陪伴档案和最近日记、用 claude 回一条；回复它那条就接着聊
-async function maybeComfort(ctx, msg, said) {
-  const nn = nnPlugin();
-  if (!nn || !nn.comfort || !nn.settings.comfort) return;
-  const rep = msg.reply_to_message;
-  const history = rep ? nn.threadOf(rep.message_id) : null;
-  if (!history && !/^(?:聊聊|陪我)/.test(said) && !nn.isFeeling(said)) return;
-  const typing = setInterval(() => ctx.replyWithChatAction("typing").catch(() => {}), 4500);
-  try {
-    await ctx.replyWithChatAction("typing");
-    const r = await nn.comfort(said.replace(/^(?:聊聊|陪我聊聊|陪我)[，,：:\s]*/, "") || said, history || []);
-    const sent = await ctx.reply(r.html, { parse_mode: "HTML" });
-    nn.rememberThread(sent.message_id, r.history);
-  } catch (err) {
-    console.error("[telegram-inbox] 陪聊", err);
-  } finally { clearInterval(typing); }
+// [自用补丁] 两种模式（状态在「任务提醒」插件里，手机上没有它就一直是记录模式）
+//   记录模式（默认）：发来的都记进日记
+//   对话模式：每句都由 claude 接着聊，对话内容不进日记
+//     · 说「对话模式」「陪我聊天」进入，一直保持到说「退出」「记录模式」「睡了」
+//     · 情绪话（累、难受、开心、想她……）、打招呼、「聊聊 / 陪我」开头、回复它的消息时自动进入，一阵子没说话自己回到记录模式
+//     · 对话模式里「?」「睡了」「小结」、done / doing、图片、带链接的照常处理；「记 」开头的这句照常记进日记
+async function chatAnswer(ctx, nn, said) {
+  const mood = nn.moodOf(said) || (nn.settings.chat && nn.settings.chat.mood) || "chat";
+  await withThinking(ctx, THINKING[mood] || THINKING.chat, () => nn.chatReply(said));
 }
 function setupMessageHandlers(bot, settings, vaultWriter) {
   bot.on("callback_query:data", async (ctx) => {
@@ -6070,13 +6088,28 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
     const naut = (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-spiral"];
     const said = (msg.text || "").trim();
     const dayCmd = /^(?:睡了|睡觉了?|晚安|休息了|不干了)$/.test(said) ? "sleep" : /^(?:起了|起床了?|醒了|早安)$/.test(said) ? "wake" : null;
+    const nn = nnPlugin();
+    const chatOn = !!(nn && nn.chatCommand && nn.settings.comfort);
     try {
+      const chatCmd = chatOn ? nn.chatCommand(said) : null;
+      if (chatCmd === "enter") {
+        const was = nn.chatActive();
+        await nn.chatStart("explicit");
+        await ctx.reply(was === "explicit" ? "💬 已经在对话模式啦，接着说～" : "💬 <b>进入对话模式</b>\n接下来你说的每句我都会回，这些对话不进日记。\n📝 想顺手记一句，用「记 」开头\n🚪 说「退出」回到记录模式", { parse_mode: "HTML" });
+        return;
+      }
+      if (chatCmd === "exit") {
+        const c = await nn.chatEnd();
+        await ctx.reply(c ? "📝 回到记录模式啦，接下来发什么我都记进日记 🐸" : "📝 现在就是记录模式，发什么我都记进日记");
+        return;
+      }
       if (naut && naut.capacityText && /^(?:[?？]|\/now)$/.test(said)) {
         if (naut.telegramReport) await ctx.reply(await naut.telegramReport(), { parse_mode: "HTML" });   // 图文版
         else await ctx.reply(await naut.capacityText());
         return;
       }
       if (naut && naut.markDay && dayCmd) {
+        if (dayCmd === "sleep" && chatOn && nn.settings.chat) await nn.chatEnd();   // 收工也退出对话模式
         content = `- **${(0, import_obsidian7.moment)(msg.date * 1e3).format("HH:mm")}** ${said}`;
         await vaultWriter.insertMessageToVault(content, msg);
         const receipt = await naut.markDay(dayCmd, msg.date * 1e3);   // 先收掉工作时段，再改任务状态
@@ -6089,6 +6122,31 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
         await replyDaySummary(ctx, msg);
         return;
       }
+      if (chatOn) {
+        // 这些在任何模式下都当记录：「记 」开头、任务口令、带链接的；自动对话里太长的（多半是贴过来的摘录）
+        const inChat = nn.chatActive();
+        const recordish = /^记[:：\s]/.test(said) || /^(?:done|doing|todo|later|now)\b/i.test(said) || /https?:\/\//.test(said) || (inChat !== "explicit" && said.length > 100);
+        if (/^记[:：\s]/.test(said)) content = content.replace(/记[:：\s]+/, "");
+        if (!recordish) {
+          if (inChat) { await chatAnswer(ctx, nn, said); return; }
+          // 记录模式：哈喽、呱、谢谢马上回一句，不记进日记；打招呼顺便进入对话模式
+          const quick = nn.chitchat ? await nn.chitchat(said) : null;
+          if (quick) {
+            if (/^(?:哈喽|哈啰|哈罗|hello|hi|hey|嗨|嘿|你好|在吗|在不在|喂|yo)/i.test(said)) await nn.chatStart("auto");
+            await ctx.reply(quick, { parse_mode: "HTML" });
+            return;
+          }
+          // 情绪话、「聊聊 / 陪我」、回复它的消息：自动进入对话模式
+          const rep = msg.reply_to_message;
+          const toBot = rep && rep.from && rep.from.is_bot;
+          const mood = nn.moodOf(said) || (/^(?:聊聊|陪我)/.test(said) ? "low" : toBot ? "chat" : null);
+          if (mood) {
+            await nn.chatStart("auto", mood, (toBot && nn.threadOf(rep.message_id)) || []);
+            await chatAnswer(ctx, nn, said.replace(/^(?:聊聊|陪我聊聊|陪我)[，,：:\s]*/, "") || said);
+            return;
+          }
+        }
+      }
     } catch (err) {
       handleVaultError(ctx, err, "run nautilus command");
       return;
@@ -6099,7 +6157,6 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
     } catch (err) {
       handleVaultError(ctx, err, "insert text message to vault");
     }
-    await maybeComfort(ctx, msg, said);
   });
   bot.on(["message:media", "channel_post:media"], async (ctx) => {
     var _a2;
@@ -6352,7 +6409,7 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
 <br>· <code>doing 写稿</code> 自动补开始时间；<code>done 写稿 2h</code> 自动补完成时间，螺旋上画在「完成时刻往前 2 小时」。
 <br>· <code>done 写稿</code>：今天日记里有没做完的「写稿…」（前 2 个字一致就算，一致的字多的优先）就直接把那条改成 DONE，不另起一条；原来是 DOING 14:05 的写成 <code>DONE 14:05-16:30</code>。消息写的内容和原来不一样（原来「引体向上 2×5」，发的「done 引体向上 5×3」）以消息为准。找不到才新建。
 <br>· <code>?</code> 或 <code>/now</code>：机器人回一条容量速览（还剩多少时间、接下来几件、今天做完几件），不写进日记。
-<br>· <code>睡了</code>（睡觉 / 晚安 / 休息了 / 不干了）：收工后还会回一条今天的小结。<code>小结</code>：只要小结、不收工。<br>· 说「好累」「好难受」这类短句，或者以「聊聊」「陪我」开头：读陪伴档案和最近的日记回你；回复它那条就接着聊。<br>· <code>睡了</code>：这天的结束时间设成现在，进行中的任务退回 TODO（做过的时段留着，明天接着算）。<code>起了</code>（起床 / 醒了 / 早安）：设这天的开始时间，并回一条今天的容量速览。
+<br>· <code>睡了</code>（睡觉 / 晚安 / 休息了 / 不干了）：收工后还会回一条今天的小结。<code>小结</code>：只要小结、不收工。<br>· 两种模式：<b>记录模式</b>（默认，发什么记什么）和<b>对话模式</b>（每句都回，对话不进日记）。说「对话模式」进入、「退出」回来；说「好累」「好开心」、打招呼、「聊聊」开头、回复它的消息会自动进入，一阵子不说话自己回到记录模式。对话里「记 」开头的照常记进日记。<br>· 「哈喽」「呱呱呱」「谢谢」：马上回一句，不记进日记。<br>· <code>睡了</code>：这天的结束时间设成现在，进行中的任务退回 TODO（做过的时段留着，明天接着算）。<code>起了</code>（起床 / 醒了 / 早安）：设这天的开始时间，并回一条今天的容量速览。
 <br><b>不需要关键词、自动生效的</b>
 <br>· <b>体重</b>：直接发米家体重秤的测量报告截图。每晚 22:30 的健康定时任务会读最近 3 天日记里的图片，写进 体重记录，更新健康看板。
 <br>· <b>训练</b>：发 <code>DONE 引体向上 5×3</code>、<code>DONE 跑步 3.2 km，28 分钟</code>、<code>FAILED 深蹲</code>。「力量训练与健康」看板实时按动作名统计（DONE=完成，FAILED=没做成，TODO=待做）。

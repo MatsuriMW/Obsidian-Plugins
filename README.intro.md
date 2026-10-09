@@ -23,4 +23,5 @@
 - **Backlinks and Export**（[`backlink-defaults`](backlink-defaults)）★★★：Obsidian 自带的反链只给你一行上下文，这个面板按块显示整段内容，点面包屑逐级展开，能就地编辑，按关系紧密度排序。导出 PDF 时还能把所有提到这页的内容一起带上。[完整说明 →](backlink-defaults/README.md)
 - **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
 - **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
+- **Telegram Inbox · 陪伴版**（[`telegram-inbox-local`](telegram-inbox-local)）★★：手机上随手发给 Telegram 机器人的话直接进日记；而且它读得到你的日记和日程，所以你说「好累」时它知道你这几天熬到几点、手上压着什么，说「搞定了」时它知道你搞定的是什么，「呱呱呱」它也会呱回来。睡前说一声「睡了」，它回一条今天的小结。[它能做什么 →](telegram-inbox-local/README.md)
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
