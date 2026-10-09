@@ -5999,11 +5999,7 @@ function handleVaultError(ctx, err, context) {
   ctx.reply(`Failed to ${context}. Error: ${err.message}`);
 }
 function setupCommands(bot, settings, vaultWriter) {
-  bot.command("start", (ctx) => {
-    ctx.reply(
-      "Hello! Send me a message to add it to your Obsidian daily note.\n\n/task followed by the description will add it as a task item."
-    );
-  });
+  bot.command(["start", "help"], (ctx) => ctx.reply(HELP_HTML, { parse_mode: "HTML" }));
   bot.command("task", async (ctx) => {
     const task = `- [ ] ${ctx.match}`;
     try {
@@ -6040,11 +6036,49 @@ async function withThinking(ctx, stages, work) {
     else await ctx.reply(msg).catch(() => {});
   }
 }
+// [自用补丁] 指令表：/help 回这段；TG_COMMANDS 注册到 Telegram 的「/」菜单
+const HELP_HTML = `🐸 <b>我能做的事</b>
+
+🔀 <b>两种模式</b>
+📝 记录模式（默认）：发什么记什么
+💬 对话模式：每句都回你，对话不进日记
+· <code>对话模式</code> /chat 进入，<code>退出</code> /record 回来
+· 说累、开心、哈喽、「聊聊」开头、回复我的消息，会自动进入；一阵子不说话自动回来
+· 对话里想记一句：<code>记 明天买牛奶</code>
+
+⌨️ <b>指令</b>
+<code>?</code> /now 今天的螺旋日程
+<code>小结</code> /summary 今天做了什么
+<code>睡了</code> <code>休息了</code> 收工 + 小结
+<code>起了</code> 开始今天
+<code>模式</code> /mode 现在是哪种模式
+<code>今天练什么</code> /train 健身安排
+<code>拖延</code> /stale 拖了好几天的事（带按钮）
+<code>闪卡</code> /cards 今天到期几张
+<code>周洞察</code> /week 这周做了什么
+/task 内容 记一条待办
+<code>done 写稿</code> <code>doing 写稿</code> 改任务状态
+
+🫶 <code>呱</code> <code>哈喽</code> <code>谢谢</code> 随时都可以`;
+const TG_COMMANDS = [
+  { command: "now", description: "🌀 今天的螺旋日程" },
+  { command: "summary", description: "🌙 今天做了什么（不收工）" },
+  { command: "chat", description: "💬 进入对话模式" },
+  { command: "record", description: "📝 回到记录模式" },
+  { command: "mode", description: "🔀 现在是哪种模式" },
+  { command: "train", description: "🏋️ 今天练什么" },
+  { command: "stale", description: "🐢 拖了好几天的事" },
+  { command: "cards", description: "🃏 今天到期的闪卡" },
+  { command: "week", description: "🧭 这周做了什么（周洞察）" },
+  { command: "task", description: "☑️ 记一条待办：/task 内容" },
+  { command: "help", description: "🐸 我能做的事" },
+];
 const THINKING = {
   low: ["🫂 收到了，我在……", "📖 在看你这几天的日记……", "✍️ 想想怎么跟你说……"],
   happy: ["🐸 收到！……", "📖 看看你今天都干了啥……", "✍️ 马上……"],
   chat: ["💭 收到，在想……", "📖 翻了翻你最近的日记……", "✍️ 在组织语言……"],
   summary: ["🌙 收到，在整理今天……", "📖 在读今天的日记……", "✍️ 在写小结……", "🫶 快好了……"],
+  week: ["🧭 收到，在翻这一周……", "📖 一天一天读日记……", "🧩 在归类这周做的事……", "✍️ 在写周洞察……", "🫶 快好了，再等等……"],
 };
 function nnPlugin() { var _n; return (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-notify"]; }
 async function replyDaySummary(ctx, msg) {
@@ -6103,6 +6137,21 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
         await ctx.reply(c ? "📝 回到记录模式啦，接下来发什么我都记进日记 🐸" : "📝 现在就是记录模式，发什么我都记进日记");
         return;
       }
+      // 指令（任何模式下都生效）
+      const cmd = said.replace(/[!！。.~～?？\s]+$/, "");
+      if (/^(?:帮助|怎么用|指令|\/help)$/.test(cmd)) { await ctx.reply(HELP_HTML, { parse_mode: "HTML" }); return; }
+      if (chatOn && /^(?:模式|现在什么模式|\/mode)$/.test(cmd)) {
+        const a = nn.chatActive();
+        const left = a === "auto" ? Math.max(1, Math.round((nn.settings.chat.last + nn.settings.chatIdleMin * 60e3 - Date.now()) / 60e3)) : 0;
+        await ctx.reply(a === "explicit" ? "💬 现在是<b>对话模式</b>（你自己开的），说「退出」回到记录模式"
+          : a === "auto" ? `💬 现在是<b>对话模式</b>（自动进入的），再过 ${left} 分钟不说话就回到记录模式；说「退出」马上回去`
+          : "📝 现在是<b>记录模式</b>，发什么我都记进日记；说「对话模式」开始聊", { parse_mode: "HTML" });
+        return;
+      }
+      if (chatOn && /^(?:今天练什么|练什么|健身|\/train)$/.test(cmd)) { await nn.pushWorkout(); return; }
+      if (chatOn && /^(?:拖延|拖了什么|\/stale)$/.test(cmd)) { if (!(await nn.pushStale())) await ctx.reply(`👍 今天日记里没有拖了 ${nn.settings.staleDays} 天以上的事`); return; }
+      if (chatOn && /^(?:闪卡|卡片|复习|\/cards)$/.test(cmd)) { if (!(await nn.pushCards())) await ctx.reply("🃏 现在没有到期的卡（或者 Anki 没开着，数不了）"); return; }
+      if (chatOn && /^(?:周洞察|这周做了什么|本周|\/week)$/.test(cmd)) { await withThinking(ctx, THINKING.week, async () => { await nn.pushInsight(true); return null; }); return; }
       if (naut && naut.capacityText && /^(?:[?？]|\/now)$/.test(said)) {
         if (naut.telegramReport) await ctx.reply(await naut.telegramReport(), { parse_mode: "HTML" });   // 图文版
         else await ctx.reply(await naut.capacityText());
@@ -6236,6 +6285,7 @@ var TelegramBot = class {
     });
   }
   start() {
+    this.bot.api.setMyCommands(TG_COMMANDS).catch(() => {});   // [自用补丁] 「/」菜单
     this.bot.start();
   }
   async getUpdates() {
@@ -6400,26 +6450,6 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    // [自用补丁] 使用说明：发什么、怎么写，会进到哪里
-    const guide = containerEl.createEl("details", { attr: { open: "", style: "margin:0 0 18px;padding:10px 14px;border:1px solid var(--background-modifier-border);border-radius:8px;background:var(--background-secondary);" } });
-    guide.createEl("summary", { text: "📮 使用说明（自用版）", attr: { style: "cursor:pointer;font-weight:600;" } });
-    guide.createDiv({ attr: { style: "font-size:.88em;line-height:1.7;margin-top:6px;" } }).innerHTML = `
-<b>收到的消息写在哪</b>：当天日记里「- ---」那一行后面。以 <code>todo</code> / <code>doing</code> / <code>done</code> 开头的消息（不分大小写）会变成大写任务，doing 自动记开始时间，并放进日记顶部对应的 DONE / DOING / TODO 分区。每一行顶格文字会自动加上 <code>- </code> 变成列表项；照片带配文时，配文在上、照片挂在它下面当子项（同一个块）。
-<br><b>和螺旋日程配合</b>（时间都按消息发出的时刻记，不是 Obsidian 收到的时刻）
-<br>· <code>doing 写稿</code> 自动补开始时间；<code>done 写稿 2h</code> 自动补完成时间，螺旋上画在「完成时刻往前 2 小时」。
-<br>· <code>done 写稿</code>：今天日记里有没做完的「写稿…」（前 2 个字一致就算，一致的字多的优先）就直接把那条改成 DONE，不另起一条；原来是 DOING 14:05 的写成 <code>DONE 14:05-16:30</code>。消息写的内容和原来不一样（原来「引体向上 2×5」，发的「done 引体向上 5×3」）以消息为准。找不到才新建。
-<br>· <code>?</code> 或 <code>/now</code>：机器人回一条容量速览（还剩多少时间、接下来几件、今天做完几件），不写进日记。
-<br>· <code>睡了</code>（睡觉 / 晚安 / 休息了 / 不干了）：收工后还会回一条今天的小结。<code>小结</code>：只要小结、不收工。<br>· 两种模式：<b>记录模式</b>（默认，发什么记什么）和<b>对话模式</b>（每句都回，对话不进日记）。说「对话模式」进入、「退出」回来；说「好累」「好开心」、打招呼、「聊聊」开头、回复它的消息会自动进入，一阵子不说话自己回到记录模式。对话里「记 」开头的照常记进日记。<br>· 「哈喽」「呱呱呱」「谢谢」：马上回一句，不记进日记。<br>· <code>睡了</code>：这天的结束时间设成现在，进行中的任务退回 TODO（做过的时段留着，明天接着算）。<code>起了</code>（起床 / 醒了 / 早安）：设这天的开始时间，并回一条今天的容量速览。
-<br><b>不需要关键词、自动生效的</b>
-<br>· <b>体重</b>：直接发米家体重秤的测量报告截图。每晚 22:30 的健康定时任务会读最近 3 天日记里的图片，写进 体重记录，更新健康看板。
-<br>· <b>训练</b>：发 <code>DONE 引体向上 5×3</code>、<code>DONE 跑步 3.2 km，28 分钟</code>、<code>FAILED 深蹲</code>。「力量训练与健康」看板实时按动作名统计（DONE=完成，FAILED=没做成，TODO=待做）。
-<br>· <b>想买 / 想试的穿搭</b>：文字里带 <code>[[等待尝试]]</code>，穿搭看板的「等待尝试 · 穿搭」会实时搜到。
-<br>· <b>选题</b>：带 <code>[[视频选题]]</code> 或 <code>[[文章选题]]</code>，选题台会收进去。
-<br>· <b>任务</b>：<code>/task 内容</code> 会写成 <code>- [ ] 内容</code>。
-<br><b>要加关键词、再让 Claude 处理的</b>
-<br>· <b>衣橱入库</b>（自己已经有的衣服、鞋、腰带、首饰）：发照片，配文写 <code>#衣橱 名称 尺码 价格</code>，例如 <code>#衣橱 黑色麂皮切尔西靴 42码 680</code>；一次发多张图时只有第一张需要配文。然后在 Claude 里说一句「处理衣橱」。入库后那一行末尾会出现 <code>→ [[卡片名]]</code>。
-<br>· <b>日记里的问题</b>：在 Obsidian 里运行「整理今天的日记」（⌘⇧J），问题会被挪到文末并附上回答。
-<br><span style="color:var(--text-muted);">这是本地自用版（telegram-inbox-local），不会被插件市场更新覆盖。改动记在 main.js 里带「自用补丁」注释的地方。</span>`;
     const botSettingsTitle = containerEl.createDiv({
       cls: "bot-settings-title"
     });
@@ -6627,20 +6657,59 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
     if (remotelySync) {
       syncStatusDiv.createDiv({ text: "Remotely Sync: enabled" });
     }
-    const donationDiv = containerEl.createDiv({ cls: "tg-inbox-donation-footer" });
-    const donationInfo = donationDiv.createDiv({ cls: "donation-info" });
-    donationInfo.createSpan({ text: "\u2764\uFE0F", cls: "donation-heart" });
-    const donationTextContainer = donationInfo.createDiv({ cls: "donation-text-container" });
-    donationTextContainer.createEl("strong", { text: "Support development" });
-    donationTextContainer.createEl("div", {
-      text: "If you find this plugin helpful, please consider supporting its development to help me keep it alive. Thank you!",
-      cls: "donation-text"
-    });
-    const buttonContainer = donationDiv.createDiv({ cls: "donation-buttons" });
-    const coffeeBtn = buttonContainer.createEl("button", { text: "Ko-fi" });
-    coffeeBtn.onclick = () => window.open("https://ko-fi.com/icealtria");
-    const githubBtn = buttonContainer.createEl("button", { text: "GitHub Sponsors" });
-    githubBtn.onclick = () => window.open("https://github.com/sponsors/icealtria");
+    // [自用补丁] 使用说明：放在设置页最后；原版的 Support development 已删（原作者 icealtria，致谢写在说明末尾）
+    const nnS = (window.app?.plugins?.plugins?.["nautilus-notify"] || {}).settings || {};
+    const at = (k, d) => nnS[k] || d;
+    const guide = containerEl.createEl("details", { attr: { open: "", style: "margin:24px 0 18px;padding:10px 14px;border:1px solid var(--background-modifier-border);border-radius:8px;background:var(--background-secondary);" } });
+    guide.createEl("summary", { text: "📮 使用说明（自用版）", attr: { style: "cursor:pointer;font-weight:600;" } });
+    guide.createDiv({ attr: { style: "font-size:.88em;line-height:1.75;margin-top:6px;" } }).innerHTML = `
+<b>🔀 两种模式</b>
+<br>· <b>记录模式</b>（默认）：发什么记什么，进当天日记。
+<br>· <b>对话模式</b>：每句它都接着前面的话回你，对话内容不进日记。说 <code>对话模式</code> / <code>陪我聊天</code> / <code>/chat</code> 进入，一直保持到说 <code>退出</code> / <code>记录模式</code> / <code>不聊了</code> / <code>/record</code>，或者说「睡了」收工。
+<br>· <b>自动进入对话模式</b>：情绪话（好累、好难受、好开心、搞定了、好想她……）、打招呼（哈喽、在吗）、「聊聊 / 陪我」开头、回复它的某条消息。自动进入的 ${at("chatIdleMin", 20)} 分钟没说话就回到记录模式，并说一声。
+<br>· 对话模式里也照常生效：下面的指令、<code>done / doing / todo</code>、图片、带链接的消息；想记一句就用 <code>记 </code> 开头（「记」字不会写进去）。
+
+<br><br><b>⌨️ 指令</b>（中文说法和 / 指令都行，任何模式下都生效；输入 / 能看到菜单）
+<br>· <code>?</code> <code>/now</code>：图文版螺旋日程（⭐ 正在做、接下来、排不下、今天过了多少），不写进日记
+<br>· <code>小结</code> <code>/summary</code>：今天的小结：做成了什么、明天先做哪件、几句话，不收工
+<br>· <code>睡了</code> <code>休息了</code> <code>不干了</code> <code>晚安</code>：收工（这天的结束时间设成现在，进行中的任务退回 TODO），再回一条今天的小结
+<br>· <code>起了</code> <code>早安</code>：设这天的开始时间，回一条今天的容量
+<br>· <code>模式</code> <code>/mode</code>：现在是记录模式还是对话模式
+<br>· <code>今天练什么</code> <code>/train</code>：今天的健身安排、本周练了几天
+<br>· <code>拖延</code> <code>/stale</code>：拖了 ${at("staleDays", 3)} 天以上的待办，每件带 🗑 不做了 / 📅 挪明天 / 💤 搁置 按钮
+<br>· <code>闪卡</code> <code>/cards</code>：Anki 里今天到期几张（Anki 要开着）
+<br>· <code>周洞察</code> <code>/week</code>：现在就读这周的日记，写一份「这周做了什么」（一两分钟）
+<br>· <code>/task 内容</code>：写成 <code>- [ ] 内容</code>
+<br>· <code>帮助</code> <code>/help</code>：在 Telegram 里看这份指令表
+
+<br><br><b>🐸 陪伴</b>
+<br>· <code>哈喽</code> <code>在吗</code>：马上打招呼（按时间段），带上你在做的事；然后进入对话模式等你往下说
+<br>· <code>呱</code> <code>呱呱</code> <code>呱呱呱</code>：呱回来，你呱几声它多呱一声；<code>谢谢</code> <code>抱抱</code> <code>贴贴</code>：回一句。这些马上回，不记进日记
+<br>· 情绪话、对话、小结要读日记、调 claude，8～30 秒：会先回一条「💭 收到，在想……」并每几秒换一句进度，写好后提示消失、正式回复作为新消息发来（手机会响）
+<br>· 回你的方式写在 <code>${at("comfortProfile", "健康/陪伴档案.md")}</code>，改它就能改语气；只有你这次明确说了想伤害自己，才会给求助热线
+
+<br><br><b>⏰ 它会主动发来</b>（来自「任务提醒」插件，时间在那边的设置里改）
+<br>· ${at("pushWorkoutAt", "08:00")} 🏋️ 健身早报 · ${at("tgReportTimes", "12:00,18:00,22:00").replace(/,/g, " / ")} 🌀 螺旋日程 · ${at("pushCardsAt", "12:00")} 🃏 闪卡到期 · ${at("pushPeriodAt", "12:00")} 🌸 经期预测（提前 3 天和当天）
+<br>· ${at("pushStaleAt", "23:00")} 🐢 拖延任务（带按钮）· 周日 ${at("pushInsightAt", "21:30")} 🧭 周洞察
+<br>· 人不在电脑前（${at("tgAwayMin", 5)} 分钟没动或锁屏）时，电脑上弹的提醒同时发到这里
+<br>· Mac 睡着时什么都发不出去、也回不了；插电时「任务提醒」会阻止闲置睡眠。手机上的 Obsidian 开着时可能先收走消息，陪伴功能只在电脑上有
+
+<br><br><b>📝 消息写在哪</b>
+<br>· 当天日记里「- ---」那一行后面，时间按消息<b>发出</b>的时刻记，凌晨 7 点前算前一天。每一行顶格文字自动加 <code>- </code>；照片带配文时，配文在上、照片挂在下面当子项。
+<br>· <code>todo</code> / <code>doing</code> / <code>done</code> 开头（不分大小写）变成大写任务，放进日记顶部对应分区。<code>doing 写稿</code> 自动补开始时间；<code>done 写稿 2h</code> 自动补完成时间，螺旋上画在「完成时刻往前 2 小时」。
+<br>· <code>done 写稿</code>：今天日记里有没做完的「写稿…」（前 2 个字一致就算，一致的字多的优先）就直接改成 DONE，不另起一条；原来是 <code>DOING 14:05</code> 的写成 <code>DONE 14:05-16:30</code>。内容和原来不一样时以消息为准，找不到才新建。
+
+<br><br><b>🔁 不用关键词、自动生效的</b>
+<br>· <b>训练</b>：发 <code>DONE 引体向上 40 个</code>、<code>DONE 跑步 3.2 km，28 分钟</code>、<code>FAILED 深蹲</code>，「力量训练与健康」看板实时统计；打勾完成训练时，电脑上的完成通知会带「本周练了几天」
+<br>· <b>想买 / 想试的穿搭</b>：文字里带 <code>[[等待尝试]]</code>，穿搭看板的「等待尝试 · 穿搭」会搜到
+<br>· <b>选题</b>：带 <code>[[视频选题]]</code> 或 <code>[[文章选题]]</code>，选题台会收进去
+
+<br><br><b>🤖 发过来以后，再让 Claude 处理的</b>
+<br>· <b>体重</b>：发米家体重秤的测量报告截图，然后跟 Claude 说「更新健康洞察」，它会读图写进体重记录、更新健康看板（不再每晚自动跑）
+<br>· <b>衣橱入库</b>：发照片，配文 <code>#衣橱 名称 尺码 价格</code>（例：<code>#衣橱 黑色麂皮切尔西靴 42码 680</code>，一次多张只要第一张配文），然后跟 Claude 说「处理衣橱」；入库后那一行末尾出现 <code>→ [[卡片名]]</code>
+<br>· <b>日记里的问题</b>：在 Obsidian 里运行「整理今天的日记」（⌘⇧J），问题挪到文末并附上回答
+
+<br><br><span style="color:var(--text-muted);">这是本地自用版（telegram-inbox-local），不会被插件市场更新覆盖；改动都在 main.js 里带「自用补丁」注释的地方。基于 icealtria 的 Telegram Inbox 修改，感谢原作者。</span>`;
   }
   hide() {
     window.clearInterval(this.updateId);
