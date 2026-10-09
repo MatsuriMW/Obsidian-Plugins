@@ -160,7 +160,7 @@ var AtomCreatorSettingTab = class extends import_obsidian.PluginSettingTab {
         supertag.frontmatterTemplate = v;
         await this.plugin.saveSettings();
       });
-      this.inlineTextarea(card, "字段 Fields（键: 默认值，一行一个；新建页面写进属性，整理日记时插到 [[标签名]] 下面让你填）", supertag.fields || "", async (v) => {
+      this.inlineTextarea(card, "字段 Fields（键: 默认值 # 可选值1, 可选值2，一行一个；# 后面的可选值可不写。新建页面写进属性，整理日记时插到 [[标签名]] 下面让你填；待读 / 待看 / 待听看板按这些字段显示维度、筛选）", supertag.fields || "", async (v) => {
         supertag.fields = v;
         await this.plugin.saveSettings();
       });
@@ -211,19 +211,29 @@ function renderTemplate(template, vars) {
     return (_a = vars[key]) != null ? _a : "";
   });
 }
-// 字段（Field）：每个 supertag 可以单独定义一组「键: 默认值」（一行一个）。
-//   · 新建页面时和属性模板合在一起写进属性；已有页面缺的补上
+// 字段（Field）：每个 supertag 可以单独定义一组「键: 默认值 # 可选值1, 可选值2」（一行一个，# 后面的可选值可以不写）。
+//   · 新建页面时和属性模板合在一起写进属性（# 后面的可选值不写进去）；已有页面缺的补上
 //   · 日记整理（journal-tidy）碰到写了 [[标签名]] 的列表项，会把这些字段作为子项「键:: 默认值」插在下面，让你填
+//   · 待读 / 待看 / 待听看板（scripts/marker-board.js）通过 fieldSchema() 拿字段和可选值，显示成维度、可以筛选
+const FIELD_NOTE_RE = /(?:^|\s)#\s.*$/;   // 「键: 值 # 可选值」里 # 开头的那段（YAML 注释写法）
 function fmTemplateOf(st) {
-  return st.fields && st.fields.trim() ? st.frontmatterTemplate.replace(/\s*$/, "") + "\n" + st.fields.trim() : st.frontmatterTemplate;
+  if (!st.fields || !st.fields.trim()) return st.frontmatterTemplate;
+  const fields = st.fields.trim().split("\n").map((l) => l.replace(FIELD_NOTE_RE, "").replace(/\s+$/, "")).join("\n");
+  return st.frontmatterTemplate.replace(/\s*$/, "") + "\n" + fields;
 }
 function parseFieldDefs(text) {
   const out = [];
   for (const line of String(text || "").split("\n")) {
-    const m = line.match(/^([^:#\s][^:]*?):\s*(.*)$/);
+    const m = line.match(/^([^:#\s][^:]*?):(.*)$/);
     if (!m) continue;
-    const v = m[2].trim();
-    out.push({ key: m[1].trim(), def: /^\[\s*\]$/.test(v) ? "" : v.replace(/^\[|\]$/g, "").replace(/^"(.*)"$/, "$1") });
+    const note = (m[2].match(FIELD_NOTE_RE) || [""])[0].replace(/^\s*#\s*/, "");
+    const v = m[2].replace(FIELD_NOTE_RE, "").trim();
+    out.push({
+      key: m[1].trim(),
+      def: /^\[\s*\]$/.test(v) ? "" : v.replace(/^\[|\]$/g, "").replace(/^"(.*)"$/, "$1"),
+      options: note ? note.split(/\s*[,，、]\s*/).filter(Boolean) : [],
+      multi: v.startsWith("["),
+    });
   }
   return out;
 }
@@ -586,6 +596,14 @@ var AtomCreator = class extends import_obsidian3.Plugin {
     const n = String(name || "").trim().toLowerCase();
     const st = this.settings.supertags.find((t) => t.fields && t.fields.trim() && [t.tag, t.tag.replace(/^#/, ""), t.name].some((x) => String(x).toLowerCase() === n));
     return st ? parseFieldDefs(st.fields) : [];
+  }
+  // 给待读 / 待看 / 待听看板用：字段（含可选值、是否多选）+ 属性模板里的键 + 标签颜色（看板主色）。名字同 fieldDefs；没有这个标签返回 null
+  fieldSchema(name) {
+    const n = String(name || "").trim().toLowerCase();
+    const st = this.settings.supertags.find((t) => [t.tag, t.tag.replace(/^#/, ""), t.name].some((x) => String(x).toLowerCase() === n));
+    if (!st) return null;
+    const keys = String(st.frontmatterTemplate || "").split("\n").map((l) => (l.match(/^([^:#\s][^:]*?):/) || [])[1]).filter(Boolean).map((k) => k.trim());
+    return { tag: st.tag, color: st.color, fields: parseFieldDefs(st.fields), keys };
   }
   // Called from SettingTab when tag or color changes
   refreshDecorations() {

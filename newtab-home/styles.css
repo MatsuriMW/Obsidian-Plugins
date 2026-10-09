@@ -100,3 +100,54 @@
 .workspace-split.mod-root .wiki-root .wiki-result-body { max-height: none; }
 .workspace-split.mod-root .wiki-root .wiki-page,
 .workspace-split.mod-root .wiki-root .wiki-summary { white-space: normal; overflow: visible; text-overflow: clip; }
+
+/* 背景图（插件目录里的 bg.jpg）：铺满整个新标签页，盖一层薄纱；库名改白字加阴影，按钮换成毛玻璃，免得糊在照片上 */
+.workspace-split.mod-root .view-content.nth-bg { position: relative; background: var(--nth-bg) center / cover no-repeat; }
+.workspace-split.mod-root .view-content.nth-bg::before {
+	content: ""; position: absolute; inset: 0; pointer-events: none;
+	background: color-mix(in srgb, var(--background-primary) 18%, transparent);
+}
+.workspace-split.mod-root .view-content.nth-bg > * { position: relative; }
+.nth-bg .nth-logo { color: #fff; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.5), 0 0 2px rgba(0, 0, 0, 0.35); }
+/* 照片上不用彩色底：统一成中性毛玻璃，颜色只留在图标上 */
+.nth-bg .nth-action {
+	background: rgba(255, 255, 255, 0.42);
+	border-color: rgba(255, 255, 255, 0.55);
+	backdrop-filter: blur(18px) saturate(1.4); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+	box-shadow: 0 4px 18px rgba(0, 0, 0, 0.10);
+}
+.nth-bg .nth-action:hover {
+	background: rgba(255, 255, 255, 0.62);
+	border-color: rgba(255, 255, 255, 0.8);
+	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.14);
+}
+.nth-bg .nth-action-icon { background: rgba(255, 255, 255, 0.6); color: rgba(var(--nth), 0.9); }
+.nth-bg .nth-action-label { color: #2b2b2b; }
+.theme-dark .nth-bg .nth-action { background: rgba(30, 30, 30, 0.42); border-color: rgba(255, 255, 255, 0.14); }
+.theme-dark .nth-bg .nth-action:hover { background: rgba(30, 30, 30, 0.6); border-color: rgba(255, 255, 255, 0.24); }
+.theme-dark .nth-bg .nth-action-icon { background: rgba(255, 255, 255, 0.1); }
+.theme-dark .nth-bg .nth-action-label { color: #eee; }
+.nth-bg .nth-search { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18); }
+
+/* 右上角：换背景图、改按钮；平时很淡，鼠标移到新标签页上才清楚（底部常有浮动输入条，放上面） */
+.workspace-split.mod-root .view-content:has(.nth-home) { position: relative; }
+.workspace-split.mod-root .view-content > .nth-corner, .workspace-split.mod-root .view-content.nth-bg > .nth-corner { position: absolute; }
+.nth-corner { right: 14px; top: 10px; z-index: 5; display: flex; gap: 4px; opacity: 0.25; transition: opacity 0.15s; }
+.view-content:hover > .nth-corner { opacity: 0.85; }
+.nth-corner .nth-corner-btn { padding: 6px; border-radius: 8px; }
+.nth-bg .nth-corner .nth-corner-btn { color: #fff; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.6)); }
+.nth-bg .nth-corner .nth-corner-btn:hover { background: rgba(0, 0, 0, 0.25); }
+
+/* 设置页 */
+.nth-bg-preview { height: 140px; margin: 4px 0 18px; border-radius: 10px; background: center / cover no-repeat; border: 1px solid var(--background-modifier-border); }
+.nth-setting-action { margin-bottom: 10px; padding: 0 12px; border: 1px solid var(--background-modifier-border); border-radius: 10px; }
+.nth-setting-action .setting-item { border-top: none; }
+.nth-setting-action .setting-item-name { display: flex; align-items: center; gap: 8px; }
+.nth-setting-icon {
+	display: inline-flex; align-items: center; justify-content: center; order: -1;
+	width: 26px; height: 26px; border-radius: 50%; background: rgba(var(--nth), 0.16); color: rgb(var(--nth));
+}
+.nth-setting-icon svg { width: 15px; height: 15px; }
+.nth-setting-iconname { width: 110px; }
+.nth-setting-target { width: 280px; }
+.nth-suggest-note { font-size: var(--font-ui-smaller); color: var(--text-muted); }

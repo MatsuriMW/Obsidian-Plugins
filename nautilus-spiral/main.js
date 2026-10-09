@@ -1431,6 +1431,92 @@ module.exports = class NautilusSpiral extends Plugin {
     return lines.join("\n");
   }
 
+  // 发到 Telegram 的图文版（HTML 格式）：「?」的回复和「任务提醒」每天定时推送共用
+  async telegramReport(title = "螺旋日程") {
+    const cfg = this.settings;
+    const date = this.today();
+    const dayKey = date.format(cfg.format);
+    const H = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const nowM = moment();
+    const head = `🌀 <b>${H(title)}</b> · ${date.format("M月D日")} 周${"日一二三四五六"[date.day()]} · ${nowM.format("HH:mm")}`;
+    const file = this.app.vault.getAbstractFileByPath(this.journalPath(date));
+    if (!(file instanceof TFile)) return `${head}\n\n📭 今天还没有日记`;
+    const items = parseJournal(await this.app.vault.read(file), cfg);
+    this.withCalendar(items, date);
+    const now = normalize(nowM.hours() * 60 + nowM.minutes(), cfg);
+    const bounds = (cfg.dayBounds || {})[dayKey] || {};
+    applyWork(items, cfg, dayKey, now, 0, bounds);
+    const plan = schedule(items, cfg, now, 0, bounds);
+    const S = bounds.start ?? cfg.dayStart * 60, E = bounds.end ?? cfg.dayEnd * 60;
+
+    const bar = (p, n = 10) => { const k = Math.round(Math.max(0, Math.min(1, p)) * n); return "▓".repeat(k) + "░".repeat(n - k); };
+    const pct = (p) => `${Math.round(Math.max(0, Math.min(1, p)) * 100)}%`;
+    // 🕐…🕛 整点、🕜…🕧 半点
+    const clockIcon = (t) => { t = ((t % 1440) + 1440) % 1440; const h = Math.floor(t / 60) % 12 || 12; return String.fromCodePoint((t % 60 >= 30 ? 0x1f55c : 0x1f550) + h - 1); };
+    // 任务名：双链 / 链接只留文字，「← 2026_10_02」写成「↩ 10-02」，太长截断
+    const L = (t, n = 36) => {
+      let s = t.label.replace(/\s*←\s*\[*(\d{4})_(\d{2})_(\d{2})\]*/, " ↩ $2-$3")
+        .replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+      if ([...s].length > n) s = [...s].slice(0, n).join("") + "…";
+      return (t.prio ? "‼️ " : "") + H(s);
+    };
+    const spent = (t) => (t.spentToday || 0) + (t.spentBefore || 0);
+
+    const lines = [head, "━━━━━━━━━━━━━━━"];
+    lines.push(`🕰 ${clock(S)} → ${E >= 1440 ? "次日 " : ""}${clock(E)}  ${bar((now - S) / (E - S))}  今天已过 ${pct((now - S) / (E - S))}`);
+    lines.push(`⏳ 可用 <b>${dur(plan.available)}</b> · 📋 待办 <b>${dur(plan.demand)}</b> · ` +
+      (plan.overflow ? `🔴 超出 <b>${dur(plan.overflow)}</b>` : `🟢 富余 <b>${dur(plan.available - plan.demand)}</b>`));
+    const tasks = items.filter((i) => i.kind === "task" && !i.container);
+    const done = tasks.filter((i) => i.state === "done");
+    const openN = tasks.filter((i) => i.state === "open").length;
+    lines.push(`✅ 做完 <b>${done.length}</b> · ⬜ 还剩 <b>${openN}</b>  ${bar(done.length / (done.length + openN || 1))}  ${pct(done.length / (done.length + openN || 1))}`);
+
+    // ⭐ 正在做：专注、吃饭锻炼、DOING
+    const doing = plan.queue.filter((t) => t.doing);
+    const s = this.session();
+    const b = cfg.breakState;
+    if (doing.length || s || b) {
+      lines.push("", "⭐ <b>正在做</b>");
+      if (s) lines.push(`⏱ 专注中 · ${s.tasks.map((t) => `${H(t.label)} ${Date.now() < t.end ? `还剩 ${dur(Math.ceil((t.end - Date.now()) / 60e3))}` : "到点了"}`).join("；")}`);
+      if (b) lines.push(`${breakIcon(b.word)} ${H(b.word)}中 · ${moment(b.since).format("HH:mm")} 起，${dur(Math.max(1, Math.round((Date.now() - b.since) / 60e3)))}`);
+      for (const t of doing) {
+        const p = t.progress != null ? t.progress : spent(t) / (spent(t) + t.remaining || 1);
+        lines.push(`⭐ <b>${L(t)}</b>`, `      ${bar(p, 8)} ${spent(t) >= 1 ? `已做 ${dur(spent(t))} · ` : ""}剩 ${dur(t.remaining)}`);
+      }
+    }
+    const paused = tasks.filter((t) => t.state === "open" && t.paused);
+    if (paused.length) lines.push(`⏸ 暂停：${paused.map((t) => L(t, 16)).join("、")}`);
+
+    // ⏭ 接下来（按排到的时间）
+    const next = plan.queue.filter((t) => !t.doing && t.segments.length > t.workedN)
+      .sort((a, c) => a.segments[a.workedN][0] - c.segments[c.workedN][0]).slice(0, 5);
+    if (next.length) {
+      lines.push("", "⏭ <b>接下来</b>");
+      for (const t of next) {
+        const at = t.segments[t.workedN][0];
+        lines.push(`${clockIcon(at)} <code>${clock(at)}</code> ${L(t)} · ${t.remaining < t.dur - 1 ? `剩 ${dur(t.remaining)}` : dur(t.dur)}`);
+      }
+    }
+    const events = items.filter((i) => i.kind === "event" && i.state !== "done" && !i.pinned && i.end > now).sort((a, c) => a.start - c.start).slice(0, 4);
+    if (events.length) {
+      lines.push("", "📅 <b>固定安排</b>");
+      for (const e of events) lines.push(`${e.start <= now ? "🔴" : "🔔"} <code>${clock(e.start)}–${clock(e.end)}</code> ${L(e)}`);
+    }
+    const over = plan.queue.filter((t) => t.overflow);
+    if (over.length) {
+      lines.push("", `🚫 <b>排不下</b>（${over.length} 件）`);
+      lines.push(...over.slice(0, 5).map((t) => `▫️ ${L(t)}`));
+      if (over.length > 5) lines.push(`▫️ …还有 ${over.length - 5} 件`);
+    }
+    if (plan.suspended.length) lines.push("", `💤 搁置 ${plan.suspended.length} 件：${plan.suspended.slice(0, 4).map((t) => L(t, 14)).join("、")}${plan.suspended.length > 4 ? "…" : ""}`);
+    const recent = done.filter((t) => t.stamp != null).sort((a, c) => c.stamp - a.stamp).slice(0, 3);
+    if (recent.length) lines.push("", `🎉 刚做完：${recent.map((t) => L(t, 16)).join("、")}`);
+    const tail = (await this.dayTail(dayKey, items)).slice(1);   // 第一行「做完几件」上面已经有了
+    if (tail.length) lines.push("", ...tail.map(H));
+    lines.push("", "<i>💬 回「?」随时看 · 「睡了」「起了」记作息</i>");
+    return lines.join("\n");
+  }
+
   // 这天的成绩单：做完几件、人机协作、游戏
   async dayTail(dayKey, items) {
     const out = [];

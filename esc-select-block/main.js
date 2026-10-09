@@ -39,7 +39,40 @@
 //   · 块后面紧跟着单独一行的块 id（^q-xxxx，Flashcards 写的）算这一块的，插在它后面
 //   · 不在列表里：插在当前段落下面；下面紧挨着已经是分割线就不重复插
 //     （只要选中的文字正好被一对符号包着就算，也包括 Obsidian 自己包的 ** == ~~ 等）
-const { Plugin } = require("obsidian");
+//
+// 四、仿 Bike：go to ancestor / Group rows（命令，可在设置里改键；键位沿用 Keyboard Maestro 里给 Bike 配的）
+//   · ⌘⌥↑ 跳到母块：光标所在列表项的上一级（往上找第一个缩进更浅的列表项）。连按一层层往上，到顶格提示「已经是顶层」
+//   · ⌘⌥⇧↑ 直接跳到最上一级的顶格母块
+//     编辑状态下：选中母块那一行的文字（不含缩进、列表符号、复选框、行尾 ^块ID）
+//     Esc 整块选中状态下：改成整块选中母块，还在选中状态里，接着 ↑↓ / ⌘⌥↑ 都行
+//   · ⌘⌥↓ Group rows：选中的几行 / 几块（Esc 选中的整块也算；没选就是当前这一块）连同各自的子项一起降一级，
+//     上面插一个空的母块（和原来最浅的那一层同级），光标停在母块里等输入
+//
+// 五、块类型转换（命令面板里搜「块转换」，可在设置里改键）
+//   · ⌘\ 循环切换：无序列表 → 有序列表（1. 2. 3.）→ 普通段落 → 无序列表。看第一块现在是什么：
+//     无序 → 改有序；有序（含论文式 4.1、a. b. c.）→ 改段落；段落 → 改无序。每一步的规则和下面对应的单独命令一样，
+//     只多一条：光标在一块有序列表项上改段落时，下面紧挨着的有序同级块一起改（和改有序时对称，超过 5 块先问）；
+//     段落改无序只改光标所在这一段（要改几段就先选中）
+//   · 下面五个单独的命令默认不占快捷键
+//   · 对象：Esc 选中的整块 / 选区碰到的块 / 光标所在的块。列表项只改它自己那一行的符号，子项不动；
+//     选区跨了几层时，按最浅的那一层算（深层的归到它在这一层的母块）
+//   · 改为无序列表「- 」
+//   · 改为有序列表，三种编号：
+//       1. 2. 3.：真正的 Markdown 有序列表。编号和 Bullet 的自动重排规则一致（数同一个母块下排在前面的有序项），
+//         后面已经是有序的同级块跟着重排，Bullet 下次重排不会跳号
+//       论文式 4.1 4.2：Markdown 没有这种列表，写成「- 4.1 文字」（还是列表块，Esc / Bullet 照常用）。
+//         前缀依次看：上一个同级块的编号（接着编）→ 这一块自己原来的编号 → 母块的编号（母块是 4. 或 4.1 → 4.1 / 4.1.1）
+//         → 都没有就弹框问，默认填上面最近的带编号标题（## 4 方法 → 4）
+//       a. b. c.：同样写成「- a. 文字」，上一个同级块是字母编号就接着编
+//     只改了一块时，它下面的同级块一起改（同一个母块下、紧挨着的；普通段落就是下面接着的段落，碰到标题、代码块、分割线停）：
+//     不超过 5 块直接改，超过 5 块弹框问：全部 / 只带 5 块 / 只改这一块
+//     后面紧跟着的、已经是同一种编号的同级块也跟着重排（所以对编号乱了的列表再执行一次就是重新编号）
+//     原来的 4.1 / a. 编号会换掉（一组里每块都有同一种编号，或者单独一块但相邻同级块也是这种编号，才认为是编号，避免误删「3.5 小时」这种正文）
+//   · 改为普通段落：顶格的块变成顶格段落（和上一行之间空一行，免得并进上面的列表），子块升一级，变成段落下面的列表；
+//     子块变成母块里的一段文字（去掉列表符号、保留缩进），它自己的子块升一级。1. 编号去掉，4.1 / a. 留在文字里
+//   · 普通段落改成列表：一段（连续的几行）= 一块，第二行起缩进成续行；连着改几段时，段落之间的空行去掉，成为同一个列表
+//   · 转换完 Esc 选中状态还在（改成段落的除外），一次撤销全部撤回
+const { Plugin, Notice, Modal } = require("obsidian");
 const { keymap, EditorView } = require("@codemirror/view");
 const { Prec, EditorSelection, EditorState, StateField, StateEffect } = require("@codemirror/state");
 
@@ -147,6 +180,25 @@ function prevItem(getLine, item) {
 	return -1;
 }
 
+// 列表项 item 的母块：往上找第一个缩进更浅的非空行，是列表项就是它；碰到缩进更浅的普通段落 / 标题 = 没有母块，返回 -1
+function parentItem(getLine, item) {
+	const w = indentWidth(getLine(item));
+	if (w === 0) return -1;
+	for (let i = item - 1; i >= 0; i--) {
+		const l = getLine(i);
+		if (isBlank(l) || indentWidth(l) >= w) continue;
+		return isItem(l) ? i : -1;
+	}
+	return -1;
+}
+
+// 列表项那一行去掉缩进、列表符号、复选框之后，文字从第几列开始、到第几列结束（不含行尾 ^块ID）
+function contentSpan(line) {
+	const m = line.match(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]*(?:\[.\][ \t]+)?/);
+	const from = m ? m[0].length : 0;
+	return { from, to: Math.max(from, line.replace(/\s+\^[\w-]+\s*$/, "").replace(/\s+$/, "").length) };
+}
+
 // 行 after 之后的第一个列表项（空行、续行、普通段落、标题都跳过）；到底返回 -1
 function nextItemAfter(getLine, lineCount, after) {
 	for (let i = after + 1; i < lineCount; i++) {
@@ -157,6 +209,162 @@ function nextItemAfter(getLine, lineCount, after) {
 
 // 列表项那一行的内容（去掉缩进、列表符号、编号、复选框），用来在改层级 / 挪动之后重新认出这一块
 const keyOf = (line) => line.replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]*(?:\[.\][ \t]+)?/, "").trim();
+
+// ---------- 块类型转换用到的 ----------
+
+// 列表项那一行拆开：缩进、符号、复选框（带后面的空格）、正文；prefixLen = 正文之前的长度
+function parseItem(line) {
+	const m = line.match(/^([ \t]*)([-*+]|\d+[.)])(?:[ \t]+(\[.\][ \t]+)?|$)/);
+	return { indent: m[1], marker: m[2], box: m[3] ? m[3].trimEnd() + " " : "", text: line.slice(m[0].length), prefixLen: m[0].length };
+}
+const isOrderedMarker = (mk) => /^\d+[.)]$/.test(mk);
+const isDivider = (line) => /^(?:-{3,}|\*{3,}|_{3,})$/.test(keyOf(line));
+const isBlockId = (line) => /^\s*\^[\w-]+\s*$/.test(line);
+
+// 正文开头的论文式 / 字母编号：{ kind: "paper", parts: [4, 1], len } / { kind: "letter", index: 1, len }，没有返回 null
+function labelOf(text) {
+	let m = text.match(/^(\d+(?:\.\d+)+)\.?[ \t]+/);
+	if (m) return { kind: "paper", parts: m[1].split(".").map(Number), len: m[0].length };
+	m = text.match(/^([a-z]{1,2})[.)][ \t]+/);
+	if (m) return { kind: "letter", index: letterIndex(m[1]), len: m[0].length };
+	return null;
+}
+// 1 → a，26 → z，27 → aa
+function letterOf(k) {
+	let s = "";
+	for (; k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(97 + ((k - 1) % 26)) + s;
+	return s;
+}
+function letterIndex(s) {
+	let k = 0;
+	for (const c of s) k = k * 26 + (c.charCodeAt(0) - 96);
+	return k;
+}
+
+// 每行是不是在 front matter / 代码块里（这些行不算段落）
+function fencedLines(getLine, n) {
+	const mask = new Array(n).fill(false);
+	let i = 0;
+	if (n && getLine(0) === "---") {
+		mask[0] = true;
+		for (i = 1; i < n && !/^(---|\.\.\.)\s*$/.test(getLine(i)); i++) mask[i] = true;
+		if (i < n) mask[i++] = true;
+	}
+	let fence = null;
+	for (; i < n; i++) {
+		const m = getLine(i).match(/^[ \t]*(`{3,}|~{3,})/);
+		if (fence) {
+			mask[i] = true;
+			if (m && m[1][0] === fence[0] && m[1].length >= fence.length) fence = null;
+		} else if (m) { fence = m[1]; mask[i] = true; }
+	}
+	return mask;
+}
+
+// 顶格的普通段落行（不是列表、标题、引用、表格、分割线、块 id、代码块）
+function isParaLine(ctx, i) {
+	const l = ctx.getLine(i);
+	return !isBlank(l) && indentWidth(l) === 0 && !isItem(l) && !ctx.fenced[i] && !isBlockId(l)
+		&& !/^(#{1,6}([ \t]|$)|>|\||\$\$|%%|<)/.test(l) && !/^([-*_])([ \t]*\1){2,}[ \t]*$/.test(l);
+}
+function paraAt(ctx, i) {
+	let start = i, end = i;
+	while (start > 0 && isParaLine(ctx, start - 1)) start--;
+	while (end + 1 < ctx.n && isParaLine(ctx, end + 1)) end++;
+	return { kind: "para", start, end };
+}
+const itemUnit = (line) => ({ kind: "item", line });
+const unitLine = (u) => (u.kind === "item" ? u.line : u.start);
+
+// fromLine..toLine 碰到的块：列表项按最浅的一层算（深层的归到它在这一层的母块），段落一段一块
+function collectUnits(ctx, fromLine, toLine) {
+	const { getLine } = ctx, items = [], units = [];
+	for (let i = fromLine; i <= toLine; i++) {
+		if (isBlank(getLine(i))) continue;
+		const it = itemLineFor(getLine, i);
+		if (it >= 0) { if (it === i || i === fromLine) items.push(it); continue; }
+		if (isParaLine(ctx, i)) { const p = paraAt(ctx, i); units.push(p); i = p.end; }
+	}
+	if (items.length) {
+		const minW = Math.min(...items.map((l) => indentWidth(getLine(l))));
+		const seen = new Set();
+		for (let l of items) {
+			for (let p; indentWidth(getLine(l)) > minW && (p = parentItem(getLine, l)) >= 0; ) l = p;
+			if (!seen.has(l) && indentWidth(getLine(l)) === minW) { seen.add(l); units.push(itemUnit(l)); }
+		}
+	}
+	return units.sort((a, b) => unitLine(a) - unitLine(b));
+}
+
+// 下面紧挨着的同级块（同一个母块下的列表项 / 接着的段落）；没有返回 null
+function nextSibling(ctx, u) {
+	const { getLine, n } = ctx;
+	let i = (u.kind === "item" ? subtreeEnd(getLine, n, u.line) : u.end) + 1;
+	while (i < n && (isBlank(getLine(i)) || (u.kind === "item" && isBlockId(getLine(i))))) i++;
+	if (i >= n) return null;
+	if (u.kind === "para") return isParaLine(ctx, i) ? paraAt(ctx, i) : null;
+	const l = getLine(i);
+	return isItem(l) && indentWidth(l) === indentWidth(getLine(u.line)) && !isDivider(l) ? itemUnit(i) : null;
+}
+// 上面紧挨着的同级块
+function prevSibling(ctx, u) {
+	const { getLine } = ctx;
+	if (u.kind === "para") {
+		let i = u.start - 1;
+		while (i >= 0 && isBlank(getLine(i))) i--;
+		return i >= 0 && isParaLine(ctx, i) ? paraAt(ctx, i) : null;
+	}
+	const W = indentWidth(getLine(u.line));
+	for (let i = u.line - 1; i >= 0; i--) {
+		const l = getLine(i);
+		if (isBlank(l) || isBlockId(l)) continue;
+		const w = indentWidth(l);
+		if (w < W || (w === 0 && !isItem(l))) return null;
+		if (w === W && isItem(l)) return isDivider(l) ? null : itemUnit(i);
+	}
+	return null;
+}
+// 块的正文（列表项去掉符号和复选框，段落取第一行）
+const unitText = (ctx, u) => (u.kind === "item" ? parseItem(ctx.getLine(u.line)).text : ctx.getLine(u.start));
+
+// 弹框选一项，取消返回 null
+function ask(app, title, desc, options) {
+	return new Promise((resolve) => {
+		const m = new Modal(app);
+		let done = false;
+		m.titleEl.setText(title);
+		if (desc) m.contentEl.createEl("p", { text: desc });
+		const row = m.contentEl.createDiv({ cls: "modal-button-container" });
+		options.forEach((o, i) => {
+			const b = row.createEl("button", { text: o.label, cls: i === 0 ? "mod-cta" : "" });
+			b.onclick = () => { done = true; m.close(); resolve(o.value); };
+		});
+		m.onClose = () => { if (!done) resolve(null); };
+		m.open();
+		setTimeout(() => row.querySelector("button")?.focus(), 0);
+	});
+}
+// 弹框输入一行字，取消返回 null
+function promptText(app, title, desc, value) {
+	return new Promise((resolve) => {
+		const m = new Modal(app);
+		let done = false;
+		m.titleEl.setText(title);
+		if (desc) m.contentEl.createEl("p", { text: desc });
+		const input = m.contentEl.createEl("input", { type: "text", value });
+		input.style.width = "100%";
+		const submit = () => { done = true; m.close(); resolve(input.value.trim()); };
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); submit(); }
+		});
+		const row = m.contentEl.createDiv({ cls: "modal-button-container" });
+		row.createEl("button", { text: "确定", cls: "mod-cta" }).onclick = submit;
+		row.createEl("button", { text: "取消" }).onclick = () => m.close();
+		m.onClose = () => { if (!done) resolve(null); };
+		m.open();
+		setTimeout(() => { input.focus(); input.select(); }, 0);
+	});
+}
 
 // 第 start..end 行（从 0 开始）对应的字符范围：从首行开头到末行之后那一行的开头（带上换行）
 function rangeOf(doc, start, end) {
@@ -189,6 +397,43 @@ module.exports = class LogseqEditing extends Plugin {
 			hotkeys: [{ modifiers: ["Mod"], key: "k" }],
 			editorCallback: (editor) => this.insertDivider(editor),
 		});
+		this.addCommand({
+			id: "go-to-ancestor",
+			name: "跳到母块（go to ancestor，连按一层层往上）",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "ArrowUp" }],
+			editorCallback: (editor) => editor.cm && this.goToAncestor(editor.cm, false),
+		});
+		this.addCommand({
+			id: "go-to-top-ancestor",
+			name: "跳到最上一级的顶格母块",
+			hotkeys: [{ modifiers: ["Mod", "Alt", "Shift"], key: "ArrowUp" }],
+			editorCallback: (editor) => editor.cm && this.goToAncestor(editor.cm, true),
+		});
+		this.addCommand({
+			id: "group-rows",
+			name: "Group rows：选中的几块一起降一级，上面插一个空母块",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "ArrowDown" }],
+			editorCallback: (editor) => editor.cm && this.groupRows(editor.cm),
+		});
+		this.addCommand({
+			id: "convert-cycle",
+			name: "块转换：循环切换（无序列表 → 有序列表 → 普通段落）",
+			hotkeys: [{ modifiers: ["Mod"], key: "\\" }],
+			editorCallback: (editor) => editor.cm && this.convertBlocks(editor.cm, "cycle"),
+		});
+		for (const [style, name] of [
+			["bullet", "改为无序列表"],
+			["num", "改为有序列表（1. 2. 3.）"],
+			["paper", "改为有序列表（论文式 4.1 4.2 4.3）"],
+			["letter", "改为有序列表（a. b. c.）"],
+			["para", "改为普通段落"],
+		]) {
+			this.addCommand({
+				id: `convert-${style}`,
+				name: `块转换：${name}`,
+				editorCallback: (editor) => editor.cm && this.convertBlocks(editor.cm, style),
+			});
+		}
 		this.registerEditorExtension([
 			blockField,
 			Prec.highest(keymap.of([
@@ -348,6 +593,242 @@ module.exports = class LogseqEditing extends Plugin {
 		if (!s) return this.confirmWrap(view);
 		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(s.start + 1).to), effects: setBlock.of(null) });
 		return true;
+	}
+
+	// ---------- 仿 Bike：go to ancestor / Group rows ----------
+
+	goToAncestor(view, top) {
+		const doc = view.state.doc, getLine = (i) => doc.line(i + 1).text;
+		const s = this.active(view);
+		const from = s ? s.start : itemLineFor(getLine, doc.lineAt(view.state.selection.main.head).number - 1);
+		if (from < 0) { new Notice("不在列表里"); return; }
+		let target = parentItem(getLine, from);
+		if (target < 0) { new Notice("已经是顶层"); return; }
+		if (top) for (let p = parentItem(getLine, target); p >= 0; p = parentItem(getLine, p)) target = p;
+		if (s) {
+			this.selectLines(view, target, subtreeEnd(getLine, doc.lines, target), { anchor: s.anchor, head: s.head, moved: true });
+			return;
+		}
+		const line = doc.line(target + 1), span = contentSpan(line.text);
+		view.dispatch({
+			selection: EditorSelection.single(line.from + span.from, line.from + span.to),
+			effects: EditorView.scrollIntoView(line.from, { y: "nearest", yMargin: 60 }),
+		});
+		view.focus();
+	}
+
+	groupRows(view) {
+		const { state } = view, doc = state.doc, getLine = (i) => doc.line(i + 1).text;
+		let b = this.active(view);
+		if (!b) {
+			const sel = state.selection.main;
+			const fromLine = doc.lineAt(sel.from).number - 1;
+			let toLine = doc.lineAt(sel.to).number - 1;
+			if (toLine > fromLine && sel.to === doc.line(toLine + 1).from) toLine--;   // 整行选区的末尾落在下一行开头
+			b = blockLines(getLine, doc.lines, fromLine, toLine);
+		}
+		if (!b) { new Notice("不在列表里"); return; }
+		const lines = [];
+		for (let i = b.start; i <= b.end; i++) lines.push(getLine(i));
+		// 新母块和选中范围里最浅的那一层同级
+		let base = null;
+		for (const l of lines) if (!isBlank(l) && (base === null || indentWidth(l) < indentWidth(base))) base = l;
+		const baseIndent = base.match(/^[ \t]*/)[0];
+		const unit = this.app.vault.getConfig("useTab") === false ? " ".repeat(this.app.vault.getConfig("tabSize") || 4) : "\t";
+		const head = `${baseIndent}- `;
+		const body = lines.map((l) => (isBlank(l) ? l : unit + l)).join("\n");
+		const from = doc.line(b.start + 1).from, to = doc.line(b.end + 1).to;
+		view.dispatch({
+			changes: { from, to, insert: `${head}\n${body}` },
+			selection: EditorSelection.cursor(from + head.length),
+			effects: [setBlock.of(null), EditorView.scrollIntoView(from, { y: "nearest", yMargin: 60 })],
+		});
+		view.focus();
+	}
+
+	// ---------- 块类型转换 ----------
+
+	// style：bullet 无序 / num 1. 2. 3. / paper 论文式 4.1 / letter a. b. c. / para 普通段落 / cycle 按第一块现在的类型换到下一种
+	async convertBlocks(view, style) {
+		const { state } = view, doc = state.doc;
+		const getLine = (i) => doc.line(i + 1).text, n = doc.lines;
+		const ctx = { getLine, n, fenced: fencedLines(getLine, n) };
+		const s = this.active(view);
+		let fromLine, toLine;
+		if (s) ({ start: fromLine, end: toLine } = s);
+		else {
+			const sel = state.selection.main;
+			fromLine = doc.lineAt(sel.from).number - 1;
+			toLine = doc.lineAt(sel.to).number - 1;
+			if (toLine > fromLine && sel.to === doc.line(toLine + 1).from) toLine--;   // 整行选区的末尾落在下一行开头
+		}
+		let units = collectUnits(ctx, fromLine, toLine);
+		if (!units.length) { new Notice("这里没有能转换的块（标题、代码块、表格不改）"); return; }
+		// 有序列表项：1. 编号，或者正文开头是 4.1 / a. 编号
+		const isOrderedUnit = (u) => u.kind === "item" && (isOrderedMarker(parseItem(getLine(u.line)).marker) || !!labelOf(unitText(ctx, u)));
+		const cycling = style === "cycle";
+		if (cycling) style = units[0].kind === "para" ? "bullet" : isOrderedUnit(units[0]) ? "para" : "num";
+
+		const toList = style !== "para", ordered = toList && style !== "bullet";
+		// 只改一块、改成有序列表：下面的同级块一起改，超过 5 块先问
+		// ⌘\ 循环里有序列表项改段落也一样，带上下面紧挨着的有序同级块（和改有序时对称，不然一组编号只拆掉第一块）
+		const backToPara = cycling && style === "para";
+		if ((ordered || backToPara) && units.length === 1) {
+			const sibs = [];
+			for (let u = nextSibling(ctx, units[0]); u && (!backToPara || isOrderedUnit(u)); u = nextSibling(ctx, u)) sibs.push(u);
+			let take = sibs.length;
+			if (take > 5) {
+				take = await ask(this.app, `下面的同级块也一起改成${ordered ? "有序列表" : "普通段落"}？`, `这一块下面还有 ${sibs.length} 个同级块。`, [
+					{ label: `全部一起改（共 ${sibs.length + 1} 块）`, value: sibs.length },
+					{ label: "只带下面 5 块", value: 5 },
+					{ label: "只改这一块", value: 0 },
+				]);
+				if (take === null) return;
+			}
+			units = units.concat(sibs.slice(0, take));
+		}
+
+		// 按母块分组（段落改成列表后是顶格的，和顶格列表项同组），每组各自编号
+		const groups = new Map();
+		for (const u of units) {
+			const key = u.kind === "item" ? parentItem(getLine, u.line) : -1;
+			if (!groups.has(key)) groups.set(key, []);
+			groups.get(key).push(u);
+		}
+		const tabSize = this.app.vault.getConfig("tabSize") || 4;
+		const unitIndent = this.app.vault.getConfig("useTab") === false ? " ".repeat(tabSize) : "\t";
+		// 列表符号 + 编号里插上复选框：「- 4.1 」+「[ ] 」→「- [ ] 4.1 」，「3. 」→「3. [ ] 」
+		const withBox = (mk, box) => (mk.startsWith("- ") ? "- " + box + mk.slice(2) : mk + box);
+		const lineFrom = (i) => doc.line(i + 1).from;
+		const changes = [];
+
+		for (const [parent, group] of groups) {
+			// 编号：markerAt(k) 是第 k 块（从 0 起）的列表符号 + 编号，含后面的空格
+			let markerAt = () => "- ";
+			let restyle = null;   // 后面紧跟着的同一种编号的同级块：返回它的新符号，不是这种编号返回 null
+			if (style === "num") {
+				let start = 1;
+				for (let p = prevSibling(ctx, group[0]); p; p = prevSibling(ctx, p))
+					if (p.kind === "item" && isOrderedMarker(parseItem(getLine(p.line)).marker)) start++;
+				markerAt = (k) => `${start + k}. `;
+				restyle = (u, k) => (isOrderedMarker(parseItem(getLine(u.line)).marker) ? markerAt(k) : undefined);
+			} else if (style === "paper" || style === "letter") {
+				const plan = style === "paper" ? await this.paperPlan(ctx, group, parent) : this.letterPlan(ctx, group);
+				if (!plan) return;
+				markerAt = plan.markerAt;
+				restyle = (u, k) => {
+					const lb = labelOf(unitText(ctx, u));
+					return lb && lb.kind === plan.kind && (style !== "paper" || lb.parts.slice(0, -1).join(".") === plan.prefix) ? markerAt(k) : null;
+				};
+			}
+
+			// 原来的 4.1 / a. 编号算不算编号（改成列表时换掉）：组里还有别的块、或者相邻的同级块也是这种编号才算
+			const kindOf = (u) => labelOf(unitText(ctx, u))?.kind;
+			const kindCount = {};
+			for (const u of group) { const kd = kindOf(u); if (kd) kindCount[kd] = (kindCount[kd] || 0) + 1; }
+			const isLabel = (u) => {
+				const kd = toList && kindOf(u);
+				return !!kd && (kindCount[kd] > 1 || [prevSibling(ctx, u), nextSibling(ctx, u)].some((v) => v && kindOf(v) === kd));
+			};
+
+			group.forEach((u, k) => {
+				const cut = isLabel(u) ? labelOf(unitText(ctx, u)).len : 0;
+				if (u.kind === "item") {
+					const line = u.line, p = parseItem(getLine(line)), from = lineFrom(line) + p.indent.length;
+					if (toList) {
+						changes.push({ from, to: lineFrom(line) + p.prefixLen + cut, insert: withBox(markerAt(k), p.box) });
+						return;
+					}
+					// 改成段落：去掉符号和复选框；顶格的和上一行之间空一行；子块升一级
+					const top = p.indent === "" && line > 0 && !isBlank(getLine(line - 1)) && !/^#{1,6}[ \t]/.test(getLine(line - 1));
+					changes.push({ from, to: lineFrom(line) + p.prefixLen, insert: top ? "\n" : "" });
+					const W = indentWidth(getLine(line)), end = subtreeEnd(getLine, n, line);
+					for (let i = line + 1; i <= end; i++) {
+						const l = getLine(i);
+						if (isBlank(l) || indentWidth(l) <= W) continue;
+						const d = l[p.indent.length] === "\t" ? 1 : Math.min(tabSize, l.slice(p.indent.length).match(/^ */)[0].length);
+						if (d) changes.push({ from: lineFrom(i) + p.indent.length, to: lineFrom(i) + p.indent.length + d });
+					}
+					return;
+				}
+				// 段落改成列表：一段一块，第二行起缩进成续行；和上一个改成列表的段落之间的空行去掉
+				if (!toList) return;
+				changes.push({ from: lineFrom(u.start), to: lineFrom(u.start) + cut, insert: markerAt(k) });
+				for (let i = u.start + 1; i <= u.end; i++) changes.push({ from: lineFrom(i), insert: unitIndent });
+				const prev = units[units.indexOf(u) - 1];
+				if (prev && prev.kind === "para" && u.start > prev.end + 1)
+					changes.push({ from: doc.line(prev.end + 1).to, to: doc.line(u.start).to });
+			});
+
+			// 后面紧跟着的、已经是这种编号的同级块跟着重排（1. 2. 3. 跳过中间的无序项接着数，和 Bullet 一样）
+			if (restyle) {
+				let k = group.length;
+				for (let u = nextSibling(ctx, group[group.length - 1]); u && u.kind === "item"; u = nextSibling(ctx, u)) {
+					const mk = restyle(u, k);
+					if (mk === null) break;
+					if (mk === undefined) continue;
+					const p = parseItem(getLine(u.line)), lb = style === "num" ? null : labelOf(p.text);
+					const from = lineFrom(u.line) + p.indent.length;
+					changes.push({ from, to: lineFrom(u.line) + p.prefixLen + (lb ? lb.len : 0), insert: withBox(mk, p.box) });
+					k++;
+				}
+			}
+		}
+
+		if (view.state.doc !== doc) return;   // 弹框期间文档变了
+		const cs = state.changes(changes.filter((c) => c.insert || (c.to ?? c.from) > c.from));
+		const newDoc = cs.apply(doc);
+		if (cs.empty || newDoc.eq(doc)) { new Notice("已经是这种格式了"); return; }
+		const spec = { changes: cs, scrollIntoView: true, userEvent: "input.convert" };
+		if (s && toList) {
+			// 还是整块选中：按原来选中的范围在新文档里重新选
+			const nl = (i) => newDoc.line(i + 1).text;
+			const old = rangeOf(doc, s.start, s.end);
+			const start = itemLineFor(nl, newDoc.lineAt(cs.mapPos(old.from, 1)).number - 1);
+			const endLine = newDoc.lineAt(Math.max(0, cs.mapPos(old.to, -1) - 1)).number - 1;
+			if (start >= 0) {
+				const end = Math.max(subtreeEnd(nl, newDoc.lines, start), endLine);
+				spec.selection = blockSelection(newDoc, start, end);
+				spec.effects = setBlock.of({ ...s, start, end, multi: end > subtreeEnd(nl, newDoc.lines, start), key: keyOf(nl(start)), moved: true });
+			}
+		} else if (s) {
+			spec.selection = EditorSelection.cursor(newDoc.line(newDoc.lineAt(cs.mapPos(rangeOf(doc, s.start, s.end).from, 1)).number).to);
+			spec.effects = setBlock.of(null);
+		} else {
+			spec.selection = EditorSelection.create(state.selection.ranges.map((r) => EditorSelection.range(cs.mapPos(r.anchor, 1), cs.mapPos(r.head, 1))), state.selection.mainIndex);
+		}
+		view.dispatch(spec);
+		view.focus();
+	}
+
+	// 论文式编号的前缀和起始号：上一个同级块的编号（接着编）→ 第一块自己原来的编号 → 母块的编号 → 问（默认取上面最近的带编号标题）
+	async paperPlan(ctx, group, parent) {
+		const { getLine } = ctx, plan = (prefix, start) => ({ kind: "paper", prefix, markerAt: (k) => `- ${prefix}.${start + k} ` });
+		const prev = prevSibling(ctx, group[0]), plb = prev && labelOf(unitText(ctx, prev));
+		if (plb?.kind === "paper") return plan(plb.parts.slice(0, -1).join("."), plb.parts[plb.parts.length - 1] + 1);
+		const own = labelOf(unitText(ctx, group[0]));
+		if (own?.kind === "paper") return plan(own.parts.slice(0, -1).join("."), 1);
+		if (parent >= 0) {
+			const p = parseItem(getLine(parent)), lb = labelOf(p.text);
+			if (lb?.kind === "paper") return plan(lb.parts.join("."), 1);
+			if (isOrderedMarker(p.marker)) return plan(p.marker.slice(0, -1), 1);
+		}
+		let def = "1";
+		for (let i = unitLine(group[0]) - 1; i >= 0; i--) {
+			const m = getLine(i).match(/^#{1,6}[ \t]+(\d+(?:\.\d+)*)(?:[.、\s]|$)/);
+			if (m) { def = m[1]; break; }
+		}
+		const v = await promptText(this.app, "论文式编号的前缀", `比如填 ${def} → ${def}.1、${def}.2、${def}.3`, def);
+		if (v === null) return null;
+		if (!/^\d+(\.\d+)*$/.test(v)) { new Notice("前缀要是数字，比如 4 或 4.2"); return null; }
+		return plan(v, 1);
+	}
+
+	// 字母编号：上一个同级块是字母编号就接着编，否则从 a 开始
+	letterPlan(ctx, group) {
+		const prev = prevSibling(ctx, group[0]), plb = prev && labelOf(unitText(ctx, prev));
+		const start = plb?.kind === "letter" ? plb.index + 1 : 1;
+		return { kind: "letter", markerAt: (k) => `- ${letterOf(start + k)}. ` };
 	}
 
 	// ---------- ⌘K 分割线 ----------

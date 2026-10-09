@@ -391,12 +391,24 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			name: "发送到明天：把光标所在块（连同子项）移到明天的日记",
 			editorCallback: (editor, ctx) => this.sendToTomorrow(editor, ctx && ctx.file),
 		});
-		// 以下全部：光标所在行到页尾整段追加到今天的日记（光标在分隔线上就从下一行起，分隔线留在原处）
+		// 以下全部：光标所在行到页尾整段追加到今天 / 明天的日记（光标在分隔线上就从下一行起，分隔线留在原处）
 		this.addCommand({
 			id: "send-rest-to-today",
 			name: "以下全部发送到今天：光标所在行及以下的块追加到今天的日记",
 			hotkeys: [{ modifiers: ["Alt"], key: "2" }],
-			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file),
+			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file, "today"),
+		});
+		this.addCommand({
+			id: "send-rest-to-tomorrow",
+			name: "以下全部发送到明天：光标所在行及以下的块追加到明天的日记",
+			hotkeys: [{ modifiers: ["Alt"], key: "3" }],
+			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file, "tomorrow"),
+		});
+		// 不给默认快捷键，免得误按；要用就在「设置 → 快捷键」里自己绑
+		this.addCommand({
+			id: "delete-rest",
+			name: "以下全部删除：删掉光标所在行及以下的内容",
+			editorCallback: (editor) => this.deleteRest(editor),
 		});
 	}
 
@@ -424,28 +436,22 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		return { name: ymd.join("_"), date: ymd.join("-"), folder, source: file ? file.basename : ymd.join("_") };
 	}
 
-	// 光标所在行到页尾整段拿走，原样追加到今天日记的末尾；顶格条目行尾记上「← [[来源]]」。
+	// 光标所在行到页尾整段拿走，原样追加到今天 / 明天日记的末尾；顶格条目行尾记上「← [[来源]]」。
 	// 光标在列表项的续行上时从这一项开始；光标正好在分隔线上时跳过这条线（它留在原处，原日记就以分隔线收尾）
-	async sendRest(editor, file) {
+	async sendRest(editor, file, day = "today") {
 		file = file || this.app.workspace.getActiveFile();
 		const lines = editor.getValue().split("\n");
-		const bodyStart = topInsertLine(lines);
-		let start = Math.max(editor.getCursor().line, bodyStart);
+		let start = this.restStart(lines, editor.getCursor().line);
 		const isSep = (l) => SEP_RE.test(l) || /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l);
-		if (start > bodyStart && !isBlank(lines[start]) && /^\s/.test(lines[start])) {
-			// 续行 → 它所属的那一项
-			let i = start;
-			while (i > bodyStart && !ITEM_RE.test(lines[i]) && (isBlank(lines[i]) || /^\s/.test(lines[i]))) i--;
-			if (ITEM_RE.test(lines[i])) start = i;
-		}
 		if (isSep(lines[start])) start++;
 		while (start < lines.length && isBlank(lines[start])) start++;
 		let end = lines.length - 1;
 		while (end >= start && isBlank(lines[end])) end--;
 		if (start > end) return new Notice("下面没有可以发送的内容");
 
-		const to = this.todayOf(file);
-		if (file && to.name === file.basename) return new Notice("这里已经是今天的日记了");
+		const dayLabel = day === "tomorrow" ? "明天" : "今天";
+		const to = day === "tomorrow" ? this.tomorrowOf(file) : this.todayOf(file);
+		if (file && to.name === file.basename) return new Notice(`这里已经是${dayLabel}的日记了`);
 		const orig = lines.slice(start, end + 1);
 		const baseIndent = indentWidth(orig[0]);
 		let inFence = false;
@@ -476,7 +482,33 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
 		editor.setCursor({ line: next, ch: editor.getLine(next).length });
 		const tops = moved.filter((l) => !isBlank(l) && !/^\s/.test(l) && !isSep(l)).length;
-		new Notice(`➡️ 已追加到今天（${to.name}）：${tops} 块，共 ${orig.length} 行`);
+		new Notice(`➡️ 已追加到${dayLabel}（${to.name}）：${tops} 块，共 ${orig.length} 行`);
+	}
+
+	// 「以下全部」从哪一行算起：光标所在行（不进属性区）；光标在列表项的续行上时从这一项开始
+	restStart(lines, cursorLine) {
+		const bodyStart = topInsertLine(lines);
+		let start = Math.max(cursorLine, bodyStart);
+		if (start > bodyStart && !isBlank(lines[start]) && /^\s/.test(lines[start])) {
+			let i = start;
+			while (i > bodyStart && !ITEM_RE.test(lines[i]) && (isBlank(lines[i]) || /^\s/.test(lines[i]))) i--;
+			if (ITEM_RE.test(lines[i])) start = i;
+		}
+		return start;
+	}
+
+	// 光标所在行到页尾整段删掉（连同光标所在的分隔线）；一次编辑器事务，⌘Z 能撤回
+	deleteRest(editor) {
+		const lines = editor.getValue().split("\n");
+		const start = this.restStart(lines, editor.getCursor().line);
+		if (start >= lines.length || lines.slice(start).every(isBlank)) return new Notice("下面没有可以删的内容");
+		const count = lines.slice(start).filter((l) => !isBlank(l)).length;
+		const last = lines.length - 1;
+		const from = start > 0 ? { line: start - 1, ch: lines[start - 1].length } : { line: 0, ch: 0 };
+		editor.transaction({ changes: [{ from, to: { line: last, ch: lines[last].length }, text: "" }] });
+		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
+		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+		new Notice(`🗑 已删除以下全部：${count} 行（⌘Z 可撤回）`);
 	}
 
 	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，行尾记上「← [[来源]]」

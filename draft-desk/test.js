@@ -47,7 +47,7 @@ const mb = T.mentionBlocks(note, ["ML"]);
 ok(mb.length === 2 && mb[0].text === "- 讲到 ML 了\n\t- 子" && mb[1].text === "段落提到ML。", JSON.stringify(mb));
 // 真实稿子跑一遍规范排版：链接 / 嵌入数量不变
 const fs = require("fs"), path = require("path");
-const V = "/Users/chenchen/Documents/Obsidian Vault";
+const V = "~/Documents/Obsidian Vault";
 if (fs.existsSync(V)) for (const f of ["黄金的分母深度稿.md", "道德是流动的-口播稿.md", "穿搭与反优绩主义_口播稿.md"]) {
   const t = fs.readFileSync(path.join(V, f), "utf8"), b = T.splitFrontmatter(t).body, r = tidy(b);
   const links = (s) => (s.match(/\[\[[^\]]*\]\]|\]\([^)]*\)|https?:\/\/\S+/g) || []).join("|");

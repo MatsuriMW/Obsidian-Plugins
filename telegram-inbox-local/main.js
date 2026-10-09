@@ -5181,6 +5181,8 @@ function createRestrictToAllowedUsersMiddleware(settings) {
     const userId = (_a2 = from == null ? void 0 : from.id) != null ? _a2 : chat.id;
     const username = (_b2 = from == null ? void 0 : from.username) != null ? _b2 : chat.username;
     if (isAuthorizedUser(settings, userId, username)) {
+      // 记下主人的私聊 chat id：「任务提醒」插件人不在电脑前时会用它把提醒转发到 Telegram
+      if (chat.type === "private" && settings.owner_chat_id !== chat.id) settings.owner_chat_id = chat.id;
       await next();
     } else {
       console.log(
@@ -5590,13 +5592,20 @@ function generateContentFromTemplate(msg, setting, media = "") {
   const data = { ...buildMsgData(msg, setting), media };
   return Mustache.render(setting.message_template, data);
 }
+// [自用补丁] 去掉 Telegram 桌面版复制多条消息时带的抬头行，如「自立 马, [2026年10月9日 16:02]」
+var COPY_HEADER_RE = /^[^\n\[\]]{1,64}, \[(?:\d{4}年\d{1,2}月\d{1,2}日|\d{1,4}[\/.-]\d{1,2}[\/.-]\d{1,4})\s+(?:(?:上午|下午)\s*)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?\]:?[ \t]*(?:\n|$)/gm;
+function stripCopyHeaders(text) {
+  if (!text || !COPY_HEADER_RE.test(text)) return text;
+  COPY_HEADER_RE.lastIndex = 0;
+  return text.replace(COPY_HEADER_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+}
 function buildMsgData(msg, setting) {
   var _a2, _b2;
   const forwardOrigin = getForwardOrigin(msg);
   const msgDate = (0, import_obsidian3.moment)(msg.date * 1e3);
   return {
     message_id: msg.message_id,
-    text: toMarkdownV2(msg, setting),
+    text: stripCopyHeaders(toMarkdownV2(msg, setting)),
     date: msgDate.format(DATE_FORMAT),
     time: msgDate.format(TIME_FORMAT),
     name: getSenderName(msg),
@@ -6005,7 +6014,51 @@ function setupCommands(bot, settings, vaultWriter) {
     }
   });
 }
+// [自用补丁] 「任务提醒」插件发来的消息里的按钮（拖延任务：不做了 / 挪明天 / 搁置）
+//   回调交给 nautilus-notify 处理；手机上没有那个插件，就提示去电脑上点
+// [自用补丁] 收工小结：「任务提醒」插件用 claude 读今天的日记写，写好单独回一条；dayOf = 消息发出时刻按日界（凌晨 7 点前算前一天）
+function nnPlugin() { var _n; return (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-notify"]; }
+async function replyDaySummary(ctx, msg) {
+  const nn = nnPlugin();
+  if (!nn || !nn.daySummary) return;
+  const m = (0, import_obsidian7.moment)(msg.date * 1e3);
+  if (m.hours() * 60 + m.minutes() < nn.wCutoff()) m.subtract(1, "day");
+  try {
+    await ctx.replyWithChatAction("typing");
+    await ctx.reply(await nn.daySummary(m.startOf("day")), { parse_mode: "HTML" });
+  } catch (err) { console.error("[telegram-inbox] 收工小结", err); }
+}
+// [自用补丁] 陪你聊：说「好累」「好难受」这类短句、以「聊聊 / 陪我」开头，或者回复陪聊那条消息时，
+//   照常记进日记，再由「任务提醒」插件读陪伴档案和最近日记、用 claude 回一条；回复它那条就接着聊
+async function maybeComfort(ctx, msg, said) {
+  const nn = nnPlugin();
+  if (!nn || !nn.comfort || !nn.settings.comfort) return;
+  const rep = msg.reply_to_message;
+  const history = rep ? nn.threadOf(rep.message_id) : null;
+  if (!history && !/^(?:聊聊|陪我)/.test(said) && !nn.isFeeling(said)) return;
+  const typing = setInterval(() => ctx.replyWithChatAction("typing").catch(() => {}), 4500);
+  try {
+    await ctx.replyWithChatAction("typing");
+    const r = await nn.comfort(said.replace(/^(?:聊聊|陪我聊聊|陪我)[，,：:\s]*/, "") || said, history || []);
+    const sent = await ctx.reply(r.html, { parse_mode: "HTML" });
+    nn.rememberThread(sent.message_id, r.history);
+  } catch (err) {
+    console.error("[telegram-inbox] 陪聊", err);
+  } finally { clearInterval(typing); }
+}
 function setupMessageHandlers(bot, settings, vaultWriter) {
+  bot.on("callback_query:data", async (ctx) => {
+    const nn = nnPlugin();
+    if (!nn || !nn.onTgCallback) { await ctx.answerCallbackQuery({ text: "这台设备上没有「任务提醒」插件，到电脑上再点一次" }); return; }
+    try {
+      const r = await nn.onTgCallback(ctx.callbackQuery.data);
+      await ctx.answerCallbackQuery({ text: r.toast || "" });
+      if (r.edit) await ctx.editMessageText(r.edit, { parse_mode: "HTML", reply_markup: r.markup });
+    } catch (err) {
+      console.error("[telegram-inbox] 按钮回调", err);
+      await ctx.answerCallbackQuery({ text: "出错了：" + String(err.message || err).slice(0, 100) });
+    }
+  });
   bot.on(["message:text", "channel_post:text"], async (ctx) => {
     var _n;
     const msg = ctx.msg;
@@ -6016,10 +6069,11 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
     //                     睡了还会把进行中的任务退回 TODO（做过的时段已经记下，明天接着算）
     const naut = (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-spiral"];
     const said = (msg.text || "").trim();
-    const dayCmd = /^(?:睡了|睡觉了?|晚安)$/.test(said) ? "sleep" : /^(?:起了|起床了?|醒了|早安)$/.test(said) ? "wake" : null;
+    const dayCmd = /^(?:睡了|睡觉了?|晚安|休息了|不干了)$/.test(said) ? "sleep" : /^(?:起了|起床了?|醒了|早安)$/.test(said) ? "wake" : null;
     try {
       if (naut && naut.capacityText && /^(?:[?？]|\/now)$/.test(said)) {
-        await ctx.reply(await naut.capacityText());
+        if (naut.telegramReport) await ctx.reply(await naut.telegramReport(), { parse_mode: "HTML" });   // 图文版
+        else await ctx.reply(await naut.capacityText());
         return;
       }
       if (naut && naut.markDay && dayCmd) {
@@ -6028,6 +6082,11 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
         const receipt = await naut.markDay(dayCmd, msg.date * 1e3);   // 先收掉工作时段，再改任务状态
         if (dayCmd === "sleep") await vaultWriter.pauseDoing(msg);
         await ctx.reply(receipt);
+        if (dayCmd === "sleep") await replyDaySummary(ctx, msg);   // 收工：再来一条今天的小结和几句话
+        return;
+      }
+      if (/^(?:小结|今天做了什么|\/summary)$/.test(said)) {   // 不收工，只要小结
+        await replyDaySummary(ctx, msg);
         return;
       }
     } catch (err) {
@@ -6040,6 +6099,7 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
     } catch (err) {
       handleVaultError(ctx, err, "insert text message to vault");
     }
+    await maybeComfort(ctx, msg, said);
   });
   bot.on(["message:media", "channel_post:media"], async (ctx) => {
     var _a2;
@@ -6292,7 +6352,7 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
 <br>· <code>doing 写稿</code> 自动补开始时间；<code>done 写稿 2h</code> 自动补完成时间，螺旋上画在「完成时刻往前 2 小时」。
 <br>· <code>done 写稿</code>：今天日记里有没做完的「写稿…」（前 2 个字一致就算，一致的字多的优先）就直接把那条改成 DONE，不另起一条；原来是 DOING 14:05 的写成 <code>DONE 14:05-16:30</code>。消息写的内容和原来不一样（原来「引体向上 2×5」，发的「done 引体向上 5×3」）以消息为准。找不到才新建。
 <br>· <code>?</code> 或 <code>/now</code>：机器人回一条容量速览（还剩多少时间、接下来几件、今天做完几件），不写进日记。
-<br>· <code>睡了</code>（睡觉 / 晚安）：这天的结束时间设成现在，进行中的任务退回 TODO（做过的时段留着，明天接着算）。<code>起了</code>（起床 / 醒了 / 早安）：设这天的开始时间，并回一条今天的容量速览。
+<br>· <code>睡了</code>（睡觉 / 晚安 / 休息了 / 不干了）：收工后还会回一条今天的小结。<code>小结</code>：只要小结、不收工。<br>· 说「好累」「好难受」这类短句，或者以「聊聊」「陪我」开头：读陪伴档案和最近的日记回你；回复它那条就接着聊。<br>· <code>睡了</code>：这天的结束时间设成现在，进行中的任务退回 TODO（做过的时段留着，明天接着算）。<code>起了</code>（起床 / 醒了 / 早安）：设这天的开始时间，并回一条今天的容量速览。
 <br><b>不需要关键词、自动生效的</b>
 <br>· <b>体重</b>：直接发米家体重秤的测量报告截图。每晚 22:30 的健康定时任务会读最近 3 天日记里的图片，写进 体重记录，更新健康看板。
 <br>· <b>训练</b>：发 <code>DONE 引体向上 5×3</code>、<code>DONE 跑步 3.2 km，28 分钟</code>、<code>FAILED 深蹲</code>。「力量训练与健康」看板实时按动作名统计（DONE=完成，FAILED=没做成，TODO=待做）。

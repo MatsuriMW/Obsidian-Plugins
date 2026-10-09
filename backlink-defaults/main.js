@@ -1,5 +1,91 @@
 const { Plugin, MarkdownRenderer, Component, Notice, setIcon, Keymap, resolveSubpath, MarkdownView, Modal, Setting, getLinkpath } = require("obsidian");
 
+// ---------- 跳到某一行：稳定地停在视口正中，并选中这一行的文字（Hover Outline、第二大脑里有同一份） ----------
+//   · 编辑模式：选中行内文字（不含缩进、列表符号、复选框、#、行尾 ^块ID）；高度是边滚边量的，对中后再量几次，偏了就补
+//   · 阅读模式：先滚到附近让它渲染出来，再按段落 / 列表项（data-line）找到对应元素，对中后用浏览器选区选中
+//   · 靠近文首文末滚不动的时候，停在能到的最近位置
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const LINE_PREFIX_RE = /^\s*(?:>\s*)*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[.\]\s+)?(?:#{1,6}\s+)?/;
+
+async function centerOn(sc, measure) {
+  for (let i = 0; i < 10; i++) {
+    await nextFrame();
+    await nextFrame();
+    const m = measure();
+    if (!m) return;
+    const s = sc.getBoundingClientRect();
+    const delta = m.top + m.height / 2 - (s.top + s.height / 2);
+    if (Math.abs(delta) < 2) return;
+    const before = sc.scrollTop;
+    sc.scrollTop = before + delta;
+    if (Math.abs(sc.scrollTop - before) < 1) return;   // 到顶 / 到底了
+  }
+}
+
+// 阅读模式里第 line 行对应的元素：列表项按 data-line（相对段落开头），其余取段落本身；顶上文件名那一栏也挂在第 0 行、但只占 0 行，跳过
+function previewElAt(renderer, line) {
+  const sec = (renderer.sections || []).find((s) => s.start && s.end && s.lines !== 0 && s.start.line <= line && line <= s.end.line);
+  if (!sec || !sec.el || !sec.el.isConnected || !sec.el.firstElementChild) return null;
+  // 「- - 文字」这种一行套几层的，每层都是这一行，取最里面那层（外层自己没有文字）
+  const lis = sec.el.querySelectorAll(`li[data-line="${line - sec.start.line}"]`);
+  return lis.length ? lis[lis.length - 1] : sec.el.firstElementChild;
+}
+
+// 元素自己的文字（列表项不含子列表）
+function ownRange(el) {
+  const range = document.createRange();
+  if (el.tagName === "LI") {
+    range.setStart(el, 0);
+    const sub = [...el.children].find((c) => /^(UL|OL)$/.test(c.tagName) || c.classList.contains("list-children"));
+    if (sub) range.setEndBefore(sub);
+    else range.setEnd(el, el.childNodes.length);
+  } else range.selectNodeContents(el);
+  return range;
+}
+
+async function revealLine(view, line, select = true) {
+  if (!view || !view.getMode) return;
+  if (view.getMode() === "source") {
+    const ed = view.editor;
+    const cm = ed && ed.cm;
+    if (!cm) return;
+    line = Math.max(0, Math.min(line, ed.lastLine()));
+    const text = ed.getLine(line);
+    if (select) {
+      const from = text.match(LINE_PREFIX_RE)[0].length;
+      const to = Math.max(from, text.replace(/\s+\^[\w-]+\s*$/, "").replace(/\s+$/, "").length);
+      ed.setSelection({ line, ch: from }, { line, ch: to });
+    } else ed.setCursor({ line, ch: text.length });
+    ed.focus();
+    const pos = cm.state.doc.line(line + 1).from;
+    cm.dispatch({ effects: cm.constructor.scrollIntoView(pos, { y: "center" }) });
+    await centerOn(cm.scrollDOM, () => {
+      const b = cm.lineBlockAt(pos);
+      return { top: cm.documentTop + b.top, height: b.height };
+    });
+    return;
+  }
+  const pm = view.previewMode;
+  const rd = pm && pm.renderer;
+  const sc = rd && rd.previewEl;
+  if (!sc) return;
+  pm.applyScroll(line);
+  let el = null;
+  for (let i = 0; i < 12 && !el; i++) { await wait(i ? 80 : 30); el = previewElAt(rd, line); }
+  if (!el) return;
+  await centerOn(sc, () => {
+    const cur = previewElAt(rd, line);
+    return cur ? ownRange(cur).getBoundingClientRect() : null;
+  });
+  if (!select) return;
+  const target = previewElAt(rd, line);
+  if (!target) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(ownRange(target));
+}
+
 // 反链排序（2026-10-05 起取代原来的「按修改时间从新到旧」——迁移、挪文件夹、批量改属性把所有日记的修改时间都刷新了，
 // 按它排基本是乱序）：
 //   · 非日记的「页面」排在前，按关系紧密度：互相链接 > 属性里写了指向当前页的链接（related/father/domain…）> 正文提到次数，再按名字
@@ -25,8 +111,13 @@ const HEADING_SECTION = true;
 const RENDER_MARKDOWN = true;
 // 反链条目右上角的 ✎：就地编辑这一块的源码并写回原笔记（⌘↩ 保存，Esc 取消）
 const INLINE_EDIT = true;
-// 命中块的子块超过这么多行时先折叠，点「展开」再看全部
+// 命中块的子块超过这么多行时先折叠，点「展开」再看全部（列表块开了 FOLD_CHILDREN 时改按子块结构折叠，不按行数）
 const FOLD_LINES = 8;
+// 命中的是列表项时按子块结构显示（像 Logseq）：一级子块全部列出，超过 CHILD_LIMIT 个的后面收成「…」；
+// 一级子块下面还有子块的，只显示它自己那一行，圆点带灰圈、行尾「…」，点「…」展开。
+// 子块里另有链接当前页的地方会自动展开到那一层，不会被折叠藏掉
+const FOLD_CHILDREN = true;
+const CHILD_LIMIT = 6;
 // Roam 式共现页面筛选：反链顶部的「共现筛选」按钮，列出这些引用里还一起出现了哪些页面（带次数），点=只看含它的，Shift 点=排除它
 const SHOW_COOCCUR = true;
 // 笔记正文底部那份反链加一个就地文字筛选框（侧栏面板自带搜索，这里只给底部补上）
@@ -605,6 +696,7 @@ module.exports = class BacklinkDefaults extends Plugin {
     let ctx = this.listContext(m);
     let range = this.displayRange(m, ctx);
     m.__bdBlockKey = this.blockKey(m, ctx);
+    m.__bdHitLine = ctx ? ctx.item.position.start.line : null;   // 展开到上一级后，原来的命中块要一路展开着
     const ex = this.expandedView(m, ctx);
     if (ex) ({ ctx, range } = ex);
     m.__bdRange = range;
@@ -763,9 +855,19 @@ module.exports = class BacklinkDefaults extends Plugin {
     if (last < t.length) el.appendText(t.substring(last));
   }
 
-  openAt(file, line, newLeaf) {
+  // 跳到原文：打开后那一行停在正中、选中它的文字（上方内容不够时停在能到的最近位置）
+  async openAt(file, line, newLeaf) {
     if (!file) return;
-    this.app.workspace.getLeaf(newLeaf).openFile(file, { active: true, eState: { line } });
+    const leaf = this.app.workspace.getLeaf(newLeaf);
+    await leaf.openFile(file, { active: true, eState: { line } });
+    if (line == null || line < 0) return;
+    await wait(60);
+    await revealLine(leaf.view, line);
+  }
+  // 反链条目命中的那一行（链接所在行）；拿不到就用这一块的首行
+  hitLine(m) {
+    const l = this.offsetToLine(m, m.start);
+    return l >= 0 ? l : this.offsetToLine(m, (m.__bdRange || {}).start);
   }
 
   // 文件标题行：只有标题文字（和折叠小三角）能点开文件，行里其他地方是空白，点了什么也不做
@@ -822,7 +924,7 @@ module.exports = class BacklinkDefaults extends Plugin {
     setIcon(btn, "lucide-arrow-up-right");
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
-      m.onResultClick(e);
+      this.openAt(file, this.hitLine(m), Keymap.isModEvent(e));
     });
     m.el.appendChild(btn);
     m.el.addClass("bd-click-edit");
@@ -833,16 +935,25 @@ module.exports = class BacklinkDefaults extends Plugin {
       const t = e.target;
       // Shift 点空白处 = 把这一块的原文在右侧栏叠放一页（点链接/按钮等交给它们自己的处理器）
       if (SHIFT_STACK && e.button === 0 && e.shiftKey && !e.metaKey && !e.ctrlKey) {
-        if (t.closest && t.closest(".bd-jump-btn, .bd-expand, .search-result-hover-button, .search-result-file-match-replace-button, .bd-crumbs a, .bd-crumb, .bd-md a, .bd-md input, .bd-refcount")) return;
+        if (t.closest && t.closest(".bd-jump-btn, .bd-expand, .bd-ctl, .search-result-hover-button, .search-result-file-match-replace-button, .bd-crumbs a, .bd-crumb, .bd-md a, .bd-md input, .bd-refcount")) return;
         e.preventDefault();
         e.stopImmediatePropagation();
         this.openStackedFile(m.parentDom.file, this.offsetToLine(m, (m.__bdRange || {}).start));
         return;
       }
-      if (!INLINE_EDIT || m.el.hasClass("bd-editing")) return;
-      if (e.button !== 0 || e.metaKey || e.ctrlKey) return;
+      if (m.el.hasClass("bd-editing")) return;
+      // ⌘ 点空白处 = 跳到原文（新标签），居中并选中命中的那一行；链接、面包屑等交给它们自己的处理器
+      if (e.button === 0 && (e.metaKey || e.ctrlKey)) {
+        if (t.closest && t.closest(".bd-jump-btn, .bd-expand, .bd-ctl, .search-result-hover-button, .search-result-file-match-replace-button, .bd-crumbs, .bd-md a, .bd-md input, .bd-refcount")) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.openAt(file, this.hitLine(m), Keymap.isModEvent(e));
+        return;
+      }
+      if (!INLINE_EDIT) return;
+      if (e.button !== 0) return;
       // 链接、标签、复选框、面包屑、「链接」按钮各有各的处理，不进编辑
-      if (t.closest && t.closest(".bd-jump-btn, .bd-expand, .search-result-hover-button, .search-result-file-match-replace-button, .bd-crumbs, .bd-md a, .bd-md input")) return;
+      if (t.closest && t.closest(".bd-jump-btn, .bd-expand, .bd-ctl, .search-result-hover-button, .search-result-file-match-replace-button, .bd-crumbs, .bd-md a, .bd-md input")) return;
       e.preventDefault();
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && m.el.contains(sel.anchorNode)) return;   // 在选文字，不进编辑
@@ -1001,11 +1112,14 @@ module.exports = class BacklinkDefaults extends Plugin {
   // 命中块本身（连同子块 / 整节）按 Markdown 渲染；母块不再画成列表，改在上方的面包屑里
   renderMarkdown(m, ctx, range, crumbEl) {
     const content = m.content;
-    let lines, folded = 0, foldable = false, line0 = -1;
+    let lines, folded = 0, foldable = false, line0 = -1, tree = null;
+    m.__bdLineMap = null;
     if (ctx && (m.__bdRoot != null || m.start === ctx.lineStart(ctx.item))) {
       const indent = content.substring(ctx.lineStart(ctx.item), ctx.item.position.start.offset);
-      lines = this.reindent(content.substring(range.start, range.end), indent, 0).split("\n");
+      tree = FOLD_CHILDREN ? this.foldedList(m, ctx, range) : null;
+      lines = this.reindent(tree ? tree.text : content.substring(range.start, range.end), indent, 0).split("\n");
       line0 = ctx.item.position.start.line;
+      if (tree) m.__bdLineMap = tree.map;
     } else if (ctx) {
       // 没开「更多上下文」时只截了一行里的一段
       let t = content.substring(m.start, m.end).trim().replace(/\n[ \t]*/g, " ");
@@ -1017,8 +1131,8 @@ module.exports = class BacklinkDefaults extends Plugin {
       lines = content.substring(s, range.end).split("\n");
       if (s === 0 || content[s - 1] === "\n") line0 = content.substring(0, s).split("\n").length - 1;
     }
-    // 子块太长先折叠
-    if (FOLD_LINES > 0 && lines.length > FOLD_LINES + 1) {
+    // 子块太长先折叠（列表块已经按子块结构折叠了，不再按行数）
+    if (!tree && FOLD_LINES > 0 && lines.length > FOLD_LINES + 1) {
       foldable = true;
       if (!m.__bdExpanded) {
         folded = lines.length - FOLD_LINES;
@@ -1055,10 +1169,119 @@ module.exports = class BacklinkDefaults extends Plugin {
     const sourcePath = m.parentDom && m.parentDom.file ? m.parentDom.file.path : "";
     MarkdownRenderer.render(this.app, md, box, sourcePath, comp).then(() => {
       if (m.__bdToken !== token) return;
+      if (tree) this.bindFoldMarks(m, box, tree.marks);
       this.afterRender(m, box, sourcePath);
       const scroll = m.parentDom && m.parentDom.parentDom && m.parentDom.parentDom.infinityScroll;
       if (scroll) scroll.invalidate(m);
     }).catch((e) => console.error("[backlink-defaults] markdown", e));
+  }
+
+  // 命中列表项按子块结构挑出要显示的行：自己 + 一级子块（最多 CHILD_LIMIT 个，其余收成「…」）；
+  // 有子块的一级子块默认只显示自己那几行，行尾挂「…」，点开后它的子块照同样的规则显示。
+  // 返回 { text, map, marks }：text 是挑出来的原文行，map[i] = 第 i 行对应的原文行号（-1 = 补出来的「…」行），marks 是要绑定点击的标记，顺序和渲染结果里一致
+  foldedList(m, ctx, range) {
+    const c = m.content, all = c.split("\n");
+    const root = ctx.item, rootLine = root.position.start.line;
+    const lastLine = this.offsetToLine(m, range.end);
+    const byLine = new Map();
+    for (const it of ctx.items) if (!byLine.has(it.position.start.line)) byLine.set(it.position.start.line, it);
+    const nodes = [...byLine.values()].filter((it) => it.position.start.line >= rootLine && it.position.start.line <= lastLine)
+      .sort((a, b) => a.position.start.line - b.position.start.line);
+    const kidsOf = new Map();
+    for (const it of nodes) {
+      if (it === byLine.get(rootLine) || it.parent < 0) continue;
+      if (!kidsOf.has(it.parent)) kidsOf.set(it.parent, []);
+      kidsOf.get(it.parent).push(it);
+    }
+    const lineOf = (it) => it.position.start.line;
+
+    // 一定要露出来的行：子块里链接当前页的地方（母块显示了，它们就不再单独列一条），展开到上一级时原来的命中块
+    const need = new Set(), open = new Set();
+    const ownerOf = (l) => { let o = null; for (const it of nodes) { if (lineOf(it) > l) break; o = it; } return o; };
+    const reveal = (l, self) => {
+      const o = ownerOf(l);
+      if (!o || lineOf(o) === rootLine) return;
+      if (self) open.add(lineOf(o));
+      for (let it = o, n = 0; it && lineOf(it) !== rootLine && n < 100; it = byLine.get(it.parent), n++) {
+        need.add(lineOf(it));
+        if (it !== o) open.add(lineOf(it));
+      }
+    };
+    const comp = m.parentDom && m.parentDom.parentDom && m.parentDom.parentDom.__bdComponent;
+    const target = comp && comp.__bdTarget;
+    const src = m.parentDom && m.parentDom.file ? m.parentDom.file.path : "";
+    if (target && m.cache) {
+      for (const l of (m.cache.links || []).concat(m.cache.embeds || [])) {
+        const p = l.position;
+        if (!p || p.start.offset < range.start || p.start.offset >= range.end) continue;
+        const lp = (l.link || "").split("#")[0].split("|")[0].trim();
+        const dest = lp && this.app.metadataCache.getFirstLinkpathDest(lp, src);
+        if (dest && dest.path === target.path) reveal(p.start.line, false);
+      }
+    }
+    if (m.__bdRoot != null && m.__bdHitLine != null) reveal(m.__bdHitLine, true);
+
+    const fold = (m.__bdFold = m.__bdFold || new Map());   // 手动点过的：行号 → 展开与否
+    const more = (m.__bdMore = m.__bdMore || new Set());   // 点过「…」露出全部子块的母块
+    const text = [], map = [], marks = [];
+    const mark = (cls, label, extra) => `<span class="bd-ctl ${cls}"${extra || ""}>${label}</span>`;
+    const walk = (it, depth) => {
+      if (depth > 100) return;
+      const L = lineOf(it), kids = kidsOf.get(L) || [];
+      const isOpen = L === rootLine || (fold.has(L) ? fold.get(L) : open.has(L));
+      // 自己的行：到第一个子块之前；没有子块就到下一个块之前；去掉末尾空行
+      const next = kids.length ? lineOf(kids[0]) : (nodes.find((x) => lineOf(x) > L) ? lineOf(nodes.find((x) => lineOf(x) > L)) : lastLine + 1);
+      let last = Math.min(next - 1, lastLine);
+      while (last > L && !all[last].trim()) last--;
+      const own = [];
+      for (let l = L; l <= last; l++) own.push(l);
+      if (kids.length && L !== rootLine) {
+        // 「…」挂在自己最后一行末尾（行尾的 ^块ID 之前）；自己那几行里有代码块 / 公式 / 表格时挂在第一行
+        const at = own.slice(1).some((l) => /^\s*(```|~~~|\$\$|\|)/.test(all[l])) ? L : last;
+        marks.push({ kind: "fold", line: L, open: isOpen });
+        const tag = isOpen ? mark("bd-fold-mark is-open", "收起", ' aria-label="收起子块"') : mark("bd-fold-mark", "…", ` aria-label="展开 ${kids.length} 个子块"`);
+        for (const l of own) {
+          text.push(l === at ? all[l].replace(/(\s+\^[\w-]+)?\s*$/, (t) => " " + tag + t) : all[l]);
+          map.push(l);
+        }
+      } else for (const l of own) { text.push(all[l]); map.push(l); }
+      if (!kids.length || !isOpen) return;
+      let n = kids.length;
+      if (!more.has(L) && n > CHILD_LIMIT) {
+        let lastNeed = -1;
+        kids.forEach((k, i) => { if (need.has(lineOf(k))) lastNeed = i; });
+        n = Math.max(CHILD_LIMIT, lastNeed + 1);
+      }
+      for (const k of kids.slice(0, n)) walk(k, depth + 1);
+      if (n < kids.length) {
+        const pre = all[lineOf(kids[n])].match(/^(\s*)([-*+]|\d+[.)])\s/);
+        marks.push({ kind: "more", line: L });
+        text.push((pre ? pre[1] + pre[2] : "-") + " " + mark("bd-more-mark", `… 还有 ${kids.length - n} 项`));
+        map.push(-1);
+      }
+    };
+    walk(byLine.get(rootLine) || root, 0);
+    return { text: text.join("\n"), map, marks };
+  }
+
+  // 给渲染结果里的「…」接上点击：折叠的子块展开 / 收起，「还有 N 项」露出其余子块
+  bindFoldMarks(m, box, marks) {
+    const els = box.querySelectorAll(".bd-fold-mark, .bd-more-mark");
+    els.forEach((el, i) => {
+      const mk = marks[i];
+      if (!mk) return;
+      const li = el.closest("li");
+      if (mk.kind === "more") {
+        if (li) li.addClass("bd-more-li");
+      } else if (li) li.toggleClass("bd-folded", !mk.open);
+      el.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (mk.kind === "more") m.__bdMore.add(mk.line);
+        else m.__bdFold.set(mk.line, !mk.open);
+        m.render();
+      });
+    });
   }
 
   afterRender(m, box, sourcePath) {
@@ -1096,11 +1319,13 @@ module.exports = class BacklinkDefaults extends Plugin {
     box.querySelectorAll("input.task-list-item-checkbox").forEach((cb) => {
       const holder = cb.closest("[data-line]");
       const rel = parseInt(cb.getAttribute("data-line") || (holder && holder.getAttribute("data-line")), 10);
-      if (m.__bdLine0 < 0 || isNaN(rel)) { cb.disabled = true; return; }
+      // 按子块结构折叠时渲染的行和原文不连续，按对照表找原文行号
+      const src = m.__bdLineMap ? (m.__bdLineMap[rel] ?? -1) : m.__bdLine0 < 0 ? -1 : m.__bdLine0 + rel;
+      if (src < 0 || isNaN(rel)) { cb.disabled = true; return; }
       cb.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.toggleTask(m.parentDom.file, m.__bdLine0 + rel);
+        this.toggleTask(m.parentDom.file, src);
       });
     });
     box.querySelectorAll("input:not(.task-list-item-checkbox)").forEach((i) => { i.disabled = true; });
@@ -2005,12 +2230,31 @@ module.exports = class BacklinkDefaults extends Plugin {
   }
 
   // 跳到反向链接：优先滚到正文底部那份并聚焦筛选框；没有就唤出侧栏反链面板
-  gotoBacklinks() {
+  async gotoBacklinks() {
     const view = this.app.workspace.activeLeaf && this.app.workspace.activeLeaf.view;
-    const root = view && view.containerEl && view.containerEl.querySelector(".embedded-backlinks");
-    if (root && root.offsetParent !== null) {
-      root.scrollIntoView({ behavior: "smooth", block: "start" });
-      setTimeout(() => { const f = root.querySelector(".bd-filter-input"); if (f) f.focus(); }, 150);
+    const find = () => {
+      const r = view && view.containerEl && view.containerEl.querySelector(".embedded-backlinks");
+      return r && r.offsetParent !== null ? r : null;
+    };
+    let root = find();
+    // 阅读视图是边滚边渲染的：长笔记要滚到底，正文底部那份反链才会画出来（以前找不到就退去开侧栏面板了）
+    if (!root && view && view.getMode && view.getMode() === "preview" && !view.containerEl.hasClass("no-backlinks")) {
+      const opt = this.app.internalPlugins.getPluginById("backlink");
+      const sc = view.previewMode.renderer && view.previewMode.renderer.previewEl;
+      if (sc && opt && opt.enabled && opt.instance.options.backlinkInDocument) {
+        for (let i = 0; i < 10 && !root; i++) { sc.scrollTop = sc.scrollHeight; await wait(100); root = find(); }
+        if (root) await wait(150);   // 等反链条目填进来，高度稳定一点再算居中
+      }
+    }
+    if (root) {
+      // 放到视口正中：面板比一屏矮就整个居中，比一屏高就把面板顶部（标题和筛选框）放到正中
+      const sc = root.closest(".cm-scroller, .markdown-preview-view");
+      if (sc) {
+        const r = root.getBoundingClientRect(), s = sc.getBoundingClientRect();
+        const mid = r.height < s.height ? r.top + r.height / 2 : r.top + 24;
+        sc.scrollTo({ top: sc.scrollTop + mid - (s.top + s.height / 2), behavior: "smooth" });
+      } else root.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => { const f = root.querySelector(".bd-filter-input"); if (f) f.focus({ preventScroll: true }); }, 150);   // 聚焦不能带滚动，会打断上面的居中
       return;
     }
     const leaves = this.app.workspace.getLeavesOfType("backlink");

@@ -7,6 +7,7 @@
 // 向量按块内容的哈希缓存在 ~/.cache/second-brain/vectors/（不放进库里，免得 iCloud 同步），两个库共用。
 const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, requestUrl } = require("obsidian");
 const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto = require("crypto");
+const { EditorView } = require("@codemirror/view");
 
 const VIEW_REVIEW = "sb-daily-review";
 const VIEW_RELATED = "sb-related";
@@ -48,6 +49,91 @@ const DEFAULTS = {
 const M = () => window.moment();
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------- 跳到某一行：稳定地停在视口正中，并选中这一行的文字（Hover Outline 插件里有同一份） ----------
+//   · 编辑模式：选中行内文字（不含缩进、列表符号、复选框、#、行尾 ^块ID）；高度是边滚边量的，对中后再量几次，偏了就补
+//   · 阅读模式：先滚到附近让它渲染出来，再按段落 / 列表项（data-line）找到对应元素，对中后用浏览器选区选中
+//   · 靠近文首文末滚不动的时候，停在能到的最近位置
+const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+const LINE_PREFIX_RE = /^\s*(?:>\s*)*(?:(?:[-*+]|\d+[.)])\s+)?(?:\[.\]\s+)?(?:#{1,6}\s+)?/;
+
+async function centerOn(sc, measure) {
+    for (let i = 0; i < 10; i++) {
+        await nextFrame();
+        await nextFrame();
+        const m = measure();
+        if (!m) return;
+        const s = sc.getBoundingClientRect();
+        const delta = m.top + m.height / 2 - (s.top + s.height / 2);
+        if (Math.abs(delta) < 2) return;
+        const before = sc.scrollTop;
+        sc.scrollTop = before + delta;
+        if (Math.abs(sc.scrollTop - before) < 1) return;   // 到顶 / 到底了
+    }
+}
+
+// 阅读模式里第 line 行对应的元素：列表项按 data-line（相对段落开头），其余取段落本身；顶上文件名那一栏也挂在第 0 行、但只占 0 行，跳过
+function previewElAt(renderer, line) {
+    const sec = (renderer.sections || []).find((s) => s.start && s.end && s.lines !== 0 && s.start.line <= line && line <= s.end.line);
+    if (!sec || !sec.el || !sec.el.isConnected || !sec.el.firstElementChild) return null;
+    // 「- - 文字」这种一行套几层的，每层都是这一行，取最里面那层（外层自己没有文字）
+    const lis = sec.el.querySelectorAll(`li[data-line="${line - sec.start.line}"]`);
+    return lis.length ? lis[lis.length - 1] : sec.el.firstElementChild;
+}
+
+// 元素自己的文字（列表项不含子列表）
+function ownRange(el) {
+    const range = document.createRange();
+    if (el.tagName === "LI") {
+        range.setStart(el, 0);
+        const sub = [...el.children].find((c) => /^(UL|OL)$/.test(c.tagName) || c.classList.contains("list-children"));
+        if (sub) range.setEndBefore(sub);
+        else range.setEnd(el, el.childNodes.length);
+    } else range.selectNodeContents(el);
+    return range;
+}
+
+async function revealLine(view, line, select = true) {
+    if (!view || !view.getMode) return;
+    if (view.getMode() === "source") {
+        const ed = view.editor;
+        const cm = ed && ed.cm;
+        if (!cm) return;
+        line = Math.max(0, Math.min(line, ed.lastLine()));
+        const text = ed.getLine(line);
+        if (select) {
+            const from = text.match(LINE_PREFIX_RE)[0].length;
+            const to = Math.max(from, text.replace(/\s+\^[\w-]+\s*$/, "").replace(/\s+$/, "").length);
+            ed.setSelection({ line, ch: from }, { line, ch: to });
+        } else ed.setCursor({ line, ch: text.length });
+        ed.focus();
+        const pos = cm.state.doc.line(line + 1).from;
+        cm.dispatch({ effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+        await centerOn(cm.scrollDOM, () => {
+            const b = cm.lineBlockAt(pos);
+            return { top: cm.documentTop + b.top, height: b.height };
+        });
+        return;
+    }
+    const pm = view.previewMode;
+    const rd = pm && pm.renderer;
+    const sc = rd && rd.previewEl;
+    if (!sc) return;
+    pm.applyScroll(line);
+    let el = null;
+    for (let i = 0; i < 12 && !el; i++) { await sleep(i ? 80 : 30); el = previewElAt(rd, line); }
+    if (!el) return;
+    await centerOn(sc, () => {
+        const cur = previewElAt(rd, line);
+        return cur ? ownRange(cur).getBoundingClientRect() : null;
+    });
+    if (!select) return;
+    const target = previewElAt(rd, line);
+    if (!target) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(ownRange(target));
+}
 
 // ---------- 小工具 ----------
 function journalDate(basename) {
@@ -1656,6 +1742,9 @@ module.exports = class SecondBrain extends Plugin {
             await leaf.openFile(file, { eState: { line } });
         }
         await this.settleScroll(leaf.view, line);
+        // 跳过去之后让那一行停在正中、选中它的文字
+        await sleep(60);
+        await revealLine(leaf.view, line);
     }
     // 阅读视图是边滚边渲染的：大文件第一次打开，前面段落的高度还是估的，一次滚不到位（以前要点第二次才对）。
     // 滚完看顶上是不是那一行，不是就再定位一次，直到对上或者滚不动了（快到文末时顶不上去）

@@ -1,5 +1,5 @@
-const { Plugin, PluginSettingTab, Setting, TFile, Notice, moment, debounce } = require("obsidian");
-const { execFile } = require("child_process");
+const { Plugin, PluginSettingTab, Setting, TFile, Notice, moment, debounce, requestUrl } = require("obsidian");
+const { execFile, spawn } = require("child_process");
 
 // 所有分析都借螺旋日程插件（nautilus-spiral）的：解析、排程、容量、日期分界
 const NAUTILUS = "nautilus-spiral";
@@ -17,8 +17,49 @@ const DEFAULTS = {
   snoozeUntil: 0,
   day: null,                                // 以下是当天的运行状态，换天清空
   state: null,
+  // ---- 训练提醒：读 训练计划 里的「周模板」，不依赖螺旋日程 ----
+  workout: true,
+  workoutAt: "22:00",                       // 开练提醒；休息日断档太久也在这时提醒
+  workoutChaseAt: "00:30",                  // 当天主要训练还没打勾就追一条（日界之前都算当天）；周日这时发周复盘
+  workoutGapDays: 2,                        // 连着几天没练算断档
+  weigh: true,
+  weighDays: "一,三,五,日",                  // 称重日：当天第一次动日记时提醒
+  review: true,                             // 周日周复盘
+  planPath: "健康/训练计划.md",
+  weightPath: "健康/体重记录.md",
+  dashboardPath: "健康/力量训练与健康.md",
+  wDay: null,
+  wState: null,
+  // ---- 人不在电脑前时转发到 Telegram ----
+  tgAway: true,
+  tgAwayMin: 5,                             // 键盘鼠标多久没动算不在（锁屏直接算不在）
+  tgChatId: "",                             // 空着就用 Telegram Inbox 插件记下的主人 chat id
+  keepAwakeAC: true,                        // 插电时不让 Mac 闲置睡眠，屏幕照样息屏
+  tgReportTimes: "12:00,18:00,22:00",       // 每天定时把螺旋日程图文版推到 Telegram（不管人在不在）
+  tgReportSent: {},                         // { "2026-10-10 12:00": true }，只留最近几天
+  pushWorkout: true, pushWorkoutAt: "08:00", // 健身早报：今天练什么、本周练了几天、要不要称重
+  pushStale: true, pushStaleAt: "23:00", staleDays: 3,   // 拖了几天以上的 TODO，每件带按钮
+  staleMsg: null,
+  pushCards: true, pushCardsAt: "12:00",    // Anki 到期卡片数
+  pushPeriod: true, pushPeriodAt: "12:00", periodPath: "健康/经期记录.md", periodWho: "TA",
+  pushInsight: true, pushInsightAt: "21:30", insightPath: "计划与总结/周洞察.md",   // 每周日
+  claudePath: "~/.local/bin/claude",
+  comfort: true, comfortProfile: "健康/陪伴档案.md",   // Telegram 里说累、难受时陪你聊
 };
 const NO_DUR_DOING_MIN = 60;
+
+// 训练项目关键词：和看板（力量训练与健康）认的一致；「锻炼」「健身」只在打了勾的行里算
+const EX_WORDS = ["引体向上", "俯卧撑", "仰卧起坐", "深蹲", "分腿蹲", "硬拉", "平板支撑", "卷腹", "静态悬挂", "静态悬垂",
+  "卧推", "推举", "划船", "侧平举", "弯举", "弓步", "臀桥", "跑步", "慢跑", "快走", "有氧", "跳绳", "游泳", "篮球", "锻炼", "健身"];
+const CARDIO = ["跑步", "慢跑", "快走", "有氧", "跳绳", "游泳", "篮球"];
+const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+const DONE_RE = /^\s*-\s+(?:\[[xX]\]|DONE)\s/;
+const exWords = (s) => EX_WORDS.filter((w) => s.includes(w));
+const doneExLines = (content) => content.split("\n").filter((l) => DONE_RE.test(l) && !/#card\b/.test(l) && exWords(l).length);
+// 情绪话：Telegram 陪聊的触发词，也用来从日记里捞「最近说过的类似的话」；FEEL_SKIP 先去掉容易误判的词
+const FEEL_RE = /(好?累|难受|好?烦|崩溃|焦虑|难过|伤心|想哭|哭了|emo|撑不住|不想活|想死|没意思|好丧|郁闷|压力好?大|心累|孤独|迷茫|自我怀疑|痛苦|绝望|委屈|失眠|睡不着|不开心|抑郁|好废)/i;
+const FEEL_SKIP = /累计|积累|累积|麻烦|烦请|没意思的话/g;
+const toMin = (hhmm) => { const m = /^(\d{1,2})[:：](\d{2})$/.exec(String(hhmm).trim()); return m ? +m[1] * 60 + +m[2] : null; };
 
 // 通知类别：用来「一键清掉同一类」。命令 id 是 clear-<key>，可以在 Obsidian 里绑快捷键，
 // 也可以从外部用 `obsidian command id=nautilus-notify:clear-<key>`（比如 Keyboard Maestro 的全局快捷键）
@@ -31,6 +72,9 @@ const KINDS = [
   { key: "overflow", name: "排不下" },
   { key: "nudge",    name: "接下来做什么" },
   { key: "eod",      name: "收尾" },
+  { key: "workout",  name: "训练" },
+  { key: "weigh",    name: "称重" },
+  { key: "review",   name: "周复盘" },
   { key: "test",     name: "测试" },
 ];
 const kindName = (key) => KINDS.find((k) => k.key === key)?.name ?? key;
@@ -63,11 +107,25 @@ module.exports = class NautilusNotify extends Plugin {
     for (const k of KINDS) {
       this.addCommand({ id: `clear-${k.key}`, name: `清除通知：所有「${k.name}」`, callback: () => this.clear(k.key, true) });
     }
+    this.addCommand({ id: "workout-today", name: "训练：今天练什么（发一条提醒）", callback: () => this.workoutTick({ force: "start" }) });
+    this.addCommand({ id: "workout-write", name: "训练：把今天的训练待办写进日记", callback: () => this.openTodayWorkout(true) });
+    this.addCommand({ id: "workout-review", name: "训练：本周复盘（发一条提醒）", callback: () => this.workoutTick({ force: "review" }) });
 
     const onChange = debounce(() => this.tick({ fromEdit: true }), 1500, true);
     this.registerEvent(this.app.vault.on("modify", (f) => { if (this.isToday(f)) onChange(); }));
     this.registerInterval(window.setInterval(() => this.tick(), 30 * 1000));
     this.registerInterval(window.setInterval(() => this.readIdle(), 60 * 1000));
+    this.addCommand({ id: "tg-test", name: "发一条测试提醒到 Telegram", callback: async () => {
+      new Notice((await this.tg("🔔 任务提醒", "Telegram 转发能正常收到")) ? "已发到 Telegram" : "没发出去：先给 Telegram bot 发一条消息，让它记下你的 chat id（详情看控制台）");
+    } });
+    this.addCommand({ id: "push-workout", name: "Telegram：发今天的健身早报", callback: () => this.pushWorkout() });
+    this.addCommand({ id: "push-stale", name: "Telegram：发拖了好几天的任务", callback: async () => { await this.pushStale() || new Notice("今天日记里没有拖了这么久的任务"); } });
+    this.addCommand({ id: "push-cards", name: "Telegram：发闪卡到期数", callback: () => this.pushCards() });
+    this.addCommand({ id: "push-insight", name: "Telegram：现在写这周的周洞察", callback: () => { new Notice("在写周洞察，写好直接发到 Telegram（要一两分钟）"); this.pushInsight(true); } });
+    this.addCommand({ id: "tg-report", name: "把螺旋日程图文版发到 Telegram", callback: async () => {
+      new Notice((await this.reportTick(true)) ? "已发到 Telegram" : "没发出去（螺旋日程没开，或还没有 chat id）");
+    } });
+    this.keepAwake();
     this.app.workspace.onLayoutReady(() => { this.readIdle(); this.tick(); });
   }
 
@@ -85,16 +143,410 @@ module.exports = class NautilusNotify extends Plugin {
     new Notice(`任务提醒暂停到 ${moment(this.settings.snoozeUntil).format("HH:mm")}`);
   }
 
-  // 键盘鼠标多久没动（秒）；人不在电脑前时不发「下一件」这类可有可无的提醒
+  // 键盘鼠标多久没动（秒）；人不在电脑前时不发「下一件」这类可有可无的提醒，其余的转发到 Telegram
   readIdle() {
     execFile("ioreg", ["-c", "IOHIDSystem"], (err, out) => {
       const m = !err && /"HIDIdleTime" = (\d+)/.exec(out);
       if (m) this.idleSec = Math.floor(+m[1] / 1e9);
     });
+    // 锁屏时 Root 下会多出 CGSSessionScreenIsLocked = Yes
+    execFile("ioreg", ["-n", "Root", "-d1"], (err, out) => {
+      if (!err) this.locked = /"CGSSessionScreenIsLocked"\s*=\s*Yes/.test(out);
+    });
+  }
+  away() { return this.locked || this.idleSec >= this.settings.tgAwayMin * 60; }   // 息屏一定是先没动够了时间，所以按没动的时长算就够
+
+  // ---------- 人不在电脑前：转发到 Telegram（借 Telegram Inbox 插件的 bot token 和它记下的 chat id） ----------
+  tgTarget() {
+    const tp = this.app.plugins.plugins["telegram-inbox-local"];
+    const token = tp?.settings?.token;
+    const owner = tp?.settings?.owner_chat_id;
+    if (owner && String(owner) !== String(this.settings.tgChatId)) { this.settings.tgChatId = String(owner); this.saveSoon(); }
+    return token && this.settings.tgChatId ? { token, chat: this.settings.tgChatId } : null;
+  }
+  async tg(title, body, { html = false, markup = null } = {}) {
+    const t = this.tgTarget();
+    if (!t) { console.warn("[nautilus-notify] 还没有 Telegram chat id：给 bot 发一条消息就会记下"); return false; }
+    try {
+      await requestUrl({
+        url: `https://api.telegram.org/bot${t.token}/sendMessage`, method: "POST", contentType: "application/json",
+        body: JSON.stringify({ chat_id: t.chat, text: body ? `${title}\n${body}` : title, ...(html ? { parse_mode: "HTML" } : {}), ...(markup ? { reply_markup: markup } : {}) }),
+      });
+      return true;
+    } catch (e) { console.error("[nautilus-notify] Telegram 发送失败", e); return false; }
   }
 
-  send(title, body, { kind = "other", file, line, sound = false, force = false } = {}) {
+  // 每天几个固定时刻推一次螺旋日程图文版；到点时 Mac 在睡觉的话，醒来 90 分钟内补发
+  async reportTick(force = false) {
+    const s = this.settings;
+    const np = this.app.plugins.plugins[NAUTILUS];
+    if (!np?.telegramReport || !this.tgTarget()) return false;
+    if (force) return this.tg(await np.telegramReport("螺旋日程 · 现在"), "", { html: true });
+    if (!s.enabled) return false;
+    const nowM = moment(), now = nowM.hours() * 60 + nowM.minutes(), today = nowM.format("YYYY-MM-DD");
+    for (const hhmm of s.tgReportTimes.split(/[,，、\s]+/).filter(Boolean)) {
+      const at = toMin(hhmm);
+      const key = `${today} ${hhmm}`;
+      if (at == null || s.tgReportSent[key] || now < at || now - at >= 90) continue;
+      s.tgReportSent[key] = true;
+      const old = nowM.clone().subtract(3, "day").format("YYYY-MM-DD");
+      for (const k of Object.keys(s.tgReportSent)) if (k.slice(0, 10) < old) delete s.tgReportSent[k];
+      this.saveSoon();
+      const icon = at < 15 * 60 ? "☀️" : at < 20 * 60 ? "🌇" : "🌙";
+      await this.tg(await np.telegramReport(`${icon} ${hhmm} 螺旋日程`), "", { html: true });
+    }
+    return true;
+  }
+
+  // ================= Telegram 推送：健身早报、拖延任务、闪卡、经期、周洞察、收工小结 =================
+  // 每个定时推送按「日期 + 名字」只发一次；到点时 Mac 在睡觉，醒来 90 分钟内补发
+  dueOnce(name, hhmm, { weekday = null } = {}) {
+    const s = this.settings;
+    const at = toMin(hhmm);
+    const nowM = moment();
+    if (at == null || (weekday != null && nowM.day() !== weekday)) return false;
+    const now = nowM.hours() * 60 + nowM.minutes();
+    const key = `${nowM.format("YYYY-MM-DD")} ${name}`;
+    if (s.tgReportSent[key] || now < at || now - at >= 90) return false;
+    s.tgReportSent[key] = true;
+    this.saveSoon();
+    return true;
+  }
+  esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  async pushTick() {
+    const s = this.settings;
+    if (!s.enabled || !this.tgTarget()) return;
+    if (s.pushWorkout && this.dueOnce("workout", s.pushWorkoutAt)) await this.pushWorkout();
+    if (s.pushStale && this.dueOnce("stale", s.pushStaleAt)) await this.pushStale();
+    if (s.pushCards && this.dueOnce("cards", s.pushCardsAt)) await this.pushCards();
+    if (s.pushPeriod && this.dueOnce("period", s.pushPeriodAt)) await this.pushPeriod();
+    if (s.pushInsight && this.dueOnce("insight", s.pushInsightAt, { weekday: 0 })) await this.pushInsight();
+  }
+
+  // ---------- 🏋️ 健身早报 ----------
+  async pushWorkout() {
+    const day = this.wToday();
+    const plan = await this.readPlan();
+    const tp = this.todayPlan(plan, day);
+    const st = await this.workoutStats(day);
+    const E = (x) => this.esc(x);
+    const lines = [tp.kind === "休息" ? `😴 <b>${tp.wd} · 休息日</b>` : `${tp.kind === "有氧" ? "🏃" : "🏋️"} <b>${tp.wd} · ${E(tp.label)}</b>`];
+    if (tp.items.length) lines.push("", ...tp.items.map((x) => `▫️ ${E(x)}`));
+    if (tp.daily.length) lines.push("", `🔁 每天：${tp.daily.map(E).join("；")}`);
+    lines.push("", `📊 本周已练 <b>${st.weekDays}</b> 天（目标 5）` + (st.gap === 0 ? " · 今天已经练过 ✅" : st.gap >= 31 ? "" : ` · 上次练是 ${st.gap} 天前`));
+    if (st.gap >= this.settings.workoutGapDays && plan.fallback) lines.push(`🧯 断了 ${st.gap} 天，先做保底版：${E(plan.fallback)}`);
+    if (this.settings.weighDays.split(/[,，、\s]+/).some((x) => x && tp.wd.endsWith(x.replace(/^周/, "")))) lines.push("⚖️ 今天称重日：起床后空腹、赤脚称一次，截图发我");
+    lines.push("", `<i>⏰ ${this.settings.workoutAt} 再提醒一次</i>`);
+    return this.tg(lines.join("\n"), "", { html: true });
+  }
+
+  // ---------- 🐢 拖了好几天的任务：每件带三个按钮 ----------
+  // 日记里「- TODO xxx ← [[2026_10_02]]」= 从 10-02 一路挪过来的
+  async staleTasks() {
+    const day = this.wToday();
+    const path = this.wJournalPath(day);
+    const lines = (await this.wRead(path)).split("\n");
+    const out = [];
+    lines.forEach((l, i) => {
+      const m = /^-\s+(?:TODO|LATER)\s+(.*?)\s*←\s*\[\[(\d{4})_(\d{2})_(\d{2})\]\]/.exec(l);
+      if (!m) return;
+      const age = day.diff(moment(`${m[2]}-${m[3]}-${m[4]}`, "YYYY-MM-DD"), "days");
+      if (age >= this.settings.staleDays) out.push({ line: i, raw: l, label: m[1].replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g, "$1"), age, from: `${m[3]}-${m[4]}` });
+    });
+    return { path, day, items: out.sort((a, b) => b.age - a.age) };
+  }
+  staleMessage(items, done = {}) {
+    const E = (x) => this.esc(x);
+    const head = `🐢 <b>拖了 ${this.settings.staleDays} 天以上的事</b>（${items.length} 件）\n点按钮直接改日记：🗑 不做了 · 📅 挪明天 · 💤 搁置\n`;
+    const body = items.map((t, i) => `${done[t.id] ? done[t.id] : `${i + 1}️⃣`} ${E(t.label.length > 30 ? t.label.slice(0, 30) + "…" : t.label)} <i>· ${t.age} 天（从 ${t.from}）</i>`);
+    const kb = items.filter((t) => !done[t.id]).map((t) => {
+      const n = items.indexOf(t) + 1;
+      return [{ text: `🗑 ${n}`, callback_data: `nn|drop|${t.id}` }, { text: `📅 ${n}`, callback_data: `nn|move|${t.id}` }, { text: `💤 ${n}`, callback_data: `nn|wait|${t.id}` }];
+    });
+    return { text: head + "\n" + body.join("\n"), markup: { inline_keyboard: kb } };
+  }
+  async pushStale() {
+    const { path, items } = await this.staleTasks();
+    if (!items.length) return;
+    const list = items.slice(0, 8).map((t, i) => ({ ...t, id: `${Date.now().toString(36)}${i}` }));
+    this.settings.staleMsg = { path, items: list, done: {} };
+    this.saveSoon();
+    const m = this.staleMessage(list);
+    return this.tg(m.text, "", { html: true, markup: m.markup });
+  }
+  // Telegram Inbox 收到按钮回调时调这里；返回 { toast, edit, markup }
+  async onTgCallback(data) {
+    const [, act, id] = String(data).split("|");
+    const sm = this.settings.staleMsg;
+    const t = sm?.items.find((x) => x.id === id);
+    if (!t) return { toast: "这条已经过期了" };
+    if (sm.done[id]) return { toast: "已经处理过了" };
+    const f = this.app.vault.getAbstractFileByPath(sm.path);
+    if (!(f instanceof TFile)) return { toast: "找不到那天的日记" };
+    let moved = null, ok = false;
+    await this.app.vault.process(f, (txt) => {
+      const ls = txt.split("\n");
+      const i = ls.findIndex((l) => l === t.raw) >= 0 ? ls.findIndex((l) => l === t.raw) : ls.findIndex((l) => /^-\s+(?:TODO|LATER)\s/.test(l) && l.includes(t.label));
+      if (i < 0) return txt;
+      ok = true;
+      if (act === "drop") ls[i] = ls[i].replace(/^-\s+(?:TODO|LATER)\s/, "- CANCELED ");
+      else if (act === "wait") ls[i] = ls[i].replace(/^-\s+(?:TODO|LATER)\s/, "- WAITING ");
+      else if (act === "move") {
+        let j = i + 1;
+        while (j < ls.length && /^\s+\S/.test(ls[j])) j++;   // 连同缩进的子项一起搬
+        moved = ls.splice(i, j - i);
+      }
+      return ls.join("\n");
+    });
+    if (!ok) return { toast: "日记里没找到这一行（可能已经改过了）" };
+    if (moved) {
+      const tom = this.wToday().add(1, "day");
+      const tp = this.wJournalPath(tom);
+      let tf = this.app.vault.getAbstractFileByPath(tp);
+      if (!(tf instanceof TFile)) tf = await this.app.vault.create(tp, `---\njournal: 每日\njournal-date: ${tom.format("YYYY-MM-DD")}\n---\n`);
+      await this.app.vault.process(tf, (txt) => (txt.endsWith("\n") || !txt ? txt : txt + "\n") + moved.join("\n") + "\n");
+    }
+    sm.done[id] = { drop: "🗑", move: "📅", wait: "💤" }[act];
+    this.saveSoon();
+    const m = this.staleMessage(sm.items, sm.done);
+    return { toast: { drop: "已改成 CANCELED", move: "已挪到明天", wait: "已改成 WAITING（搁置）" }[act], edit: m.text, markup: m.markup };
+  }
+
+  // ---------- 🃏 闪卡到期（借第二大脑插件的 AnkiConnect；Anki 没开就不发） ----------
+  async pushCards() {
+    const sb = this.app.plugins.plugins["second-brain"];
+    if (!sb?.anki) return;
+    let n;
+    try { n = (await sb.anki("findCards", { query: "is:due -is:suspended -is:buried" })).length; } catch (e) { console.warn("[nautilus-notify] Anki 没连上，今天不发闪卡提醒", e); return; }
+    if (!n) return;
+    let last = "";
+    for (let i = 0; i < 14 && !last; i++) {
+      const d = this.wToday().subtract(i, "day");
+      const m = /复习卡片\s*(\d+)\s*张/.exec(await this.wRead(this.wJournalPath(d)));
+      if (m) last = i === 0 ? `今天已经复习过 ${m[1]} 张` : `上次复习是 ${d.format("MM-DD")}（${m[1]} 张）`;
+    }
+    const mins = Math.max(3, Math.round(n * 0.4));
+    return this.tg(`🃏 <b>今天有 ${n} 张卡到期</b>\n⏱ 大约 ${mins} 分钟就能过完${last ? `\n📚 ${last}` : ""}\n💡 在 Obsidian 打开「每日回顾」或者直接用 Anki`, "", { html: true });
+  }
+
+  // ---------- 🌸 伴侣的经期预测：提前 3 天、当天各提醒一次 ----------
+  async pushPeriod() {
+    const rows = (await this.wRead(this.settings.periodPath)).split("\n").map((l) => /^\|\s*(\d{4}-\d{2}-\d{2})\s*\|/.exec(l)).filter(Boolean).map((m) => moment(m[1], "YYYY-MM-DD")).sort((a, b) => a - b);
+    if (!rows.length) return;
+    const gaps = rows.slice(1).map((d, i) => d.diff(rows[i], "days")).filter((g) => g >= 20 && g <= 45);
+    const cycle = gaps.length ? Math.round(gaps.reduce((a, b) => a + b) / gaps.length) : 28;
+    const next = rows.at(-1).clone().add(cycle, "day");
+    const left = next.diff(moment().startOf("day"), "days");
+    const who = this.esc(this.settings.periodWho || "TA");
+    const E = `预计 <b>${next.format("M月D日")}</b>（按平均周期 ${cycle} 天算${gaps.length < 3 ? "，记录还少，可能差几天" : ""}）`;
+    if (left === 3) return this.tg(`🌸 <b>${who}的经期大概 3 天后</b>\n${E}\n💝 可以提前备好暖宝宝、红糖姜茶、止痛药；那几天少约累的事，多点耐心`, "", { html: true });
+    if (left === 0) return this.tg(`🌸 <b>${who}的经期预计今天开始</b>\n${E}\n📝 来了的话在「经期记录」加一行开始日期，预测会越来越准\n💝 今天多关心一句`, "", { html: true });
+  }
+
+  // ---------- 🧭 周日：这一周做了什么（claude 读日记写） ----------
+  // 日记太长（摘抄、长文）只取任务行和顶格条目，每行截断
+  digestJournal(txt, maxLines = 160) {
+    const out = [];
+    let fm = false;
+    for (const l of txt.split("\n")) {
+      if (l === "---") { fm = !fm; continue; }
+      if (fm || !l.trim() || /!\[\[|^\s*\^/.test(l)) continue;
+      const task = /^\s*-\s+(?:TODO|DOING|DONE|FAILED|CANCELED|WAITING|LATER|NOW|PAUSED|\[.\])\s/.test(l);
+      if (!task && /^\s/.test(l)) continue;
+      out.push(l.length > 140 ? l.slice(0, 140) + "…" : l);
+      if (out.length >= maxLines) break;
+    }
+    return out.join("\n");
+  }
+  runClaude(prompt, timeoutSec = 240) {
+    const os = require("os"), path = require("path");
+    return new Promise((resolve, reject) => {
+      const bin = this.settings.claudePath.replace(/^~(?=\/)/, os.homedir());
+      const env = { ...process.env, PATH: [path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+      let child;
+      try { child = spawn(bin, ["-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", "--tools", ""], { cwd: os.tmpdir(), env }); }
+      catch (e) { return reject(e); }
+      let out = "", err = "";
+      child.stdout.on("data", (d) => { out += d; });
+      child.stderr.on("data", (d) => { err += d; });
+      const timer = setTimeout(() => { child.kill(); reject(new Error("claude 超时")); }, timeoutSec * 1000);
+      child.on("error", (e) => { clearTimeout(timer); reject(e); });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        let d;
+        try { d = JSON.parse(out); } catch (e) { return reject(new Error((err || out || `claude 退出码 ${code}`).trim().slice(0, 300))); }
+        if (d.is_error) return reject(new Error(String(d.result || "claude 出错").slice(0, 300)));
+        resolve(String(d.result || "").trim());
+      });
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+  }
+  // Telegram 只认少数 HTML 标签；模型偶尔写出 Markdown 的 **粗体**，顺手换掉
+  tgHtml(s) {
+    return s.replace(/^```\w*\n?|```$/g, "").replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/<br\s*\/?>/g, "\n").trim();
+  }
+  async pushInsight(force = false) {
+    const day = this.wToday();
+    const mon = day.clone().startOf("isoWeek");
+    const parts = [];
+    for (let d = mon.clone(); !d.isAfter(day, "day"); d.add(1, "day")) {
+      const txt = this.digestJournal(await this.wRead(this.wJournalPath(d)));
+      if (txt) parts.push(`### ${d.format("YYYY-MM-DD dddd")}\n${txt}`);
+    }
+    if (!parts.length) return force ? this.tg("🧭 这周日记是空的，没什么可写", "") : false;
+    const prompt = `下面是我这一周（${mon.format("MM-DD")} ～ ${day.format("MM-DD")}）的 Obsidian 日记摘要：DONE 是做完的，TODO 是没做的，FAILED 是没做成的，CANCELED 是不做了，「← [[日期]]」是从那天一路拖过来的。
+
+请写一份「这一周我做了什么」的洞察，发到 Telegram，用中文，只用 Telegram 支持的 HTML 标签（<b> <i> <code>），不要用 Markdown，不要用 <br>、<p>、<ul>。多用 emoji 当小标题和条目前缀。结构：
+🧭 一句话总结这周（加粗）
+📦 这周主要做了什么：按主题归成 3～6 类（比如插件开发、教课、写作、AI 工具、生活琐事、健身），每类一行，写清楚具体做了什么、大概哪几天
+🚀 推进最大的一件事
+🐢 拖着没动的：反复出现在 TODO 里、或带「←」拖了很多天的，点名
+🔍 一个模式观察：时间和精力实际花在哪、和想做的事是否一致（要具体，引用日记里的事，不要泛泛而谈）
+🎯 下周最值得先做的 1～2 件
+💬 最后一句给我的话：不要鸡汤，用这周的事实肯定我
+全文 25 行以内。只输出正文，不要前言。
+
+${parts.join("\n\n")}`;
+    let text;
+    try { text = this.tgHtml(await this.runClaude(prompt)); }
+    catch (e) { console.error("[nautilus-notify] 周洞察", e); return this.tg(`🧭 这周的洞察没写成：${this.esc(e.message || e)}`, ""); }
+    const title = `🗓 <b>周洞察 · ${mon.format("M/D")}–${day.format("M/D")}</b>\n━━━━━━━━━━━━━━━\n`;
+    await this.saveInsight(mon, day, text);
+    return this.tg(title + text, "", { html: true });
+  }
+  async saveInsight(mon, day, html) {
+    const p = this.settings.insightPath;
+    const md = html.replace(/<b>(.*?)<\/b>/g, "**$1**").replace(/<i>(.*?)<\/i>/g, "*$1*").replace(/<\/?code>/g, "`").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const entry = `- **${mon.format("YYYY-MM-DD")} ～ ${day.format("MM-DD")} 周洞察**\n` + md.split("\n").filter((l) => l.trim()).map((l) => `\t- ${l.trim()}`).join("\n") + "\n";
+    let f = this.app.vault.getAbstractFileByPath(p);
+    if (!(f instanceof TFile)) { f = await this.app.vault.create(p, `---\ntype: 自动生成\n---\n${entry}`); return; }
+    await this.app.vault.process(f, (txt) => {
+      const m = /^---\n[\s\S]*?\n---\n/.exec(txt);
+      return m ? m[0] + entry + txt.slice(m[0].length) : entry + txt;
+    });
+  }
+
+  // ---------- 🌙 收工小结：Telegram 里说「睡了 / 休息了 / 不干了」时，Telegram Inbox 调这里 ----------
+  async daySummary(day = this.wToday()) {
+    const txt = this.digestJournal(await this.wRead(this.wJournalPath(day)), 220);
+    const np = this.nautilus();
+    let stats = "";
+    try {
+      if (np) {
+        const items = np.core.parseJournal(await this.wRead(this.wJournalPath(day)), np.settings);
+        stats = (await np.dayTail(day.format(np.settings.format), items)).join("\n");
+      }
+    } catch (e) { /* 没有就算了 */ }
+    const w = await this.workoutStats(day);
+    const profile = (await this.wRead(this.settings.comfortProfile)).replace(/^---\n[\s\S]*?\n---\n/, "");
+    const prompt = `我刚在 Telegram 里说今天收工了。下面是我今天（${day.format("YYYY-MM-DD dddd")}）的日记摘要：DONE 是做完的，TODO 是还没做的，FAILED 是没做成的。
+${stats ? `\n螺旋日程的统计：\n${stats}\n` : ""}${w.gap === 0 ? "\n今天练过身体。\n" : ""}
+请写一条发到 Telegram 的收工小结，中文，只用 Telegram 支持的 HTML 标签（<b> <i>），不要 Markdown，不要 <br>。多用 emoji。结构：
+🌙 第一行加粗，一句话说今天是怎样的一天
+✅ 今天做成了什么：按事情归类，3～7 条，每条一行，写具体（课、插件、写作、生活琐事都算），能看出价值的点一下
+⏭ 明天先做哪一件：从没做完的里挑最重要的一件，给一个 10 分钟就能开始的第一步
+💬 最后 3～4 句给我的话，按下面陪伴档案里「回我的时候」的要求写（档案里没写的话：不要鸡汤、不要空洞夸奖、不要感叹号堆砌；用今天日记里的具体事实说明我做得不错、我的能力在哪；没做完的事要说成是计划或系统的问题，不是我这个人的问题；语气像一个很懂我、很理性又很温柔的朋友。最后一句可以让我安心去睡）。日记里别人说的话和摘抄不要套在我身上。
+全文 18 行以内。只输出正文。
+
+陪伴档案：
+${profile || "（没有）"}
+
+今天的日记摘要：
+${txt || "（今天日记里几乎没写东西）"}`;
+    try { return this.tgHtml(await this.runClaude(prompt, 150)); }
+    catch (e) {
+      console.error("[nautilus-notify] 收工小结", e);
+      // 兜底：不靠模型，列出今天做完的
+      const done = txt.split("\n").filter((l) => /^-\s+(?:DONE|\[x\])\s/i.test(l)).map((l) => l.replace(/^-\s+(?:DONE|\[x\])\s+(\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?\s+)?/i, "")).slice(0, 10);
+      return `🌙 <b>今天收工了</b>\n${done.length ? `✅ 做完了 ${done.length} 件：\n` + done.map((x) => `▫️ ${this.esc(x.slice(0, 40))}`).join("\n") : "今天记下的不多，也没关系。"}\n\n💬 今天做完的每一件都是真的。剩下的明天接着来，你的节奏没问题。好好睡。`;
+    }
+  }
+
+  // ---------- 🫂 陪你聊：Telegram 里说「好累」「好难受」，或者回复陪聊消息时，Telegram Inbox 调这里 ----------
+  // 读：陪伴档案（你写给它的「我是谁、怎么回我」）+ 最近三天日记 + 最近一个月说过的情绪话 + 这几天几点收工 + 训练体重
+  async comfort(text, history = []) {
+    const day = this.wToday();
+    const np = this.nautilus();
+    const profile = (await this.wRead(this.settings.comfortProfile)).replace(/^---\n[\s\S]*?\n---\n/, "");
+    const recent = [];
+    for (let i = 0; i < 3; i++) {
+      const d = day.clone().subtract(i, "day");
+      const t = this.digestJournal(await this.wRead(this.wJournalPath(d)), i === 0 ? 120 : 50);
+      if (t) recent.push(`### ${d.format("MM-DD dddd")}${i === 0 ? "（今天）" : ""}\n${t}`);
+    }
+    const moods = [];
+    for (let i = 1; i <= 30 && moods.length < 12; i++) {
+      const d = day.clone().subtract(i, "day");
+      for (const l of (await this.wRead(this.wJournalPath(d))).split("\n")) {
+        const s = l.replace(/^\s*-\s*/, "").trim();
+        if (s.length <= 60 && FEEL_RE.test(s.replace(FEEL_SKIP, ""))) moods.push(`${d.format("MM-DD")}：${s}`);
+      }
+    }
+    const facts = [];
+    if (np) {
+      const b = np.settings.dayBounds || {};
+      const ends = [];
+      for (let i = 1; i <= 5; i++) { const k = day.clone().subtract(i, "day").format(np.settings.format); if (b[k]?.end != null) ends.push(`${k.slice(5).replace("_", "-")} ${clock(b[k].end)}`); }
+      if (ends.length) facts.push(`最近几天收工（睡觉）时间：${ends.join("，")}`);
+      try { facts.push(...(await np.dayTail(day.format(np.settings.format), np.core.parseJournal(await this.wRead(this.wJournalPath(day)), np.settings)))); } catch (e) { /* 没有就算了 */ }
+    }
+    const w = await this.workoutStats(day);
+    facts.push(`本周练了 ${w.weekDays} 天，上次练是 ${w.gap >= 31 ? "一个月以前" : w.gap === 0 ? "今天" : `${w.gap} 天前`}`);
+    const nowM = moment();
+    const talk = history.map((h) => `${h.who}：${h.text}`).join("\n");
+    const prompt = `你是他很信任、也很了解他的一个朋友（他是谁写在下面的陪伴档案里）。他刚在 Telegram 里给你发了消息，情绪不太好。现在是 ${nowM.format("M月D日 dddd HH:mm")}。
+
+先读他自己写的「陪伴档案」，严格按里面「回我的时候」的要求回复：
+${profile}
+
+他最近的情况（来自他的 Obsidian 日记，DONE 是做完的，TODO 是没做的）：
+${facts.map((f) => "- " + f).join("\n")}
+
+${recent.join("\n\n")}
+${moods.length ? `\n最近一个月他在日记里说过的类似的话：\n${moods.join("\n")}\n` : ""}
+${talk ? `你们刚才的对话：\n${talk}\n` : ""}
+他现在说：「${text}」
+
+回复要求：中文；像朋友发消息，4～8 行；只回应他自己的感受和处境，日记里别人说的话、摘抄、转述的内容不要拿来套在他身上，也不要提及别人的隐私；只有他这句话或你们刚才的对话里明确流露出想伤害自己、不想活，才按档案里的危机部分回应，否则一个字都不要提自伤和热线；先接住情绪，引用一两件他最近具体在做的事说明你懂他的处境（不要列清单、不要复述全部日记）；不要说教、不要鸡汤、不要「加油」；建议最多一个且非常小，没必要就不给；可以用一个问题结尾让他多说一点。适量 emoji（2～4 个）。只用 Telegram 支持的 HTML（<b> <i>），不要 Markdown。只输出要发给他的话。`;
+    let reply;
+    try { reply = this.tgHtml(await this.runClaude(prompt, 150)); }
+    catch (e) {
+      console.error("[nautilus-notify] 陪聊", e);
+      reply = "🫂 我在。现在没法细看你今天的日记，但你说累，我信。\n先别管清单，喝口水，能躺就躺一会儿。\n想说的话，接着回我这条。";
+    }
+    return { html: reply, history: [...history, { who: "他", text }, { who: "你", text: reply.replace(/<[^>]+>/g, "") }].slice(-10) };
+  }
+  // 短短一句情绪话才算（任务、链接、长摘录不算）
+  isFeeling(s) {
+    s = String(s || "").trim();
+    return this.settings.comfort && s.length <= 40 && !/^(?:TODO|DONE|DOING|LATER|NOW|FAILED|WAITING|CANCELED)\b/.test(s) && !/https?:\/\//.test(s) && FEEL_RE.test(s.replace(FEEL_SKIP, ""));
+  }
+  // 陪聊消息的 message_id → 对话，回复那条消息就接着聊；6 小时后过期
+  rememberThread(id, history) {
+    const m = (this.comfortThreads ||= new Map());
+    m.set(id, { history, at: Date.now() });
+    for (const [k, v] of m) if (Date.now() - v.at > 6 * 3600e3 || m.size > 30) m.delete(k);
+  }
+  threadOf(id) {
+    const t = this.comfortThreads?.get(id);
+    return t && Date.now() - t.at < 6 * 3600e3 ? t.history : null;
+  }
+
+  // 插电时不让 Mac 闲置睡眠（屏幕照样息屏）：睡着了 Obsidian 不运行，什么提醒都发不出去
+  keepAwake() {
+    const on = this.settings.enabled && this.settings.tgAway && this.settings.keepAwakeAC;
+    if (on && !this.caf) {
+      this.caf = spawn("caffeinate", ["-s", "-w", String(process.pid)], { stdio: "ignore" });
+      this.caf.on("exit", () => { this.caf = null; });
+    } else if (!on && this.caf) { this.caf.kill(); this.caf = null; }
+  }
+  onunload() { if (this.caf) this.caf.kill(); }
+
+  send(title, body, { kind = "other", file, line, sound = false, force = false, onClick } = {}) {
     if (!force && (!this.settings.enabled || Date.now() < this.settings.snoozeUntil)) return;
+    if (this.settings.tgAway && (this.away() || force === "tg")) this.tg(title, body);
     try {
       const n = new Notification(title, { body, silent: !sound });
       const rec = { n, kind };
@@ -102,7 +554,8 @@ module.exports = class NautilusNotify extends Plugin {
       n.onclose = () => { this.live = this.live.filter((x) => x !== rec); };
       n.onclick = () => {
         window.focus();
-        if (file) this.app.workspace.getLeaf(false).openFile(file, line != null ? { eState: { line } } : undefined);
+        if (onClick) onClick();
+        else if (file) this.app.workspace.getLeaf(false).openFile(file, line != null ? { eState: { line } } : undefined);
       };
     } catch (e) {
       new Notice(`${title}\n${body}`, 8000);
@@ -118,7 +571,192 @@ module.exports = class NautilusNotify extends Plugin {
     if (notice) new Notice(hit.length ? `已清除 ${hit.length} 条${kind ? `「${kindName(kind)}」` : "任务提醒"}通知` : `没有${kind ? `「${kindName(kind)}」` : ""}通知可清除`);
   }
 
+  // ================= 训练提醒 =================
+  // 日界跟螺旋日程走（凌晨 7 点前算前一天）；螺旋日程没开时按 7 点算
+  wCutoff() { const np = this.nautilus(); return (np?.settings.dayCutoff ?? 7) * 60; }
+  wToday() {
+    const np = this.nautilus();
+    if (np) return np.today().clone();
+    const m = moment();
+    if (m.hours() * 60 + m.minutes() < this.wCutoff()) m.subtract(1, "day");
+    return m.startOf("day");
+  }
+  wNorm(t) { return t < this.wCutoff() ? t + 1440 : t; }
+  wJournalPath(day) {
+    const np = this.nautilus();
+    return np ? np.journalPath(day) : `日记/${day.format("YYYY_MM_DD")}.md`;
+  }
+  async wRead(path) {
+    const f = this.app.vault.getAbstractFileByPath(path);
+    return f instanceof TFile ? await this.app.vault.cachedRead(f) : "";
+  }
+
+  // 训练计划里的「- 周模板｜」：{ 每天: {label, items}, 周一: {...}, ... }，外加「- 保底版｜」第一条
+  async readPlan() {
+    const lines = (await this.wRead(this.settings.planPath)).split("\n");
+    const groups = {};
+    let fallback = null;
+    const i = lines.findIndex((l) => /^- 周模板[｜|]/.test(l));
+    if (i >= 0) {
+      let cur = null, m;
+      for (let j = i + 1; j < lines.length; j++) {
+        const l = lines[j];
+        if (/^\S/.test(l)) break;
+        if ((m = /^\t- (每天|周[一二三四五六日天])(?:\s*[｜|]\s*(.*?))?\s*$/.exec(l))) groups[m[1].replace("周天", "周日")] = cur = { label: m[2] || "", items: [] };
+        else if (cur && (m = /^\t\t- (.+)$/.exec(l))) cur.items.push(m[1].trim());
+      }
+    }
+    const k = lines.findIndex((l) => /^- 保底版[｜|]/.test(l));
+    if (k >= 0 && /^\t- /.test(lines[k + 1] || "")) fallback = lines[k + 1].replace(/^\t- /, "").replace(/\*\*/g, "").trim();
+    return { groups, fallback };
+  }
+
+  // 今天的安排：类型（力量 / 有氧 / 休息）、条目、算「主要训练做了没」用的关键词（去掉每天都有的那条）
+  todayPlan(plan, day) {
+    const wd = WEEKDAYS[day.day()];
+    const g = plan.groups[wd];
+    const daily = plan.groups["每天"]?.items || [];
+    const items = g?.items || [];
+    const words = new Set(items.flatMap(exWords));
+    const dailyWords = new Set(daily.flatMap(exWords));
+    let main = [...words].filter((w) => !dailyWords.has(w));
+    if (!main.length) main = [...words];
+    const cardio = items.length && items.every((x) => exWords(x).every((w) => CARDIO.includes(w)));
+    if (cardio) main = [...new Set([...main, ...CARDIO])];   // 有氧日：跑步、篮球、游泳……做了哪样都算
+    const kind = !items.length ? "休息" : cardio ? "有氧" : "力量";
+    return { wd, kind, label: g?.label || kind, items, daily, main };
+  }
+
+  // 本周（周一起）练了几天、离上次练过去几天（0 = 今天练过）
+  async workoutStats(day) {
+    const memo = {};
+    const trained = async (d) => {
+      const k = d.format("YYYYMMDD");
+      return (memo[k] ??= doneExLines(await this.wRead(this.wJournalPath(d))).length > 0);
+    };
+    let weekDays = 0;
+    for (let d = day.clone().startOf("isoWeek"); !d.isAfter(day, "day"); d.add(1, "day")) if (await trained(d)) weekDays++;
+    let gap = 31;
+    for (let i = 0; i <= 30; i++) if (await trained(day.clone().subtract(i, "day"))) { gap = i; break; }
+    return { weekDays, gap };
+  }
+
+  // 体重记录表：按天均值 → 本周、上周周均
+  async weightWeeks(day) {
+    const all = (await this.wRead(this.settings.weightPath)).split("\n");
+    const hdr = (all.find((l) => /^\|\s*日期\s*\|/.test(l)) || "").split("|").slice(1, -1).map((s) => s.trim());
+    const wi = hdr.indexOf("体重kg");
+    const byDay = {};
+    let last = null;
+    for (const l of all.filter((x) => /^\|\s*\d{4}-\d{2}-\d{2}/.test(x))) {
+      const c = l.split("|").slice(1, -1).map((s) => s.trim());
+      const v = parseFloat(c[wi]);
+      if (!Number.isFinite(v)) continue;
+      (byDay[c[0]] ||= []).push(v);
+      last = { date: c[0], v };
+    }
+    const avg = (from) => {
+      const vs = [];
+      for (let i = 0; i < 7; i++) { const a = byDay[from.clone().add(i, "day").format("YYYY-MM-DD")]; if (a) vs.push(a.reduce((x, y) => x + y) / a.length); }
+      return vs.length ? vs.reduce((x, y) => x + y) / vs.length : null;
+    };
+    const mon = day.clone().startOf("isoWeek");
+    return { thisWeek: avg(mon), lastWeek: avg(mon.clone().subtract(7, "day")), last };
+  }
+
+  // 打开今天的日记；append 为真时把今天的训练写成顶层 TODO（已有同样文字的行就跳过）
+  async openTodayWorkout(append) {
+    const day = this.wToday();
+    const path = this.wJournalPath(day);
+    let f = this.app.vault.getAbstractFileByPath(path);
+    if (!(f instanceof TFile)) f = await this.app.vault.create(path, `---\njournal: 每日\njournal-date: ${day.format("YYYY-MM-DD")}\n---\n`);
+    if (append) {
+      const tp = this.todayPlan(await this.readPlan(), day);
+      const want = [...tp.daily, ...tp.items];
+      let added = 0;
+      await this.app.vault.process(f, (txt) => {
+        const add = want.filter((x) => !txt.includes(x)).map((x) => `- TODO ${x}`);
+        added = add.length;
+        if (!add.length) return txt;
+        return (txt.endsWith("\n") || !txt ? txt : txt + "\n") + add.join("\n") + "\n";
+      });
+      new Notice(added ? `已把今天的 ${added} 条训练写进日记` : "今天的训练已经在日记里了");
+    }
+    await this.app.workspace.getLeaf(false).openFile(f);
+  }
+
+  async workoutTick({ fromEdit = false, force = null } = {}) {
+    const s = this.settings;
+    if (!force && !s.workout && !s.weigh && !s.review) return;
+    const day = this.wToday();
+    const dayKey = day.format("YYYY-MM-DD");
+    if (s.wDay !== dayKey) { s.wDay = dayKey; s.wState = {}; }
+    const st = (s.wState ||= {});
+    const nowM = moment();
+    const now = this.wNorm(nowM.hours() * 60 + nowM.minutes());
+    // 到点后两小时内都补发（Obsidian 那会儿没开着也不至于整天漏掉）
+    const due = (hhmm, flag) => { const t = toMin(hhmm); if (t == null || st[flag]) return false; const at = this.wNorm(t); return now >= at && now - at < 120; };
+    const wd = WEEKDAYS[day.day()];
+    let dirty = false;
+
+    // ---------- 称重日：当天第一次动日记时 ----------
+    if (s.weigh && fromEdit && !st.weigh && s.weighDays.split(/[,，、\s]+/).some((x) => x && wd.endsWith(x.replace(/^周/, "")))) {
+      st.weigh = dirty = true;
+      const w = await this.weightWeeks(day);
+      const lastTxt = w.last ? `表里最近一条：${w.last.date.slice(5)} ${w.last.v}kg。` : "";
+      this.send("⚖️ 今天是称重日", `起床后先称：如厕后、空腹、赤脚。称完截图发 Telegram bot。${lastTxt}`, { kind: "weigh" });
+    }
+
+    const needStart = force === "start" || (s.workout && due(s.workoutAt, "start"));
+    const needChase = !force && s.workout && due(s.workoutChaseAt, "chase");
+    const needReview = force === "review" || (s.review && wd === "周日" && due(s.workoutChaseAt, "review"));
+    if (!needStart && !needChase && !needReview) { if (dirty) this.saveSoon(); return; }
+
+    const plan = await this.readPlan();
+    const tp = this.todayPlan(plan, day);
+    const stats = await this.workoutStats(day);
+    const today = doneExLines(await this.wRead(this.wJournalPath(day)));
+    const mainDone = today.some((l) => tp.main.some((w) => l.includes(w)));
+    const fallback = plan.fallback || "引体向上 3 组 + 徒手深蹲 3×15，交替着做，10 分钟做完，记成 DONE，算一次训练";
+    const missed = stats.gap >= s.workoutGapDays ? `已经 ${stats.gap} 天没练了。` : "";
+    const openDiary = () => this.openTodayWorkout(true);
+    const opts = { kind: "workout", sound: true, force: !!force, onClick: openDiary };
+
+    if (needStart) {
+      st.start = dirty = true;
+      if (tp.kind !== "休息" && (!mainDone || force)) {
+        this.send(`💪 ${tp.wd} · ${tp.label}`, `${missed}${tp.items.join("；")}　· 本周已练 ${stats.weekDays} 天 · 点这里把待办写进日记`, opts);
+      } else if (tp.kind === "休息" && (missed || force)) {
+        this.send(missed ? `⏳ ${missed.replace(/。$/, "")}` : `😴 ${tp.wd}休息`, missed ? `今天是休息日，但别让它断下去：${fallback}` : `今天只做：${tp.daily.join("；") || "休息"}`, { ...opts, onClick: () => this.openTodayWorkout(false) });
+      } else if (force) {
+        this.send(`✅ ${tp.wd}的训练已经做了`, `本周已练 ${stats.weekDays} 天`, opts);
+      }
+    }
+    if (needChase) {
+      st.chase = dirty = true;
+      if (tp.kind !== "休息" && !mainDone) this.send(`⌛ 今天的${tp.label}还没练`, `来不及整套就做保底版：${fallback}`, opts);
+    }
+    if (needReview) {
+      st.review = dirty = true;
+      const w = await this.weightWeeks(day);
+      const f1 = (x) => x.toFixed(1);
+      let wTxt = "本周还没有体重数据（截图要等定时任务补进表格）";
+      if (w.thisWeek != null) {
+        const d = w.lastWeek != null ? w.thisWeek - w.lastWeek : null;
+        wTxt = `周均 ${f1(w.thisWeek)}kg` + (d != null ? `（上周 ${f1(w.lastWeek)}，${d <= 0 ? "↓" : "↑"}${f1(Math.abs(d))}）` : "");
+      }
+      const dash = this.app.vault.getAbstractFileByPath(s.dashboardPath);
+      this.send("📊 本周复盘", `练了 ${stats.weekDays} 天（目标 5：3 力量 + 2 有氧）· ${wTxt}`, {
+        kind: "review", force: !!force, onClick: () => dash instanceof TFile && this.app.workspace.getLeaf(false).openFile(dash),
+      });
+    }
+    this.saveSoon();
+  }
+
   async tick({ fromEdit = false, forceBrief = false } = {}) {
+    this.keepAwake();   // 设置里开关改了也跟着生效
+    try { await this.reportTick(); await this.pushTick(); } catch (e) { console.error("[nautilus-notify] 定时推送", e); }
+    try { await this.workoutTick({ fromEdit }); } catch (e) { console.error("[nautilus-notify] 训练提醒", e); }
     const np = this.nautilus();
     if (!np) return;
     const s = this.settings;
@@ -183,6 +821,10 @@ module.exports = class NautilusNotify extends Plugin {
           if (est) parts.push(used <= est ? `比预估快 ${dur(est - used)} 👍` : `比预估多 ${dur(used - est)}`);
         }
         parts.push(`今天第 ${total} 件`);
+        if (s.workout && exWords(t.label).length) {
+          const w = await this.workoutStats(this.wToday());
+          parts.push(`本周练了 ${w.weekDays} 天 💪`);
+        }
         if (nextUp) parts.push(`下一件：${nextUp.label}（${dur(nextUp.dur)}）`);
         this.send(`🎉 完成：${t.label}`, parts.join(" · "), { ...opts(t), kind: "done", sound: true });
       } else {
@@ -287,5 +929,47 @@ class NotifySettings extends PluginSettingTab {
     toggle("今日简报", "当天第一次动日记时，发一条今天的待办、容量和固定事件", "brief");
     toggle("收尾提醒", "一天结束前提醒还剩几件没做", "endOfDay");
     num("　结束前多久（分钟）", "endOfDayMin");
+
+    containerEl.createEl("h3", { text: "训练提醒" });
+    containerEl.createEl("p", { text: "训练内容读「训练计划」里的周模板，改训练就改那份笔记。时间写 HH:MM，日界前（凌晨 7 点前）都算当天。", cls: "setting-item-description" });
+    const text = (name, desc, key, check = () => true) => new Setting(containerEl).setName(name).setDesc(desc).addText((t) => t.setValue(String(s[key])).onChange(async (v) => { if (check(v)) { s[key] = v.trim(); await save(); } }));
+    const isClock = (v) => toMin(v) != null;
+    toggle("开练 / 追提醒", "训练日到点提醒今天练什么；到追提醒的时间主要训练还没打勾，就提醒做保底版；断档太久休息日也提醒", "workout");
+    text("　开练提醒时间", "点通知会打开今天的日记，并写入今天的训练待办", "workoutAt", isClock);
+    text("　追提醒时间", "周日这个时间发周复盘", "workoutChaseAt", isClock);
+    num("　连着几天没练算断档", "workoutGapDays");
+    toggle("称重提醒", "称重日当天第一次动日记时提醒", "weigh");
+    text("　称重日", "用逗号分开，比如 一,三,五,日", "weighDays");
+    toggle("周日周复盘", "本周练了几天、周均体重和上周比；点通知打开健康看板", "review");
+    text("　训练计划笔记", "", "planPath");
+    text("　体重记录笔记", "", "weightPath");
+    text("　健康看板笔记", "", "dashboardPath");
+
+    containerEl.createEl("h3", { text: "不在电脑前时转发到 Telegram" });
+    containerEl.createEl("p", { text: "键盘鼠标一阵子没动或锁屏时，上面所有提醒除了照常弹通知，还会用 Telegram Inbox 的 bot 发到你的 Telegram。chat id 空着时，给 bot 发一条消息它就会记下。Mac 睡着时 Obsidian 不运行，什么都发不出去，所以默认插电时不让它闲置睡眠（屏幕照样息屏，合盖照样睡）。", cls: "setting-item-description" });
+    toggle("转发到 Telegram", "", "tgAway");
+    num("　多久没动算不在（分钟）", "tgAwayMin");
+    text("　Telegram chat id", "一般不用填，自动从 Telegram Inbox 插件取", "tgChatId");
+    const isClockOrEmpty = (v) => toMin(v) != null;
+    containerEl.createEl("h3", { text: "Telegram 推送" });
+    toggle("🏋️ 健身早报", "今天练什么、本周练了几天、是不是称重日", "pushWorkout");
+    text("　时间", "", "pushWorkoutAt", isClockOrEmpty);
+    toggle("🐢 拖延任务", "今天日记里「← [[日期]]」拖了好几天的 TODO，每件带「不做了 / 挪明天 / 搁置」按钮", "pushStale");
+    text("　时间", "", "pushStaleAt", isClockOrEmpty);
+    num("　拖了几天算", "staleDays");
+    toggle("🃏 闪卡到期", "借第二大脑插件问 Anki，要 Anki 开着；没到期的就不发", "pushCards");
+    text("　时间", "", "pushCardsAt", isClockOrEmpty);
+    toggle("🌸 经期预测", "按经期记录算平均周期，提前 3 天和预计当天各提醒一次", "pushPeriod");
+    text("　时间", "", "pushPeriodAt", isClockOrEmpty);
+    text("　经期记录笔记", "", "periodPath");
+    text("　称呼", "通知里怎么称呼对方，比如「她」", "periodWho");
+    toggle("🧭 周日周洞察", "claude 读这一周的日记写「这周做了什么」，发到 Telegram，也存一份到下面的笔记", "pushInsight");
+    text("　时间（每周日）", "", "pushInsightAt", isClockOrEmpty);
+    text("　存到", "", "insightPath");
+    toggle("🫂 陪你聊", "在 Telegram 里说「好累」「好难受」之类的短句，或者回复它的陪聊消息时，读陪伴档案和最近的日记回你", "comfort");
+    text("　陪伴档案笔记", "写着「我是谁、累的时候是因为什么、怎么回我」，直接改它就能改回复的方式", "comfortProfile");
+    text("　claude 命令行路径", "周洞察和收工小结用它（用命令行自己的登录）", "claudePath");
+    text("定时推送螺旋日程", "这几个时刻把螺旋日程图文版（⭐ 正在做、接下来、排不下……）发到 Telegram，不管人在不在电脑前；用逗号分开，空着就不推", "tgReportTimes", (v) => !v.trim() || v.split(/[,，、\s]+/).filter(Boolean).every((x) => toMin(x) != null));
+    new Setting(containerEl).setName("插电时不让 Mac 闲置睡眠").setDesc("用 caffeinate -s，只在接电源时生效；Obsidian 退出就失效").addToggle((t) => t.setValue(s.keepAwakeAC).onChange(async (v) => { s.keepAwakeAC = v; await save(); this.plugin.keepAwake(); }));
   }
 }

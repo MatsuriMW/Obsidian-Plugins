@@ -1,6 +1,7 @@
 #!/bin/zsh
 # 把「马自立」库里自己做的插件（manifest 作者以「马自立」开头）同步到这个仓库，然后提交推送。
 # 只复制代码文件；data.json 等运行数据（含设置、token、使用记录）不进仓库。
+# 提交前会跑 redact.py 打码（清单在 redact.txt，不进仓库）
 # 用法：./sync.sh [提交说明]   提交说明里写 MAT-xx 会关联到那张 Linear 卡（见 linear-sync.py）
 set -e
 SRC="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/马自立/.obsidian/plugins"
@@ -24,6 +25,9 @@ for n in $mine; do
     if [[ -f "$SRC/$n/$f" ]]; then cp "$SRC/$n/$f" "$DST/$n/$f"; else rm -f "$DST/$n/$f"; fi
   done
 done
+
+# 打码：redact.txt（不进仓库）里的私人信息统一替换；查到疑似密钥就停下来不提交（set -e）
+python3 "$DST/redact.py" "$DST"
 
 # README：开头的介绍取 README.intro.md，插件清单按 order.txt 分组排序
 g() { plutil -extract "$2" raw -o - "$DST/$1/manifest.json" 2>/dev/null | tr '\n' ' ' | sed -e 's/|/\\|/g' -e 's/ *$//'; }

@@ -18,6 +18,7 @@ PLUGIN_PROJECT = {
     "second-brain": "第二大脑",
     "llm-wiki": "LLM Wiki",
     "backlink-defaults": "反链面板",
+    "bullet-threading": "Bullet Threading 迁移",
 }
 LABEL_GROUP = "插件"
 REPO_URL = "https://github.com/MatsuriMW/Obsidian-Plugins"

@@ -89,6 +89,25 @@ body .backlink-pane .tree-item-self.is-clickable.bd-title-row:hover { background
   color: var(--text-accent); cursor: var(--cursor-link, pointer);
 }
 .search-result-file-match .bd-expand:hover { text-decoration: underline; }
+/* 列表块按子块结构折叠：有子块的一级子块圆点带灰圈（像 Logseq 的折叠块），行尾「…」点开；超过 6 个子块后面收成「… 还有 N 项」 */
+.search-result-file-match .bd-md ul > li.bd-folded { list-style: none; position: relative; }
+.search-result-file-match .bd-md ul > li.bd-folded::before {
+  content: ""; position: absolute; left: -0.95em; top: calc(0.75em - 2.5px);
+  width: 5px; height: 5px; border-radius: 50%;
+  background-color: var(--text-muted); box-shadow: 0 0 0 3.5px var(--background-modifier-border-hover);
+}
+.search-result-file-match .bd-md li.bd-more-li { list-style: none; }
+.search-result-file-match .bd-md .bd-fold-mark,
+.search-result-file-match .bd-md .bd-more-mark {
+  color: var(--text-faint); cursor: var(--cursor-link, pointer); border-radius: var(--radius-s); padding: 0 3px;
+}
+.search-result-file-match .bd-md .bd-more-mark { font-size: var(--font-ui-smaller); padding: 0; }
+.search-result-file-match .bd-md .bd-fold-mark:hover,
+.search-result-file-match .bd-md .bd-more-mark:hover { color: var(--text-accent); background-color: var(--background-modifier-hover); }
+/* 展开过的子块：「收起」平时藏着，指到这一块才出现 */
+.search-result-file-match .bd-md .bd-fold-mark.is-open { font-size: var(--font-ui-smaller); visibility: hidden; }
+.search-result-file-match .bd-md li:hover > .bd-fold-mark.is-open,
+.search-result-file-match .bd-md li:hover > p > .bd-fold-mark.is-open { visibility: visible; }
 
 /* 被筛选掉的命中 / 文件 */
 .bd-hidden { display: none !important; }
