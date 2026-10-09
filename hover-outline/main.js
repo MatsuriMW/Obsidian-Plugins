@@ -314,7 +314,7 @@ class Outline {
 		}
 		this.rows = this.visible.map((it) => {
 			const row = this.card.createDiv({ cls: "ho-row" + (it.edge ? " is-edge" : "") + (it.zone ? " is-zone" : "") });
-			if (it.level > 1) row.style.paddingLeft = `${8 + (it.level - 1) * 12}px`;
+			if (it.level > 1) row.style.paddingLeft = `${12 + (it.level - 1) * 12}px`;
 			row.createDiv({ cls: "ho-dash" });
 			row.createDiv({ cls: "ho-text", text: clip(it.text), attr: { title: it.text } });
 			row.addEventListener("mousedown", (e) => e.preventDefault());
