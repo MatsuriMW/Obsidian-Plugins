@@ -1,0 +1,9 @@
+{
+	"id": "hover-outline",
+	"name": "Hover Outline",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.0",
+	"description": "仿 Claude Code 对话框左上角的隐藏式目录：编辑区左上角平时只有一列短横线，鼠标移上去展开成目录卡片（当前位置那栏是黑的，其余淡显），点击跳转后那一行停在正中并选中，刚点的那栏 handle 变长，卡片一直开着直到鼠标离开（手机上点一下展开）。目录 = 开头 + 标题（默认到 h3，有 h4 以下时卡片顶上出现层级切换）+ 结尾，每项最多 7 个字；日记按分割线分段，分区规则同 Done To Top 的一键整理（DONE / DOING / TODO / 其余取分割线下第一条）；有 dataview 代码块的笔记不显示。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

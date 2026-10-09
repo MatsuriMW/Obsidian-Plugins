@@ -1,0 +1,160 @@
+/* 悬浮目录：平时一列短横线，hover 展开成卡片 */
+.ho-host {
+	position: relative;
+}
+
+.ho {
+	position: absolute;
+	top: 8px;
+	left: 4px;
+	z-index: 30;
+	padding: 6px;
+}
+
+.ho.is-hidden {
+	display: none;
+}
+
+/* 收起：一条短横线 = 一个目录项 */
+.ho-bars {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 4px 2px;
+	max-height: 40vh;
+	overflow: hidden;
+	cursor: pointer;
+	transition: opacity 0.12s ease;
+}
+
+.ho-bar {
+	flex: none;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--text-faint);
+	opacity: 0.55;
+	transition: background-color 0.12s ease, opacity 0.12s ease;
+}
+
+.ho-bar-l0 { width: 8px; }
+.ho-bar-l1 { width: 16px; }
+.ho-bar-l2 { width: 12px; }
+.ho-bar-l3 { width: 8px; }
+
+.ho-bar.is-current {
+	background: var(--text-normal);
+	opacity: 1;
+}
+
+.ho.is-open .ho-bars {
+	opacity: 0;
+}
+
+/* 展开：目录卡片 */
+.ho-card {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: max-content;
+	max-height: calc(100vh - 180px);
+	overflow-y: auto;
+	padding: 4px;
+	background: var(--ho-card-bg, var(--background-primary));
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 10px;
+	box-shadow: var(--shadow-s);
+	opacity: 0;
+	transform: translateY(-2px) scale(0.98);
+	transform-origin: top left;
+	pointer-events: none;
+	transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.ho.is-open .ho-card {
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+}
+
+.ho-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 24px;
+	padding: 0 8px;
+	border-radius: 6px;
+	font-size: var(--font-ui-small);
+	color: var(--text-faint);
+	white-space: nowrap;
+	cursor: pointer;
+	transition: color 0.12s ease;
+}
+
+.ho-row:hover {
+	background: var(--background-modifier-hover);
+}
+
+/* 当前位置那一栏：字是黑的，其余都是 dim */
+.ho-row.is-current {
+	color: var(--text-normal);
+	font-weight: var(--font-medium);
+}
+
+.ho-dash {
+	flex: none;
+	width: 10px;
+	height: 2px;
+	border-radius: 1px;
+	background: var(--text-faint);
+	transition: width 0.15s ease, background-color 0.12s ease;
+}
+
+.ho-row.is-current .ho-dash {
+	background: var(--text-normal);
+}
+
+/* 刚点过的那一栏：前面的 handle 变长一点，整栏往外突出；点别的就恢复 */
+.ho-row.is-picked .ho-dash {
+	width: 16px;
+}
+
+.ho-text {
+	/* 字数在 main.js 里截（MAX_CHARS），这里只防英文长词撑宽 */
+	max-width: 12em;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 日记的 DONE / DOING / TODO 分区 */
+.ho-row.is-zone .ho-text {
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	letter-spacing: 0.04em;
+}
+
+/* 层级切换（只在有 h4 以下时出现） */
+.ho-levels {
+	display: flex;
+	gap: 2px;
+	padding: 2px 4px 6px;
+	margin-bottom: 4px;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ho-lv {
+	padding: 2px 7px;
+	border-radius: 6px;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
+.ho-lv:hover {
+	background: var(--background-modifier-hover);
+}
+
+.ho-lv.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}

@@ -25,6 +25,7 @@ task-toggle
 close-sidebar-files
 board-zoom
 diary-nav
+hover-outline
 
 ## 改过的社区插件（改动从多到少）
 telegram-inbox-local
