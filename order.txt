@@ -5,7 +5,6 @@
 
 ## 编辑与大纲：把 Obsidian 用得像 Logseq / Roam
 esc-select-block
-backlink-defaults
 block-ref-plus
 hover-outline
 list-paste-merge
