@@ -17,7 +17,7 @@ PLUGIN_PROJECT = {
     "draft-desk": "写作台", "qws-bridge": "写作台",
     "second-brain": "第二大脑",
     "llm-wiki": "LLM Wiki",
-    "logseq-roam-style-backlinks": "反链面板",   # 原 backlink-defaults，2026-10-11 起是独立仓库，作者 MatsuriMW，不经这里同步
+    "roam-backlinks": "反链面板",   # 原 backlink-defaults / logseq-roam-style-backlinks，2026-10-11 起是独立仓库，作者 MatsuriMW，不经这里同步
     "bullet-threading": "Bullet Threading 迁移",
 }
 LABEL_GROUP = "插件"

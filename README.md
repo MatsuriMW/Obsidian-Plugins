@@ -20,7 +20,7 @@
 ## 先看这几个
 
 - **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换（⌘\ 在无序 → 有序 → 段落之间循环）。
-- **Logseq & Roam Style Backlinks**（独立仓库 [MatsuriMW/logseq-roam-style-backlinks](https://github.com/MatsuriMW/logseq-roam-style-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
+- **Roam Backlinks**（独立仓库 [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
 - **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
 - **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
 - **Telegram Inbox · 陪伴版**（[`telegram-inbox-local`](telegram-inbox-local)）★★：手机上随手发给 Telegram 机器人的话直接进日记；而且它读得到你的日记和日程，所以你说「好累」时它知道你这几天熬到几点、手上压着什么，说「搞定了」时它知道你搞定的是什么，「呱呱呱」它也会呱回来。睡前说一声「睡了」，它回一条今天的小结。[它能做什么 →](telegram-inbox-local/README.md)

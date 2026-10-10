@@ -21,7 +21,7 @@ const CORE_NAMES = {
 // 情境快捷键：写死在插件里、只在某个场景下才生效（不是 Obsidian 命令）。按插件 id 登记；
 // 插件自己也可以在实例上挂 contextHotkeys = [{ keys, name, when }]，会优先用插件自己的
 const CONTEXT = {
-	"logseq-roam-style-backlinks": [
+	"roam-backlinks": [
 		{ keys: ["Mod+Enter", "Mod+S"], name: "保存就地编辑", when: "反链里就地编辑时" },
 		{ keys: ["Escape"], name: "取消就地编辑", when: "反链里就地编辑时" },
 		{ keys: ["Mod+B", "Mod+I", "Mod+E", "Mod+Shift+H"], name: "加粗 / 斜体 / 行内代码 / 高亮", when: "反链里就地编辑时" },
