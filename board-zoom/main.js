@@ -3,7 +3,7 @@ const { Plugin, WorkspaceLeaf, MarkdownView } = require("obsidian");
 // 点击发生在 DataView 看板里之后，这么多毫秒内打开的「文件 + 行号」都自动聚焦
 const CLICK_WINDOW_MS = 4000;
 const ZOOM_IN = "bullet:zoom-in";
-const ZOOM_OUT = "bullet:zoom-out";
+const ZOOM_RESET = "bullet:zoom-reset";   // Bullet 的「Show whole note」，一步退回整篇
 const LIST_LINE = /^\s*(?:[-*+]|\d+[.)])\s/;
 
 module.exports = class BoardZoom extends Plugin {
@@ -63,8 +63,8 @@ module.exports = class BoardZoom extends Plugin {
     while (target > 0 && !LIST_LINE.test(editor.getLine(target)) && /^\s+\S/.test(editor.getLine(target))) target--;
     this.app.workspace.setActiveLeaf(leaf, { focus: true });
     await sleep(10);
-    // 先把之前的聚焦全部退出，不然新的光标会被限制在旧的聚焦范围里
-    for (let i = 0; i < 30 && this.app.commands.executeCommandById(ZOOM_OUT); i++) await sleep(5);
+    // 先把之前的聚焦退干净，不然新的光标会被限制在旧的聚焦范围里（落点、动画、退出路径由 Bullet 自己管）
+    if (this.app.commands.executeCommandById(ZOOM_RESET)) await sleep(10);
     const text = editor.getLine(target);
     editor.setCursor({ line: target, ch: text.length });
     if (!LIST_LINE.test(text)) { editor.scrollIntoView({ from: { line: target, ch: 0 }, to: { line: target, ch: 0 } }, true); return; }

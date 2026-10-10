@@ -1,6 +1,11 @@
 // 任务归位：按状态把顶格任务块放进各自的分区
 //   分区顺序：DONE（最上面）→ DOING（中间）→ TODO（DOING 下面）→ 没状态的（最下面，原样不动），分区之间用「- ---」隔开
 //   · 只看顶格条目的状态；子项的状态不参与分类，整块跟着母项走
+//   · 块内部也一样：块里自己用「- ---」分了栏的，子项按状态在块内排成 DONE → DOING → TODO → 没状态的，
+//     只在块内部排，不会跑到别的块里、也不会被提到文件级；块里没用分割线的不动
+//   · 链接区：孤零零的一个条目（没有母块、也没有子块）、不超过两行、里面又有这些平台的链接
+//     （小红书 / 知乎 / X / GitHub / B 站 b23 / 抖音）就算链接类，聚到一起放在 TODO 区下面、其它内容上面。
+//     有任务关键字的（TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…）一律算任务，优先级更高
 //   · DONE 栏 = 正文第一条「- ---」之前的那一段；手动放进去的普通条目留在栏里不动
 //   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED 归 DONE 区，PAUSED（停一下）归 DOING 区，WAITING/SUSPENDED 归 TODO 区
 //   · core 挂在插件实例上，Telegram Inbox（自用版）收消息时也用它归位
@@ -10,7 +15,7 @@ const { Plugin, Notice } = require("obsidian");
 
 const BULLET_RE = /^(\s*)([-*+])(\s+|$)(.*)$/;
 const ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
-const SEP_RE = /^[-*+]\s+(-{3,}|\*{3,}|_{3,})\s*$/;
+const SEP_RE = /^[-*+]\s+-{3,}\s*$/;                 // 分割线只认「- ---」（*** ___ 不算）
 const SEP = "- ---";
 const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
 const CHECKBOX_RE = /^\[[^\]]\](\s+|$)/;
@@ -116,6 +121,103 @@ function trimBlock(blockLines) {
 	return out;
 }
 
+// ---------- 链接类条目 ----------
+// 单个条目不超过两行，里面有这些平台的链接，就是链接类：小红书 / 知乎 / X / GitHub / B 站（b23）/ 抖音。
+// 要加平台就往 LINK_HOSTS 里加。有状态的（TODO / DONE…）是任务，不算链接
+const LINK_HOSTS = ["xiaohongshu.com", "xhslink.com", "xhslink.cn", "zhihu.com", "github.com", "bilibili.com", "b23.tv", "douyin.com", "x.com", "twitter.com"];
+const LINK_URL_RE = new RegExp("(?:^|[\\s(（【「]|https?://)(?:www\\.)?(?:[\\w-]+\\.)*(" + LINK_HOSTS.map((h) => h.replace(/\./g, "\\.")).join("|") + ")(?=[\\s/)?#.,，。、\\]】」]|$)", "i");
+
+// 这一行是不是任务：开头有 TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…（大小写都算）或者复选框
+function isTaskLine(line) {
+	const bare = line.replace(/^[ \t]+/, "");
+	return !!zoneOf(normalizeKeyword(bare, false));
+}
+
+const ITEM_LINE_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;          // 这一行是列表项（= 一个块）
+
+// lines = 一整个顶格条目（首行 + 跟着的行）。下面四条都满足才是链接类：
+//   ① 是单个条目：没有母块（自己顶格）、也没有子块（下面没有列表项）
+//   ② 不超过两行（多出来只能是续行，不能是子块）
+//   ③ 里面有平台链接
+//   ④ 不是任务：没有 TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED… 也没有复选框
+function isLinkBlock(lines) {
+	const ls = trimBlock(lines);
+	if (ls.length > 2) return false;
+	if (/^[ \t]/.test(ls[0])) return false;                   // 有母块（不是顶格条目）
+	if (ls.length > 1 && ls.slice(1).some((l) => ITEM_LINE_RE.test(l))) return false;   // 带子块
+	if (isTaskLine(ls[0])) return false;                      // 任务关键字优先
+	const m = ls[0].match(/^(?:[-*+]|\d+[.)])\s+(.*)$/);
+	if (!m) return false;
+	return LINK_URL_RE.test(ls.join("\n"));
+}
+
+// ---------- 块内部的分区 ----------
+// 块里也用「- ---」把子项分成 DONE → DOING → TODO 三栏（和文件级同一套规则），只在这一块内部排：
+// 子项不会跑到别的块里，也不会被提到文件级。块里没有分割线的不动（只往更深的层递归），
+// 子项里有不是列表项的（续行、段落）或带代码块的也不动，免得把说明文字挪走。深的先排，一层层往上
+const ANY_SEP_RE = /^[ \t]*(?:[-*+][ \t]+)?-{3,}\s*$/;   // 块内部的：「\t- ---」或「\t---」
+const CHILD_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;
+const FENCE_RE = /^[ \t]*(?:```|~~~)/;
+
+// 子项属于哪个分区（zoneOf 只认顶格，这里先去掉缩进）
+const itemZone = (line) => zoneOf(line.replace(/^[ \t]+/, ""));
+
+function trimTail(lines) {
+	const out = lines.slice();
+	while (out.length > 1 && isBlank(out[out.length - 1])) out.pop();
+	return out;
+}
+
+// lines[0] 是这一块自己那一行，其余是它的子项（子项还可以有自己的子项）。返回排好的行
+function organizeInner(lines) {
+	if (lines.length < 2) return lines;
+	let w1 = -1;                                     // 子项那一层的缩进 = 里面最浅的一行
+	for (let i = 1; i < lines.length; i++) {
+		const l = lines[i];
+		if (FENCE_RE.test(l)) return lines;          // 带代码块的不动
+		if (isBlank(l)) continue;
+		const w = indentWidth(l);
+		if (w1 < 0 || w < w1) w1 = w;
+	}
+	if (w1 < 0) return lines;
+	const lead = [], groups = [];                    // lead：块首行后面、第一个子项之前的空行
+	for (let i = 1; i < lines.length; i++) {
+		const l = lines[i];
+		if (isBlank(l)) { (groups.length ? groups[groups.length - 1] : lead).push(l); continue; }
+		if (indentWidth(l) === w1) groups.push([l]);
+		else if (groups.length) groups[groups.length - 1].push(l);
+	}
+	if (!groups.length) return [lines[0], ...lead];
+	const kids = groups.map((g) => ({ lines: organizeInner(g), sep: g.length === 1 && ANY_SEP_RE.test(g[0]) }));
+	const plain = [lines[0], ...lead, ...kids.flatMap((k) => k.lines)];
+	if (!kids.some((k) => k.sep)) return plain;      // 没用分割线：不排
+	if (!kids.every((k) => k.sep || CHILD_ITEM_RE.test(k.lines[0]))) return plain;
+
+	const zones = { DONE: [], DOING: [], TODO: [] }, rest = [];
+	let before = true;
+	for (const k of kids) {
+		if (k.sep) { before = false; continue; }
+		let ls = k.lines;
+		const fixed = normalizeKeyword(ls[0], false);
+		if (fixed !== ls[0]) { ls = ls.slice(); ls[0] = fixed; }
+		const z = itemZone(ls[0]);
+		if (z) zones[z].push(trimTail(ls));
+		else if (before) zones.DONE.push(trimTail(ls));   // 第一条分割线之前的普通子项留在最上面
+		else rest.push(trimTail(ls));
+	}
+	// 分割线跟子项同一层缩进，写法跟着块里原来那条（有就照抄它的缩进）
+	const sepLine = (kids.find((k) => k.sep) || kids[0]).lines[0];
+	const sep = (sepLine.match(/^[ \t]*/) || [""])[0] + SEP;
+	const out = [lines[0], ...lead];
+	// 这一块没有 DONE 栏、下面又有 DOING / TODO 时，先留一条分割线占住 DONE 栏的位置
+	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length);
+	let started = false;
+	const add = (ls) => { if (!ls.length) return; if (started || emptyDone) out.push(sep); out.push(...ls); started = true; };
+	for (const z of ["DONE", "DOING", "TODO"]) add(zones[z].flat());
+	add(rest.flat());
+	return out;
+}
+
 // DONE 栏 = 正文第一段（第一条「- ---」之前），里面有没有 DONE 都算；栏是空的 = 正文以「- ---」开头。
 // 用户会把读完、理解完的普通条目也手动放进这一栏，所以栏里没状态的块算它的成员，原地不动。
 // 返回第一条分隔线的下标（= 这一栏的块数）；没有分隔线（还没有栏）时返回 -1
@@ -123,32 +225,43 @@ function doneZoneEnd(blocks) {
 	return blocks.findIndex((b) => b.sep);
 }
 
-// 一键整理：DONE 栏 → DOING → TODO → 其余（原顺序、原样），区之间「- ---」
+// 一键整理：DONE 栏 → DOING → TODO → 链接 → 其余（原顺序、原样），区之间「- ---」
 function organize(text) {
 	const { head, blocks, tail } = parse(text);
 	const zones = { DONE: [], DOING: [], TODO: [] };
-	const rest = [];
+	const links = [], rest = [];
 	const keep = doneZoneEnd(blocks);
 	blocks.forEach((b, i) => { b.inDone = i < keep; });
+	let inner = 0;
+	// 链接区只在已经分区的文件（日记那种：有状态块或分割线）里排；
+	// 一篇没分区的普通笔记不去动它，免得平白插进去几条分割线
+	const zoned = blocks.some((b) => b.zone || b.sep);
 	for (const b of blocks) {
 		if (!b.sep && !b.zone) {
 			// 小写关键字先规范，再重新判断
 			const fixed = normalizeKeyword(b.lines[0], false);
 			if (fixed !== b.lines[0]) { b.lines[0] = fixed; b.zone = zoneOf(fixed); }
 		}
+		// 块内部：子项按状态在块里分成 DONE / DOING / TODO（只在块里排，不影响这一块自己在哪一区）
+		if (b.lines.length > 1) {
+			const fixedKids = organizeInner(b.lines);
+			if (fixedKids.join("\n") !== b.lines.join("\n")) { b.lines = fixedKids; inner++; }
+		}
 		if (b.zone) zones[b.zone].push(trimBlock(b.lines));
 		else if (b.inDone) zones.DONE.push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
 		else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
+		else if (zoned && isLinkBlock(b.lines)) links.push(trimBlock(b.lines));   // 链接类：归到链接区
 		else rest.push(b);
 	}
 	if (rest.length && rest[rest.length - 1].sep) rest.pop();
 	const out = [];
-	// DONE 栏空着、下面又有 DOING / TODO 时，开头留一条分隔线占住 DONE 栏的位置（不然 DOING 那段会被当成 DONE 栏）
-	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length);
+	// DONE 栏空着、下面又有别的内容时，开头留一条分隔线占住 DONE 栏的位置（不然下面那段会被当成 DONE 栏）
+	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length || links.length);
 	const add = (ls) => { if (!ls.length) return; if (out.length || emptyDone) out.push(SEP); out.push(...ls); };
 	for (const z of ["DONE", "DOING", "TODO"]) add(zones[z].flat());
+	add(links.flat());                                        // 链接区：任务区（TODO）下面、其它内容上面
 	add(rest.flatMap((b) => b.lines));
-	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length };
+	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length, LINK: links.length, inner };
 	return { text: head.concat(out, tail).join("\n"), counts };
 }
 
@@ -338,7 +451,7 @@ function applyText(editor, newText, cursor) {
 	return true;
 }
 
-const core = { parse, organize, place, mark, zoneOf, normalizeKeyword, toggleQuadrant, diffChange, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
+const core = { parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, toggleQuadrant, diffChange, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
 
 module.exports = class DoneToTopPlugin extends Plugin {
 	onload() {
@@ -369,9 +482,9 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "organize",
-			name: "一键整理：DONE / DOING / TODO / 其它 分区",
+			name: "一键整理：DONE / DOING / TODO / 其它 分区（块内也按分割线分区）",
 			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "f" }],
-			editorCallback: (editor) => this.organize(editor),
+			editorCallback: (editor, ctx) => this.organize(editor, ctx),
 		});
 		this.addCommand({
 			id: "toggle-important",
@@ -442,7 +555,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		file = file || this.app.workspace.getActiveFile();
 		const lines = editor.getValue().split("\n");
 		let start = this.restStart(lines, editor.getCursor().line);
-		const isSep = (l) => SEP_RE.test(l) || /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l);
+		const isSep = (l) => SEP_RE.test(l) || /^\s*-{3,}\s*$/.test(l);
 		if (isSep(lines[start])) start++;
 		while (start < lines.length && isBlank(lines[start])) start++;
 		let end = lines.length - 1;
@@ -635,14 +748,37 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		return ["明天", "后天", "大后天"].map((w, i) => (n[i + 1] ? `${w} ${n[i + 1]} 条` : "")).filter(Boolean).join("、");
 	}
 
-	async organize(editor) {
+	// 只把 DONE 栏（正文第一条「- ---」之前）和 DONE 块里带子项的顶格块折起来，其它全部展开。
+	// 日记整理（journal-tidy）整理完也调这个
+	foldDone(view) {
+		const mode = view && view.currentMode;
+		if (!mode || typeof mode.applyFoldInfo !== "function" || !view.editor) return false;
+		const { blocks } = parse(view.editor.getValue());
+		const end = doneZoneEnd(blocks);
+		const folds = [];
+		// 属性栏原来是收起的就保持收起
+		const prev = typeof mode.getFoldInfo === "function" ? mode.getFoldInfo() : null;
+		const fm = prev && prev.folds && prev.folds.find((f) => f.from === 0);
+		if (fm) folds.push(fm);
+		blocks.forEach((b, i) => {
+			if (b.sep || !(i < end || b.zone === "DONE")) return;
+			const n = trimBlock(b.lines).length;
+			if (n > 1) folds.push({ from: b.start, to: b.start + n - 1 });
+		});
+		mode.applyFoldInfo({ folds, lines: view.editor.lineCount() });
+		return true;
+	}
+
+	async organize(editor, ctx) {
 		const file = this.app.workspace.activeEditor?.file ?? this.app.workspace.getActiveFile();
 		const moved = await this.moveDayItems(file, editor.getValue());
 		const res = organize(moved.length ? dropBlocks(editor.getValue(), moved.map((m) => m.orig)) : editor.getValue());
 		const changed = applyText(editor, res.text);
+		// 整理的是日记才折：只收起 DONE 区，剩下的展开
+		if (file && JOURNAL_NAME_RE.test(file.basename)) this.foldDone(ctx && ctx.currentMode ? ctx : this.app.workspace.activeEditor);
 		const c = res.counts;
 		const days = moved.length ? `\n搬到以后的日记：${this.movedSummary(moved)}` : "";
-		new Notice(changed ? `已整理：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}${days}` : "已经是整理好的样子");
+		new Notice(changed ? `已整理：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}${c.LINK ? ` · 链接 ${c.LINK}` : ""}${c.inner ? `\n块内归位 ${c.inner} 处` : ""}${days}` : "已经是整理好的样子");
 	}
 
 	quadrant(editor, axis) {

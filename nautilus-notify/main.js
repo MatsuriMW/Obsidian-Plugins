@@ -47,6 +47,9 @@ const DEFAULTS = {
   comfort: true, comfortProfile: "健康/陪伴档案.md",   // Telegram 里说累、难受、开心时陪你聊
   chitchat: true,                           // 哈喽、呱、谢谢：马上回一句
   chatIdleMin: 20,                          // 自动进入的对话模式多久没说话就回到记录模式
+  profileUpdate: true, profileUpdateAt: "22:30", profileUseChat: true,   // 每周日更新陪伴档案的「🔄 近况」
+  profileReportPath: "计划与总结/库周报.md", projectReviewDir: "计划与总结/长期项目复盘",
+  chatMemory: [], profileSugs: null, profileUpdatedAt: 0,
   chat: null,                               // 当前这段对话（对话模式）
 };
 const NO_DUR_DOING_MIN = 60;
@@ -63,6 +66,7 @@ const doneExLines = (content) => content.split("\n").filter((l) => DONE_RE.test(
 const FEEL_RE = /(好?累|难受|好?烦|崩溃|焦虑|难过|伤心|想哭|哭了|emo|撑不住|不想活|想死|没意思|好丧|郁闷|压力好?大|心累|孤独|迷茫|自我怀疑|痛苦|绝望|委屈|失眠|睡不着|不开心|抑郁|好废|想她|想你了|好想你|想宝宝|想女朋友)/i;
 const HAPPY_RE = /(好?开心|太好了|太棒了|好棒|好耶|耶+[!！~～]*$|搞定了?|成了|做完了|哈哈哈+|嘿嘿|nice|好爽|赢了|过了|激动|兴奋|呱)/i;
 const FEEL_SKIP = /累计|积累|累积|麻烦|烦请|没意思的话|成了一个|过了一遍/g;
+const s_keepChat = (p) => p.settings.profileUpdate && p.settings.profileUseChat;
 const toMin = (hhmm) => { const m = /^(\d{1,2})[:：](\d{2})$/.exec(String(hhmm).trim()); return m ? +m[1] * 60 + +m[2] : null; };
 
 // 通知类别：用来「一键清掉同一类」。命令 id 是 clear-<key>，可以在 Obsidian 里绑快捷键，
@@ -125,6 +129,7 @@ module.exports = class NautilusNotify extends Plugin {
     this.addCommand({ id: "push-workout", name: "Telegram：发今天的健身早报", callback: () => this.pushWorkout() });
     this.addCommand({ id: "push-stale", name: "Telegram：发拖了好几天的任务", callback: async () => { await this.pushStale() || new Notice("今天日记里没有拖了这么久的任务"); } });
     this.addCommand({ id: "push-cards", name: "Telegram：发闪卡到期数", callback: () => this.pushCards() });
+    this.addCommand({ id: "profile-update", name: "陪伴档案：现在更新「近况」并发到 Telegram", callback: () => { new Notice("在更新陪伴档案（要一两分钟），好了会发到 Telegram"); this.profileUpdate({ manual: true }).then((r) => r.ok || new Notice(r.msg)); } });
     this.addCommand({ id: "push-insight", name: "Telegram：现在写这周的周洞察", callback: () => { new Notice("在写周洞察，写好直接发到 Telegram（要一两分钟）"); this.pushInsight(true); } });
     this.addCommand({ id: "tg-report", name: "把螺旋日程图文版发到 Telegram", callback: async () => {
       new Notice((await this.reportTick(true)) ? "已发到 Telegram" : "没发出去（螺旋日程没开，或还没有 chat id）");
@@ -185,7 +190,9 @@ module.exports = class NautilusNotify extends Plugin {
     const s = this.settings;
     const np = this.app.plugins.plugins[NAUTILUS];
     if (!np?.telegramReport || !this.tgTarget()) return false;
-    if (force) return this.tg(await np.telegramReport("螺旋日程 · 现在"), "", { html: true });
+    // 图文版前面带一张今天的螺旋图；螺旋日程没有这个方法（旧版）或者发失败了就只发文字
+    const send = async (html) => { const t = this.tgTarget(); if (np.tgSendWithSpiral && await np.tgSendWithSpiral(t.token, t.chat, html).catch(() => false)) return true; return this.tg(html, "", { html: true }); };
+    if (force) return send(await np.telegramReport("螺旋日程 · 现在"));
     if (!s.enabled) return false;
     const nowM = moment(), now = nowM.hours() * 60 + nowM.minutes(), today = nowM.format("YYYY-MM-DD");
     for (const hhmm of s.tgReportTimes.split(/[,，、\s]+/).filter(Boolean)) {
@@ -197,7 +204,7 @@ module.exports = class NautilusNotify extends Plugin {
       for (const k of Object.keys(s.tgReportSent)) if (k.slice(0, 10) < old) delete s.tgReportSent[k];
       this.saveSoon();
       const icon = at < 15 * 60 ? "☀️" : at < 20 * 60 ? "🌇" : "🌙";
-      await this.tg(await np.telegramReport(`${icon} ${hhmm} 螺旋日程`), "", { html: true });
+      await send(await np.telegramReport(`${icon} ${hhmm} 螺旋日程`));
     }
     return true;
   }
@@ -226,6 +233,7 @@ module.exports = class NautilusNotify extends Plugin {
     if (s.pushCards && this.dueOnce("cards", s.pushCardsAt)) await this.pushCards();
     if (s.pushPeriod && this.dueOnce("period", s.pushPeriodAt)) await this.pushPeriod();
     if (s.pushInsight && this.dueOnce("insight", s.pushInsightAt, { weekday: 0 })) await this.pushInsight();
+    if (s.profileUpdate && this.dueOnce("profile", s.profileUpdateAt, { weekday: 0 })) await this.profileUpdate();
   }
 
   // ---------- 🏋️ 健身早报 ----------
@@ -282,6 +290,7 @@ module.exports = class NautilusNotify extends Plugin {
   // Telegram Inbox 收到按钮回调时调这里；返回 { toast, edit, markup }
   async onTgCallback(data) {
     const [, act, id] = String(data).split("|");
+    if (act === "pok" || act === "pno") return this.onProfileCallback(act, id);
     const sm = this.settings.staleMsg;
     const t = sm?.items.find((x) => x.id === id);
     if (!t) return { toast: "这条已经过期了" };
@@ -524,6 +533,152 @@ ${mood === "chat" ? `回复要求：中文；像朋友聊天，1～6 行，他�
     }
     return { html: reply, mood, history: [...history, { who: "他", text }, { who: "你", text: reply.replace(/<[^>]+>/g, "") }].slice(-10) };
   }
+  // ================= 🔄 定期更新陪伴档案 =================
+  // 每周日：读这一周的日记、第二大脑的库周报、最近一期长期项目复盘、周洞察、这周对话模式里说过的话、作息训练数据，
+  //   1) 整段重写档案末尾「🔄 近况」一节（自动维护，不用确认）
+  //   2) 发现稳定、长期的新特点时，作为「建议补进档案」发到 Telegram，点 ✅ 才写进上面手写的那几节
+  // 对话内容只存在本插件的数据里（chatMemory），不进日记和笔记；每次更新完清空
+  profileSections(text) {
+    return text.split("\n").filter((l) => /^- \S/.test(l) && !l.startsWith("- 🔄")).map((l) => l.slice(2).replace(/（.*$/, "").trim());
+  }
+  async profileUpdate({ manual = false } = {}) {
+    const s = this.settings;
+    const f = this.app.vault.getAbstractFileByPath(s.comfortProfile);
+    if (!(f instanceof TFile)) return { ok: false, msg: `没找到陪伴档案（${s.comfortProfile}）` };
+    const profile = await this.app.vault.read(f);
+    const day = this.wToday();
+    const days = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = day.clone().subtract(i, "day");
+      const t = this.digestJournal(await this.wRead(this.wJournalPath(d)), 80);
+      if (t) days.push(`### ${d.format("MM-DD dddd")}\n${t}`);
+    }
+    // 第二大脑的库周报：只取最新一期（第一个 ## 段）
+    const rep = (await this.wRead(s.profileReportPath)).replace(/^---\n[\s\S]*?\n---\n/, "");
+    const repLatest = (/(## [^\n]+\n[\s\S]*?)(?=\n## |$)/.exec(rep) || [])[1] || "";
+    // 最近一期长期项目复盘、最新的周洞察
+    const revDir = this.app.vault.getAbstractFileByPath(s.projectReviewDir);
+    const revFile = revDir?.children?.filter((x) => x instanceof TFile).sort((a, b) => b.name.localeCompare(a.name))[0];
+    const review = revFile ? (await this.app.vault.read(revFile)).replace(/^---\n[\s\S]*?\n---\n/, "").replace(/<!--.*?-->/g, "").slice(0, 2500) : "";
+    const insight = ((await this.wRead(s.insightPath)).replace(/^---\n[\s\S]*?\n---\n/, "").split(/\n(?=- \*\*)/)[0] || "").slice(0, 2000);
+    // 作息、训练、体重
+    const facts = [];
+    const np = this.nautilus();
+    if (np) {
+      const b = np.settings.dayBounds || {};
+      const ends = [];
+      for (let i = 1; i <= 7; i++) { const k = day.clone().subtract(i, "day").format(np.settings.format); if (b[k]?.end != null) ends.push(`${k.slice(5).replace("_", "-")} ${clock(b[k].end)}`); }
+      if (ends.length) facts.push(`这周的收工（睡觉）时间：${ends.join("，")}`);
+    }
+    const w = await this.workoutStats(day);
+    facts.push(`本周练了 ${w.weekDays} 天`);
+    const wt = await this.weightWeeks(day);
+    if (wt.thisWeek != null) facts.push(`本周周均体重 ${wt.thisWeek.toFixed(1)}kg${wt.lastWeek != null ? `（上周 ${wt.lastWeek.toFixed(1)}）` : ""}`);
+    const chats = (s.chatMemory || []).map((x) => `${moment(x.at).format("MM-DD HH:mm")}（${x.mood}）${x.text}`).join("\n");
+    const sections = this.profileSections(profile);
+    const prompt = `你在维护一份「陪伴档案」：它是一个陪伴型 Telegram 机器人对他的长期了解，机器人每次回他之前都会先读它。下面是档案现在的全文，以及他这一周的各种记录。
+
+【档案全文】
+${profile}
+
+【这一周的日记摘要】（DONE 做完、TODO 没做、FAILED 没做成）
+${days.join("\n\n") || "（没有）"}
+
+【第二大脑的库周报，最新一期】（反映他这周在记、在学、在钻研什么）
+${repLatest || "（没有）"}
+
+【最近一期长期项目复盘】
+${review || "（没有）"}
+
+【最近一期周洞察】
+${insight || "（没有）"}
+
+【作息、训练、体重】
+${facts.map((x) => "- " + x).join("\n")}
+
+【这周在对话模式里他对机器人说过的话】
+${chats || "（没有）"}
+
+任务一：重写档案末尾的「🔄 近况」一节。5～8 条，每条一行、以 emoji 开头，依次覆盖：💼 最近在忙什么（具体项目）、🌡 这周的状态和压力来源、🎉 这周开心或有成就感的事、📚 最近在钻研 / 学习什么（看库周报）、😴 作息和身体（几点睡、练没练、体重）、🫶 和在乎的人有关的近况（只写他自己写下的）、📈 和档案里上一版近况相比的变化。要具体、引用事实，不评价他、不给建议、不写心理诊断。
+任务二：只有当这周的记录里出现了**稳定、长期**的新信息（新的压力模式、他喜欢或讨厌的被回应方式、新的口头禅、重要的人或长期目标），才给出最多 3 条「建议补进档案」的内容，每条一句话，注明放进哪一节（只能是：${sections.join("、")}），不能和档案已有内容重复。没有就留空，宁缺毋滥。
+不要写进日记里别人说的话、摘抄转述的内容、第三方的隐私。
+
+严格按这个格式输出，不要别的话：
+<<<近况>>>
+- 💼 ……
+<<<建议>>>
+- 节名｜内容`;
+    let out;
+    try { out = await this.runClaude(prompt, 300); }
+    catch (e) { console.error("[nautilus-notify] 更新陪伴档案", e); return { ok: false, msg: `没写成：${e.message || e}` }; }
+    const recent = (((/<<<近况>>>\s*([\s\S]*?)(?:<<<建议>>>|$)/.exec(out) || [])[1]) || "").split("\n").map((l) => l.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean).slice(0, 8);
+    if (!recent.length) return { ok: false, msg: "模型没按格式回，档案没动" };
+    const sugs = (((/<<<建议>>>\s*([\s\S]*)$/.exec(out) || [])[1]) || "").split("\n").map((l) => l.replace(/^\s*[-*]\s*/, "").trim())
+      .map((l) => { const m = /^(.+?)[｜|]\s*(.+)$/.exec(l); return m ? { section: sections.find((x) => m[1].includes(x) || x.includes(m[1].trim())) || null, text: m[2].trim() } : null; })
+      .filter((x) => x && x.section && x.text).slice(0, 3);
+    // 整段替换「🔄 近况」
+    const stamp = moment().format("YYYY-MM-DD");
+    const block = [`- 🔄 近况（每周日自动更新 · 最后更新 ${stamp} · 这一节会整段重写，想长期留着的写到上面）`, ...recent.map((x) => `\t- ${x}`)];
+    await this.app.vault.process(f, (txt) => {
+      const ls = txt.split("\n");
+      const i = ls.findIndex((l) => l.startsWith("- 🔄 近况"));
+      if (i < 0) return txt.replace(/\n*$/, "\n") + block.join("\n") + "\n";
+      let j = i + 1;
+      while (j < ls.length && !/^\S/.test(ls[j])) j++;
+      ls.splice(i, j - i, ...block);
+      return ls.join("\n");
+    });
+    s.chatMemory = [];
+    s.profileSugs = { items: sugs.map((x, k) => ({ ...x, id: `${Date.now().toString(36)}${k}` })), done: {} };
+    s.profileUpdatedAt = Date.now();
+    this.saveSoon();
+    const m = this.profileMessage(recent, s.profileSugs, manual);
+    await this.tg(m.text, "", { html: true, markup: m.markup });
+    return { ok: true, recent, sugs };
+  }
+  profileMessage(recent, ps, manual = false) {
+    const E = (x) => this.esc(x);
+    const lines = [`🔄 <b>${manual ? "更新好了" : "这周"}，我对你的了解更新了一下</b>`, "", ...recent.map(E)];
+    if (ps.items.length) {
+      lines.push("", "💡 <b>这周看到的新特点，要不要记进你的档案？</b>（点 ✅ 才会写进去）");
+      ps.items.forEach((x, i) => lines.push(`${ps.done[x.id] || `${i + 1}️⃣`} <i>${E(x.section)}</i>：${E(x.text)}`));
+    }
+    lines.push("", "<i>想改哪里，直接改「陪伴档案」那篇笔记</i>");
+    const kb = ps.items.filter((x) => !ps.done[x.id]).map((x) => { const n = ps.items.indexOf(x) + 1; return [{ text: `✅ 记进档案 ${n}`, callback_data: `nn|pok|${x.id}` }, { text: `❌ 不要 ${n}`, callback_data: `nn|pno|${x.id}` }]; });
+    return { text: lines.join("\n"), markup: kb.length ? { inline_keyboard: kb } : null };
+  }
+  async onProfileCallback(act, id) {
+    const s = this.settings, ps = s.profileSugs;
+    const x = ps?.items.find((y) => y.id === id);
+    if (!x) return { toast: "这条已经过期了" };
+    if (ps.done[id]) return { toast: "已经处理过了" };
+    if (act === "pok") {
+      const f = this.app.vault.getAbstractFileByPath(s.comfortProfile);
+      if (!(f instanceof TFile)) return { toast: "没找到陪伴档案" };
+      let ok = false;
+      await this.app.vault.process(f, (txt) => {
+        const ls = txt.split("\n");
+        const i = ls.findIndex((l) => /^- \S/.test(l) && l.slice(2).startsWith(x.section));
+        if (i < 0) return txt;
+        let j = i + 1;
+        while (j < ls.length && !/^\S/.test(ls[j])) j++;
+        while (j > i + 1 && !ls[j - 1].trim()) j--;   // 插在这一节最后一个子项后面
+        ls.splice(j, 0, `\t- ${x.text}`);
+        ok = true;
+        return ls.join("\n");
+      });
+      if (!ok) return { toast: `档案里没找到「${x.section}」这一节` };
+    }
+    ps.done[id] = act === "pok" ? "✅" : "❌";
+    this.saveSoon();
+    const f = await this.wRead(s.comfortProfile);
+    const ls = f.split("\n"), i = ls.findIndex((l) => l.startsWith("- 🔄 近况"));
+    const recent = [];
+    for (let j = i + 1; i >= 0 && j < ls.length && /^\t- /.test(ls[j]); j++) recent.push(ls[j].replace(/^\t- /, ""));
+    const m = this.profileMessage(recent, ps);
+    return { toast: act === "pok" ? `已记进「${x.section}」` : "好，不记", edit: m.text, markup: m.markup || { inline_keyboard: [] } };
+  }
+
   // ================= 对话模式 / 记录模式 =================
   // 记录模式（默认）：Telegram 发来的都记进日记。对话模式：每句都由 claude 接着聊，对话内容不进日记。
   // 进对话模式有两种：
@@ -567,6 +722,8 @@ ${mood === "chat" ? `回复要求：中文；像朋友聊天，1～6 行，他�
     c.history = r.history;
     if (mood !== "chat") c.mood = mood;
     c.n = (c.n || 0) + 1;
+    if (s_keepChat(this)) (this.settings.chatMemory ||= []).push({ at: Date.now(), text: String(text).slice(0, 300), mood });   // 给每周更新陪伴档案用，不进日记
+    if (this.settings.chatMemory && this.settings.chatMemory.length > 300) this.settings.chatMemory.splice(0, this.settings.chatMemory.length - 300);
     c.last = Date.now();
     this.saveSoon();
     return r.html + (idleLong ? "\n\n<i>（还在对话模式，说「退出」回到记录模式）</i>" : "");
@@ -1084,6 +1241,11 @@ class NotifySettings extends PluginSettingTab {
     text("　存到", "", "insightPath");
     toggle("🫂 陪你聊", "在 Telegram 里说「好累」「好难受」「好开心」「搞定了」之类的短句，或者回复它的陪聊消息时，读陪伴档案和最近的日记回你", "comfort");
     num("💬 自动进入的对话模式，多少分钟没说话回到记录模式", "chatIdleMin");
+    toggle("🔄 每周日更新陪伴档案", "读这周的日记、库周报、长期项目复盘、周洞察和作息训练，重写档案末尾的「近况」；发现长期的新特点时发到 Telegram，点 ✅ 才写进档案上面那几节", "profileUpdate");
+    text("　时间（每周日）", "", "profileUpdateAt", isClockOrEmpty);
+    toggle("　参考这周在对话模式里说过的话", "对话内容只存在本插件的数据里，不进日记和笔记，每次更新完就清空", "profileUseChat");
+    text("　库周报笔记", "第二大脑生成的", "profileReportPath");
+    text("　长期项目复盘文件夹", "取文件名排最后的那一期", "projectReviewDir");
     toggle("🐸 打招呼和呱", "「哈喽」「呱呱呱」「谢谢」这类话马上回一句（不用等模型），带上今天在做什么、做完几件；这些话不记进日记", "chitchat");
     text("　陪伴档案笔记", "写着「我是谁、累的时候是因为什么、怎么回我」，直接改它就能改回复的方式", "comfortProfile");
     text("　claude 命令行路径", "周洞察和收工小结用它（用命令行自己的登录）", "claudePath");

@@ -1,9 +1,9 @@
 {
   "id": "journal-tidy",
   "name": "日记整理",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "minAppVersion": "1.5.0",
-  "description": "手动一键整理日记：任务按 DONE / DOING / TODO 分区；写了 [[菜谱]] 这类 SuperTag 的项下面补上它的字段（如「学会:: 否」）留给你填；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。",
+  "description": "手动一键整理日记：任务按 DONE / DOING / TODO 分区（块内部用「- ---」分了栏的，子项也在块内按状态排，只在块内部排），孤零零一条（没有母块也没有子块、不超过两行）、里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接的条目聚成「链接」区放在 TODO 下面；写了 [[菜谱]] 这类 SuperTag 的项下面补上它的字段（如「学会:: 否」）留给你填；把问题汇总到一起，用本机的 Claude 联网查证后写上回答。",
   "author": "马自立",
   "isDesktopOnly": true
 }

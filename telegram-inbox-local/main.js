@@ -6049,13 +6049,17 @@ const HELP_HTML = `🐸 <b>我能做的事</b>
 ⌨️ <b>指令</b>
 <code>?</code> /now 今天的螺旋日程
 <code>小结</code> /summary 今天做了什么
-<code>睡了</code> <code>休息了</code> 收工 + 小结
-<code>起了</code> 开始今天
+<code>睡了</code> <code>去睡了</code> <code>休息了</code> 收工 + 小结
+<code>起了</code> 开始今天（顺便算昨晚睡了多久）
+<code>去吃饭了</code> → <code>吃完了</code> 暂停手上的事，吃完切回来
+<code>去锻炼了</code> → <code>练完了</code>　<code>午睡</code> → <code>醒了</code>
 <code>模式</code> /mode 现在是哪种模式
 <code>今天练什么</code> /train 健身安排
 <code>拖延</code> /stale 拖了好几天的事（带按钮）
 <code>闪卡</code> /cards 今天到期几张
 <code>周洞察</code> /week 这周做了什么
+<code>你了解我什么</code> /me 我现在对你的了解
+<code>更新画像</code> /profile 现在就更新（平时每周日自动）
 /task 内容 记一条待办
 <code>done 写稿</code> <code>doing 写稿</code> 改任务状态
 
@@ -6070,6 +6074,8 @@ const TG_COMMANDS = [
   { command: "stale", description: "🐢 拖了好几天的事" },
   { command: "cards", description: "🃏 今天到期的闪卡" },
   { command: "week", description: "🧭 这周做了什么（周洞察）" },
+  { command: "me", description: "🪞 你现在对我的了解" },
+  { command: "profile", description: "🔄 现在更新对我的了解" },
   { command: "task", description: "☑️ 记一条待办：/task 内容" },
   { command: "help", description: "🐸 我能做的事" },
 ];
@@ -6078,6 +6084,7 @@ const THINKING = {
   happy: ["🐸 收到！……", "📖 看看你今天都干了啥……", "✍️ 马上……"],
   chat: ["💭 收到，在想……", "📖 翻了翻你最近的日记……", "✍️ 在组织语言……"],
   summary: ["🌙 收到，在整理今天……", "📖 在读今天的日记……", "✍️ 在写小结……", "🫶 快好了……"],
+  profile: ["🔄 收到，在重新认识你……", "📖 在读这周的日记……", "📚 在看库周报和项目复盘……", "🧩 在整理近况……", "🫶 快好了……"],
   week: ["🧭 收到，在翻这一周……", "📖 一天一天读日记……", "🧩 在归类这周做的事……", "✍️ 在写周洞察……", "🫶 快好了，再等等……"],
 };
 function nnPlugin() { var _n; return (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-notify"]; }
@@ -6121,7 +6128,15 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
     //                     睡了还会把进行中的任务退回 TODO（做过的时段已经记下，明天接着算）
     const naut = (_n = window.app?.plugins?.plugins) == null ? null : _n["nautilus-spiral"];
     const said = (msg.text || "").trim();
-    const dayCmd = /^(?:睡了|睡觉了?|晚安|休息了|不干了)$/.test(said) ? "sleep" : /^(?:起了|起床了?|醒了|早安)$/.test(said) ? "wake" : null;
+    // 口令比较前去掉句尾的标点和语气（「去吃饭了！」「睡了～」）
+    const said0 = said.replace(/[!！。.~～…\s]+$/, "");
+    const dayCmd = /^(?:我?(?:去|要|准备|该)?睡(?:觉)?(?:了|去了|啦|咯)|睡觉|晚安|休息了|不干了|收工了?|困了睡了)$/.test(said0) ? "sleep"
+      : /^(?:我?起(?:床)?(?:了|啦)|起床|醒了|醒啦|早安|早)$/.test(said0) ? "wake" : null;
+    // [自用补丁] 吃饭 / 锻炼 / 午睡：和螺旋日程的「吃饭」一样暂停正在做的事；说「吃完了」切回来，日记里那一行变成一段时间
+    const breakStart = /^我?(?:去|要去|准备|先去)?(?:吃(?:个|点)?(?:早|午|晚)?(?:饭|餐)|吃夜宵|开饭)(?:了|去了|啦|咯|去)?$/.test(said0) ? "吃饭"
+      : /^我?(?:去|要去|先去)?(?:锻炼|健身|运动|跑步|打球|打篮球)(?:了|去了|啦|咯|去)?$/.test(said0) ? "锻炼"
+      : /^我?(?:去|先去)?(?:午睡|睡午觉|小睡|眯一?会儿?)(?:了|去了|啦|一下)?$/.test(said0) ? "午睡" : null;
+    const breakEnd = /^(?:我?回来了|吃完(?:饭)?了?|吃饱了|吃完啦|练完了|锻炼完了|跑完了|打完球了|运动完了|睡醒了|午睡醒了)$/.test(said0) || (said0 === "醒了" && !!(naut && naut.settings.breakState && /睡|眯/.test(naut.settings.breakState.word)));
     const nn = nnPlugin();
     const chatOn = !!(nn && nn.chatCommand && nn.settings.comfort);
     try {
@@ -6151,19 +6166,59 @@ function setupMessageHandlers(bot, settings, vaultWriter) {
       if (chatOn && /^(?:今天练什么|练什么|健身|\/train)$/.test(cmd)) { await nn.pushWorkout(); return; }
       if (chatOn && /^(?:拖延|拖了什么|\/stale)$/.test(cmd)) { if (!(await nn.pushStale())) await ctx.reply(`👍 今天日记里没有拖了 ${nn.settings.staleDays} 天以上的事`); return; }
       if (chatOn && /^(?:闪卡|卡片|复习|\/cards)$/.test(cmd)) { if (!(await nn.pushCards())) await ctx.reply("🃏 现在没有到期的卡（或者 Anki 没开着，数不了）"); return; }
+      if (chatOn && /^(?:更新画像|更新档案|更新一下你对我的了解|\/profile)$/.test(cmd)) {
+        await withThinking(ctx, THINKING.profile, async () => { const r = await nn.profileUpdate({ manual: true }); if (!r.ok) throw new Error(r.msg); return null; });
+        return;
+      }
+      if (chatOn && /^(?:你了解我什么|你眼里的我|画像|我的画像|\/me)$/.test(cmd)) {
+        const txt = await nn.wRead(nn.settings.comfortProfile);
+        const ls = txt.split("\n"), i = ls.findIndex((l) => l.startsWith("- 🔄 近况"));
+        const recent = [];
+        for (let j = i + 1; i >= 0 && j < ls.length && /^\t- /.test(ls[j]); j++) recent.push(ls[j].replace(/^\t- /, ""));
+        const when = nn.settings.profileUpdatedAt ? (0, import_obsidian7.moment)(nn.settings.profileUpdatedAt).format("M月D日") : null;
+        const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        await ctx.reply(recent.length ? `🪞 <b>我现在对你的了解</b>${when ? `（${when}更新）` : ""}\n\n${recent.map(esc).join("\n")}\n\n<i>更深的那部分在「陪伴档案」里；想让我现在重新看一遍，发「更新画像」</i>` : "🪞 我还没整理过你的近况，发「更新画像」我现在就看一遍", { parse_mode: "HTML" });
+        return;
+      }
       if (chatOn && /^(?:周洞察|这周做了什么|本周|\/week)$/.test(cmd)) { await withThinking(ctx, THINKING.week, async () => { await nn.pushInsight(true); return null; }); return; }
       if (naut && naut.capacityText && /^(?:[?？]|\/now)$/.test(said)) {
-        if (naut.telegramReport) await ctx.reply(await naut.telegramReport(), { parse_mode: "HTML" });   // 图文版
-        else await ctx.reply(await naut.capacityText());
+        if (naut.telegramReport) {   // 图文版，前面带一张今天的螺旋图
+          const html = await naut.telegramReport();
+          if (!(naut.tgSendWithSpiral && await naut.tgSendWithSpiral(settings.token, ctx.chat.id, html).catch(() => false))) await ctx.reply(html, { parse_mode: "HTML" });
+        } else await ctx.reply(await naut.capacityText());
+        return;
+      }
+      if (naut && naut.tgBreakStart && breakStart) {
+        const r = await naut.tgBreakStart(breakStart, msg.date * 1e3);
+        const icon = breakStart === "吃饭" ? "🍚" : breakStart === "锻炼" ? "🏃" : "😴";
+        if (r.already) { await ctx.reply(`${icon} 你还在${r.b.word}（${(0, import_obsidian7.moment)(r.b.since).format("HH:mm")} 起），回来了说「${/饭/.test(r.b.word) ? "吃完了" : /睡/.test(r.b.word) ? "醒了" : "回来了"}」`); return; }
+        content = `- **${(0, import_obsidian7.moment)(msg.date * 1e3).format("HH:mm")}** ${breakStart}`;
+        await vaultWriter.insertMessageToVault(content, msg);
+        const b = r.b, n = b.labels.length;
+        const go = breakStart === "吃饭" ? "去吃吧，好好吃饭" : breakStart === "锻炼" ? "去吧，练完记得发我练了什么" : "睡吧，定个闹钟";
+        const back = breakStart === "吃饭" ? "吃完了" : breakStart === "锻炼" ? "练完了" : "醒了";
+        await ctx.reply(`${icon} ${go}\n${n ? `⏸ 计时暂停，先停了 ${n} 件：${b.labels.join("、")}` : "⏸ 现在没有在做的事，直接去吧"}${b.focus ? "\n⏱ 专注也先停了，回来接着开" : ""}\n回来说「${back}」，我帮你切回去 🐸`);
+        return;
+      }
+      if (naut && naut.tgBreakEnd && breakEnd && naut.settings.breakState) {
+        const r = await naut.tgBreakEnd(msg.date * 1e3);
+        const icon = /饭|餐/.test(r.word) ? "🍚" : /锻炼|运动|跑|球/.test(r.word) ? "🏃" : "😴";
+        const lines = [`${icon} 欢迎回来 · ${r.word} ${r.mins >= 60 ? `${Math.floor(r.mins / 60)} 小时 ${r.mins % 60} 分钟` : `${r.mins} 分钟`}（${r.from}–${r.to}）`];
+        if (r.labels.length) lines.push(`▶ 已切回 DOING：${r.labels.join("、")}`);
+        if (r.focus) lines.push("⏱ 专注接着开了");
+        if (r.word === "锻炼") lines.push("💪 练了什么？发「DONE 引体向上 40 个」这样一句，健身看板就记上了");
+        await ctx.reply(lines.join("\n"));
         return;
       }
       if (naut && naut.markDay && dayCmd) {
+        if (dayCmd === "sleep" && naut.settings.breakState) { naut.settings.breakState = null; await naut.saveData(naut.settings); }   // 吃着饭就睡了：不用再问回来没
         if (dayCmd === "sleep" && chatOn && nn.settings.chat) await nn.chatEnd();   // 收工也退出对话模式
         content = `- **${(0, import_obsidian7.moment)(msg.date * 1e3).format("HH:mm")}** ${said}`;
         await vaultWriter.insertMessageToVault(content, msg);
         const receipt = await naut.markDay(dayCmd, msg.date * 1e3);   // 先收掉工作时段，再改任务状态
         if (dayCmd === "sleep") await vaultWriter.pauseDoing(msg);
-        await ctx.reply(receipt);
+        // 起了 / 睡了的回执也带上今天的螺旋图（起了看今天的安排，睡了看这一天怎么过的）
+        if (!(naut.tgSendWithSpiral && await naut.tgSendWithSpiral(settings.token, ctx.chat.id, receipt, { html: false }).catch(() => false))) await ctx.reply(receipt);
         if (dayCmd === "sleep") await replyDaySummary(ctx, msg);   // 收工：再来一条今天的小结和几句话
         return;
       }
@@ -6672,13 +6727,17 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
 <br><br><b>⌨️ 指令</b>（中文说法和 / 指令都行，任何模式下都生效；输入 / 能看到菜单）
 <br>· <code>?</code> <code>/now</code>：图文版螺旋日程（⭐ 正在做、接下来、排不下、今天过了多少），不写进日记
 <br>· <code>小结</code> <code>/summary</code>：今天的小结：做成了什么、明天先做哪件、几句话，不收工
-<br>· <code>睡了</code> <code>休息了</code> <code>不干了</code> <code>晚安</code>：收工（这天的结束时间设成现在，进行中的任务退回 TODO），再回一条今天的小结
-<br>· <code>起了</code> <code>早安</code>：设这天的开始时间，回一条今天的容量
+<br>· <code>睡了</code> <code>去睡了</code> <code>要睡了</code> <code>休息了</code> <code>不干了</code> <code>晚安</code>：收工（这天的结束时间设成现在，进行中的任务退回 TODO），再回一条今天的小结
+<br>· <code>起了</code> <code>醒了</code> <code>早安</code>：设这天的开始时间，回一条今天的容量；前一天说过「睡了」的话，顺便算出几点睡、睡了多久
+<br>· <code>去吃饭了</code> <code>吃午饭</code> <code>开饭了</code>：和日记里写「吃饭」一样，螺旋日程把正在做的事全部暂停、专注停掉，日记记一行「<b>12:30</b> 吃饭」；说 <code>吃完了</code> / <code>回来了</code> 就在手机上切回 DOING、专注接着开，那一行变成「12:30-13:10 吃饭」，螺旋上画出这顿饭吃了多久（不说的话，回到电脑前连续操作 3 分钟也会弹窗问）
+<br>· <code>去锻炼了</code> <code>去跑步了</code> → <code>练完了</code>；<code>午睡</code> <code>眯一会儿</code> → <code>醒了</code>：同上
 <br>· <code>模式</code> <code>/mode</code>：现在是记录模式还是对话模式
 <br>· <code>今天练什么</code> <code>/train</code>：今天的健身安排、本周练了几天
 <br>· <code>拖延</code> <code>/stale</code>：拖了 ${at("staleDays", 3)} 天以上的待办，每件带 🗑 不做了 / 📅 挪明天 / 💤 搁置 按钮
 <br>· <code>闪卡</code> <code>/cards</code>：Anki 里今天到期几张（Anki 要开着）
 <br>· <code>周洞察</code> <code>/week</code>：现在就读这周的日记，写一份「这周做了什么」（一两分钟）
+<br>· <code>你了解我什么</code> <code>/me</code>：看它现在对你的了解（陪伴档案里的「🔄 近况」）
+<br>· <code>更新画像</code> <code>/profile</code>：现在就重新读一遍，更新近况（平时每周日 ${at("profileUpdateAt", "22:30")} 自动）
 <br>· <code>/task 内容</code>：写成 <code>- [ ] 内容</code>
 <br>· <code>帮助</code> <code>/help</code>：在 Telegram 里看这份指令表
 
@@ -6687,6 +6746,7 @@ var TGInboxSettingTab = class extends import_obsidian9.PluginSettingTab {
 <br>· <code>呱</code> <code>呱呱</code> <code>呱呱呱</code>：呱回来，你呱几声它多呱一声；<code>谢谢</code> <code>抱抱</code> <code>贴贴</code>：回一句。这些马上回，不记进日记
 <br>· 情绪话、对话、小结要读日记、调 claude，8～30 秒：会先回一条「💭 收到，在想……」并每几秒换一句进度，写好后提示消失、正式回复作为新消息发来（手机会响）
 <br>· 回你的方式写在 <code>${at("comfortProfile", "健康/陪伴档案.md")}</code>，改它就能改语气；只有你这次明确说了想伤害自己，才会给求助热线
+<br>· <b>画像会定期更新</b>：每周日读这周的日记、第二大脑的库周报、最近一期长期项目复盘、周洞察、作息训练，以及对话模式里你说过的话，重写档案末尾的「🔄 近况」；发现长期的新特点会发过来问你，点 ✅ 才写进档案上面那几节。对话内容只存在插件数据里，不进日记，每次更新完就清空
 
 <br><br><b>⏰ 它会主动发来</b>（来自「任务提醒」插件，时间在那边的设置里改）
 <br>· ${at("pushWorkoutAt", "08:00")} 🏋️ 健身早报 · ${at("tgReportTimes", "12:00,18:00,22:00").replace(/,/g, " / ")} 🌀 螺旋日程 · ${at("pushCardsAt", "12:00")} 🃏 闪卡到期 · ${at("pushPeriodAt", "12:00")} 🌸 经期预测（提前 3 天和当天）

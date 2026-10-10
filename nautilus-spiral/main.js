@@ -463,7 +463,7 @@ async function pickList(prompt, items, ok, cancel, defaults = []) {
   return out === "__CANCEL__" ? [] : out ? out.split("\n") : [];
 }
 const groupBy = (tasks) => { const m = new Map(); for (const t of tasks) (m.get(t.path) || m.set(t.path, []).get(t.path)).push(t); return m; };
-const breakIcon = (w) => (/饭|餐/.test(w) ? "🍚" : /锻炼|运动|健身|跑/.test(w) ? "🏃" : "☕");
+const breakIcon = (w) => (/饭|餐|夜宵/.test(w) ? "🍚" : /锻炼|运动|健身|跑|球/.test(w) ? "🏃" : /睡|眯/.test(w) ? "😴" : "☕");
 
 // ---------------- macOS 日历（只读） ----------------
 // 用 EventKit 读系统「日历」App 里的事件（iCloud、Exchange、订阅的日历都在里面），只读，不改日历。
@@ -855,6 +855,76 @@ class TextModal extends OB.Modal {
   onClose() { this.contentEl.empty(); }
 }
 
+// 手填这天实际的开始（起床）/ 结束（收工）时间，和拖螺旋上的绿 / 红把手是一回事。留空 = 用设置里的默认
+// 写法：10:30、10：30、1030、10点半、10点20、10；凌晨收工写 2:30 也行，算到当天夜里
+function parseClockInput(s) {
+  s = s.trim().replace(/\s+/g, "");
+  let m;
+  if (!(m = new RegExp(`^${TIME}$`).exec(s)) && !(m = /^(\d{1,2})(?:[.](\d{2}))?$/.exec(s)) && !(m = /^(\d{1,2})(\d{2})$/.exec(s))) return null;
+  const min = m[2] !== undefined ? +m[2] : m[4] !== undefined ? +m[4] : 0;
+  if (+m[1] > 31 || min >= 60) return null;
+  return tokenMinutes(m[1], m[2], m[3], m[4]);
+}
+
+class BoundsModal extends OB.Modal {
+  constructor(app, plugin, date) { super(app); this.plugin = plugin; this.date = date; }
+  onOpen() {
+    const { contentEl } = this;
+    const cfg = this.plugin.settings;
+    const dayKey = this.date.format(cfg.format);
+    const b = (cfg.dayBounds || {})[dayKey] || {};
+    const S = cfg.dayStart * 60, E = cfg.dayEnd * 60;
+    const isToday = this.date.isSame(this.plugin.today(), "day");
+    contentEl.addClass("naut-bounds-modal");
+    contentEl.createEl("h3", { text: `${this.date.format("M月D日 ddd")} · 起床和收工` });
+    const inputs = {};
+    const row = (kind, name, def) => {
+      const r = contentEl.createDiv({ cls: "naut-bounds-row" });
+      r.createSpan({ cls: "naut-bounds-name", text: name });
+      const inp = r.createEl("input", { type: "text", placeholder: kind === "end" ? "还没收工就空着" : `默认 ${clock(def)}` });
+      inp.value = b[kind] != null ? clock(b[kind]) : "";
+      inputs[kind] = inp;
+      if (isToday) r.createEl("button", { text: "现在" }).onclick = () => { inp.value = moment().format("HH:mm"); inp.focus(); };
+      r.createEl("button", { text: "默认" }).onclick = () => { inp.value = ""; inp.focus(); };
+      inp.addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); save(); } });
+    };
+    row("start", "☀️ 起床", S);
+    row("end", "🌙 收工", E);
+    contentEl.createDiv({ cls: "naut-proj-note", text: "两项都可以空着：只填起床也行，收工等真收工了再填（或者 Telegram 发「睡了」）。空着就按原来的默认算。写法：10:30、1030、10点半；凌晨收工写 2:30，算到当天夜里。" });
+    const err = contentEl.createDiv({ cls: "naut-bounds-err" });
+    const bar = contentEl.createDiv({ cls: "naut-ai-sess-btns" });
+    const read = (kind) => {
+      const v = inputs[kind].value;
+      if (!v.trim()) return { t: null };
+      const p = parseClockInput(v);
+      if (p == null) return { bad: `看不懂「${v.trim()}」，写成 10:30 或 10点半` };
+      // 起床照写的算，比螺旋起点还早就按起点记（和 Telegram「起了」一样）；收工凌晨的算到当天夜里（写 26:30 也行）
+      const t = kind === "end" && p < 1440 ? normalize(p, cfg) : p;
+      return { t: Math.max(S, Math.min(E, t)), clamped: t < S || t > E };
+    };
+    const save = async () => {
+      const st = read("start"), en = read("end");
+      if (st.bad || en.bad) { err.setText(st.bad || en.bad); return; }
+      const s1 = st.t ?? S, e1 = en.t ?? E;
+      if (e1 - s1 < 30) { err.setText(`收工 ${clock(e1)} 得比起床 ${clock(s1)} 晚至少半小时`); return; }
+      const all = (cfg.dayBounds ||= {});
+      const nb = {};
+      if (st.t != null) nb.start = st.t;
+      if (en.t != null) nb.end = en.t;
+      if (Object.keys(nb).length) all[dayKey] = nb; else delete all[dayKey];
+      await this.plugin.saveData(cfg);
+      this.plugin.refresh();
+      const note = [st, en].some((x) => x.clamped) ? `（超出螺旋 ${clock(S)}–${clock(E)} 的部分按边上算）` : "";
+      new OB.Notice(`${this.date.format("M/D")} ☀️ ${clock(s1)} → 🌙 ${clock(e1)}${note}`);
+      this.close();
+    };
+    bar.createEl("button", { cls: "mod-cta", text: "保存" }).onclick = save;
+    bar.createEl("button", { text: "取消" }).onclick = () => this.close();
+    setTimeout(() => inputs.start.focus(), 0);
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
 // ⌃⌥S 快捷面板：螺旋日程的所有操作，打几个字就能找到，右边是各自的快捷键
 class QuickPanel extends OB.FuzzySuggestModal {
   constructor(app, plugin) {
@@ -912,6 +982,14 @@ class SpiralView extends ItemView {
     next.onclick = () => { this.offset++; this.render(); };
     today.onclick = () => { this.offset = 0; this.render(); };
     today.disabled = this.offset === 0;
+    // 这天实际的起床 / 收工：点开手填（和拖螺旋上的把手一样）
+    {
+      const b = (cfg.dayBounds || {})[date.format(cfg.format)] || {};
+      const set = b.start != null || b.end != null;
+      const btn = head.createEl("button", { cls: "naut-bounds-btn" + (set ? " is-set" : ""), text: `☀️${b.start != null ? clock(b.start) : "--:--"}–🌙${b.end != null ? clock(b.end) : "--:--"}`,
+        attr: { "aria-label": set ? "这天实际的起床 / 收工，点一下改" : "还没设起床 / 收工（现在是默认），点一下填" } });
+      btn.onclick = () => new BoundsModal(this.app, this.plugin, date).open();
+    }
 
     if (!(file instanceof TFile)) {
       root.createDiv({ cls: "naut-empty", text: `还没有 ${this.path()}` });
@@ -975,7 +1053,6 @@ class SpiralView extends ItemView {
       info.createSpan({ cls: "naut-muted naut-calib", text: ` · 按以往约 ${dur(plan.demand * rv.ratio)}`,
         attr: { title: `近 ${rv.days} 天做完的 ${rv.n} 件里，实际用时是预估的 ${rv.ratio.toFixed(2)} 倍，待办 ${dur(plan.demand)} 按这个比例约 ${dur(plan.demand * rv.ratio)}` } });
     }
-    if (bounds.start != null || bounds.end != null) info.createSpan({ cls: "naut-muted", text: ` · ${clock(S1)}–${clock(E1)}` });
 
     // 人机协作：这一天 Claude 干了多少（数据见上面「人机协作」一节的口径）
     const ai = aiStore && aiStore.days[dayKey];
@@ -1517,6 +1594,71 @@ module.exports = class NautilusSpiral extends Plugin {
     return lines.join("\n");
   }
 
+  // 螺旋图截成 PNG（Uint8Array）：离屏照常画一遍视图（offset = 相对今天几天，今天按日界算），把样式写进 SVG 再画到 canvas 上
+  async spiralPng(offset = 0, px = 1080) {
+    const host = document.body.createDiv({ cls: "naut-snap" });
+    host.setAttr("style", "position:fixed;left:-10000px;top:0;width:420px;pointer-events:none;");
+    host.createDiv();
+    host.createDiv({ cls: "naut-root" });
+    try {
+      const v = Object.create(SpiralView.prototype);
+      Object.assign(v, { app: this.app, plugin: this, offset, containerEl: host });
+      await v.render();
+      const svg = host.querySelector("svg.naut-svg");
+      if (!svg) return null;
+      const props = ["fill", "stroke", "stroke-width", "stroke-linecap", "stroke-dasharray", "opacity", "font-size", "font-weight", "font-family", "text-anchor", "dominant-baseline"];
+      for (const el of [svg, ...svg.querySelectorAll("*")]) {
+        if (el.tagName === "title") continue;
+        const cs = getComputedStyle(el);
+        el.setAttribute("style", props.map((k) => `${k}:${cs.getPropertyValue(k)}`).join(";"));
+      }
+      svg.querySelectorAll("title").forEach((t) => t.remove());
+      const bg = getComputedStyle(host.children[1]).getPropertyValue("--background-primary").trim() || "#fff";
+      svg.setAttribute("width", px); svg.setAttribute("height", px);
+      svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const img = new Image();
+      await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error("螺旋图画不出来")); img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(new XMLSerializer().serializeToString(svg)); });
+      const pad = Math.round(px * 0.04);
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = px + pad * 2;
+      const g = canvas.getContext("2d");
+      g.fillStyle = bg; g.fillRect(0, 0, canvas.width, canvas.height);
+      g.drawImage(img, pad, pad, px, px);
+      const blob = await new Promise((ok) => canvas.toBlob(ok, "image/png"));
+      return new Uint8Array(await blob.arrayBuffer());
+    } finally { host.remove(); }
+  }
+
+  // 发一张今天的螺旋图，再发文字（html = Telegram 的 HTML 格式）。文字不长就直接当图片说明，一条发完；
+  // 画图或发图失败就只发文字。返回 true = 发出去了
+  async tgSendWithSpiral(token, chatId, text, { html = true } = {}) {
+    const api = (m) => `https://api.telegram.org/bot${token}/${m}`;
+    const plain = html ? text.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&") : text;
+    const fits = [...plain].length <= 1000;   // 图片说明最多 1024 字
+    let sentPhoto = false;
+    try {
+      const png = await this.spiralPng(0);
+      if (png) {
+        const boundary = "----naut" + Date.now().toString(16);
+        const enc = new TextEncoder();
+        const field = (k, v) => enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`);
+        const parts = [field("chat_id", chatId)];
+        if (fits && text) { parts.push(field("caption", text)); if (html) parts.push(field("parse_mode", "HTML")); }
+        parts.push(enc.encode(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="spiral.png"\r\nContent-Type: image/png\r\n\r\n`), png, enc.encode(`\r\n--${boundary}--\r\n`));
+        const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+        let o = 0;
+        for (const p of parts) { body.set(p, o); o += p.length; }
+        await OB.requestUrl({ url: api("sendPhoto"), method: "POST", contentType: `multipart/form-data; boundary=${boundary}`, body: body.buffer });
+        sentPhoto = true;
+        if (fits) return true;
+      }
+    } catch (e) { console.error("[nautilus-spiral] 螺旋图发不出去，只发文字", e); }
+    if (!text) return sentPhoto;
+    await OB.requestUrl({ url: api("sendMessage"), method: "POST", contentType: "application/json",
+      body: JSON.stringify({ chat_id: chatId, text, ...(html ? { parse_mode: "HTML" } : {}) }) });
+    return true;
+  }
+
   // 这天的成绩单：做完几件、人机协作、游戏
   async dayTail(dayKey, items) {
     const out = [];
@@ -1541,7 +1683,11 @@ module.exports = class NautilusSpiral extends Plugin {
       const dayKey = fmtKey(d, cfg);
       const t = Math.max(S, Math.round((d.getHours() * 60 + d.getMinutes()) / 5) * 5);
       await this.setBounds(dayKey, "start", t);
-      return `☀️ ${clock(t)} 开始\n\n` + (await this.capacityText());
+      // 前一天「睡了」记下的结束时刻（凌晨的会超过 1440）→ 睡了多久
+      const pe = ((cfg.dayBounds || {})[fmtKey(new Date(ms - 864e5), cfg)] || {}).end;
+      const slept = pe != null ? d.getHours() * 60 + d.getMinutes() + 1440 - pe : null;
+      const sleepLine = slept != null && slept >= 60 && slept <= 20 * 60 ? `😴 ${clock(pe)} 睡 → ${clock(d.getHours() * 60 + d.getMinutes())} 起，睡了 ${dur(slept)}${slept < 6 * 60 ? "，有点少" : slept >= 8 * 60 ? "，睡得挺足 👍" : ""}\n` : "";
+      return `☀️ ${clock(t)} 开始\n${sleepLine}\n` + (await this.capacityText());
     }
     const { key: dayKey, t: raw } = aiDay(ms, cfg);   // 凌晨睡的算前一天
     const work = (cfg.workLog || {})[dayKey] || {};
@@ -1568,6 +1714,7 @@ module.exports = class NautilusSpiral extends Plugin {
       { id: "break-back", name: "吃饭 / 锻炼回来了（问要不要切回 DOING）", key: ca("B"), when: () => !!this.settings.breakState, run: () => { this.settings.breakState.asking = false; this.askBack(this.settings.breakState); } },
       { id: "review", name: "预估 vs 实际（复盘）", key: ca("R"), run: () => this.showReview() },
       { id: "open", name: "打开螺旋日程", key: ca("O"), run: () => this.activate() },
+      { id: "day-bounds", name: "设置今天的起床 / 收工时间", key: ca("T"), run: () => new BoundsModal(this.app, this, this.today()).open() },
       { id: "open-today", name: "打开今天的日记（凌晨按日界算前一天）", run: () => this.openToday() },
       { id: "calendar-refresh", name: "重新读取 macOS 日历", run: () => { this.cal.cache.clear(); this.refresh(); } },
     ];
@@ -2144,6 +2291,45 @@ module.exports = class NautilusSpiral extends Plugin {
     await this.saveData(cfg);
     this.notify(`${breakIcon(word)} ${word}：计时暂停`, doing.length ? `已暂停 ${doing.length} 件：${doing.map((t) => t.label).join("、")}` : "现在没有在做的事");
     this.refresh();
+  }
+
+  // ---- 给 Telegram Inbox 用的：手机上说「去吃饭了」「吃完了」 ----
+  // 开始：和日记里写「吃饭」一样（DOING 全部暂停、专注停掉），时间按消息发出的时刻；返回 { already, b }
+  async tgBreakStart(word, ms = Date.now()) {
+    const cfg = this.settings;
+    if (cfg.breakState) return { already: true, b: cfg.breakState };
+    const file = this.todayFile();
+    if (file) await this.startBreak(word, file);
+    else cfg.breakState = { word, since: ms, path: null, keys: [], labels: [], focus: null, active: 0 };
+    cfg.breakState.since = ms;
+    await this.saveData(cfg);
+    return { already: false, b: cfg.breakState };
+  }
+  // 结束：不弹窗，直接把还是 PAUSED 的切回 DOING、专注接着开；日记里「**12:30** 吃饭」那一行改成「12:30-13:10 吃饭」，螺旋上画成一段
+  async tgBreakEnd(ms = Date.now()) {
+    const cfg = this.settings;
+    const b = cfg.breakState;
+    if (!b) return null;
+    cfg.breakState = null;
+    if (b.path && b.keys.length) {
+      await this.editTasks(b.path, b.keys, (raw) => (splitTask(raw)?.kw === "PAUSED" ? toDoing(raw) : raw));
+      for (const k of b.keys) this.touch(k);
+    }
+    if (b.focus && b.focus.tasks.length) this.startSession(b.focus.tasks.map((t) => ({ ...t, asked: false, end: Date.now() + t.left * 60e3 })));
+    const from = moment(b.since).format("HH:mm"), to = moment(ms).format("HH:mm");
+    const f = b.path && this.app.vault.getAbstractFileByPath(b.path);
+    if (f instanceof TFile) {
+      const esc = b.word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`^(\\s*-\\s+)\\*\\*${from}\\*\\*\\s+(${esc}.*)$`);
+      await this.app.vault.process(f, (txt) => {
+        const ls = txt.split("\n");
+        for (let i = ls.length - 1; i >= 0; i--) { const m = re.exec(ls[i]); if (m) { ls[i] = `${m[1]}${from}-${to} ${m[2]}`; break; } }
+        return ls.join("\n");
+      });
+    }
+    await this.saveData(cfg);
+    this.refresh();
+    return { word: b.word, from, to, mins: Math.max(1, Math.round((ms - b.since) / 60e3)), labels: b.labels, focus: !!(b.focus && b.focus.tasks.length) };
   }
 
   // 每 30 秒：吃饭 / 锻炼至少 breakMinAway（20）分钟后，在 Obsidian、Claude 等 App 里持续操作满 3 分钟 = 回来了

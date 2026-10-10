@@ -1,7 +1,10 @@
 /* 日记整理：手动触发（快捷键 / 命令 / 左侧按钮），不会自动运行。
  *
  * 1. 任务分区：顶格任务块（连同子块）按状态排成 DONE → DOING → TODO → 没状态的（原样在最下面），区之间用「- ---」隔开。
- *    规则和 done-to-top 插件的「一键整理」（⌃⇧F）是同一份（用它的 core，含「明天 / 后天 / 大后天」搬到那天日记）；那个插件没开时退回旧的「待办上移」。
+ *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
+ *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
+ *    聚成「链接」区，放在 TODO 区下面；有任务关键字的算任务，优先级更高。
+ *    规则和 done-to-top 插件的「一键整理」（⌥1 / ⌃⇧F）是同一份（用它的 core，含「明天 / 后天 / 大后天」搬到那天日记）；那个插件没开时退回旧的「待办上移」。
  * 2. 问题汇总：找出日记里的问句，交给本机的 Claude（claude -p，可联网）判断哪些是真在问、并写回答；
  *    真问题整行从原处挪走（不是复制），集中到文件末尾的「问题汇总」块，回答写在各自下面。
  *    自言自语 / 感叹、游戏相关、提醒式、摘抄里的反问、一行里还有别的内容的，都不动。
@@ -35,6 +38,8 @@ const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|L
 const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 
 // ---------------- 文本处理（纯函数，方便单独测） ----------------
 function splitFrontmatter(text) {
@@ -274,6 +279,19 @@ module.exports = class JournalTidy extends Plugin {
         new Notice(`已恢复 ${f.basename} 到 ${moment(b.time).format("HH:mm:ss")} 整理之前的样子`);
     }
 
+    // 整理完只收起 DONE 区（规则在 done-to-top 的 foldDone 里），其它展开
+    async foldDone(file) {
+        if (!(file instanceof TFile)) return;
+        const dtt = this.app.plugins.plugins["done-to-top"];
+        if (!dtt || typeof dtt.foldDone !== "function") return;
+        const leaf = this.app.workspace.getLeavesOfType("markdown").find((l) => l.view && l.view.file === file);
+        if (!leaf || !leaf.view.getMode || leaf.view.getMode() !== "source") return;   // 没打开或在阅读模式就不管
+        // 等编辑器把整理后的内容同步过来再折，不然同步时会把刚折好的冲掉
+        const want = await this.app.vault.read(file);
+        for (let i = 0; i < 20 && leaf.view.editor && leaf.view.editor.getValue() !== want; i++) await sleep(100);
+        dtt.foldDone(leaf.view);
+    }
+
     async runOn(file, opt) {
         if (!(file instanceof TFile)) return new Notice("没找到这篇日记（今天的可能还没建）");
         if (this.running) return new Notice("上一次整理还在进行中");
@@ -300,7 +318,7 @@ module.exports = class JournalTidy extends Plugin {
                     const moved = dtt.moveDayItems ? await dtt.moveDayItems(file, await this.app.vault.read(file)) : [];
                     let c = null, changed = false;
                     await this.app.vault.process(file, (data) => { const r = zones.organize(moved.length ? zones.dropBlocks(data, moved.map(m => m.orig)) : data); c = r.counts; changed = r.text !== data; return r.text; });
-                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}` : "任务分区本来就是整理好的");
+                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}` + (c.LINK ? ` · 链接 ${c.LINK}` : "") + (c.inner ? `；块内归位 ${c.inner} 处` : "") : "任务分区本来就是整理好的");
                     if (moved.length) report.push(`搬到以后的日记：${dtt.movedSummary(moved)}`);
                 } else {
                     let moved = 0;
@@ -333,6 +351,8 @@ module.exports = class JournalTidy extends Plugin {
             new Notice("日记整理出错：" + (e.message || e) + (report.length ? "\n已完成：" + report.join("；") : ""), 12000);
         } finally {
             this.running = false;
+            // 不管整理成功还是中途报错，都把 DONE 区收一遍
+            this.foldDone(file).catch((e) => console.error("[journal-tidy] foldDone", e));
         }
     }
 
@@ -402,7 +422,7 @@ class TidyModal extends Modal {
         const opt = { moveTodos: s.moveTodos, answerQuestions: s.answerQuestions, fillFields: s.fillFields };
         new Setting(this.contentEl).setName("补 SuperTag 字段").setDesc("写了 [[菜谱]] 这类 SuperTag 的项，下面插上还没有的字段（如「学会:: 否」），留给你填")
             .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
-        new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 其它，区之间用「- ---」隔开")
+        new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开；块内用「- ---」分了栏的，子项也在块内按状态排")
             .addToggle(t => t.setValue(opt.moveTodos).onChange(v => { opt.moveTodos = v; }));
         new Setting(this.contentEl).setName("汇总问题并用 AI 回答").setDesc("问句挪到文末「问题汇总」，Claude 联网查证后写回答；自言自语、游戏相关的不动")
             .addToggle(t => t.setValue(opt.answerQuestions).onChange(v => { opt.answerQuestions = v; }));

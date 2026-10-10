@@ -200,6 +200,19 @@ module.exports = class ChromeTabGroups extends Plugin {
 		parent.insertChild(i, leaf);
 	}
 
+	// Chrome 式「固定标签页」：置为固定 + 排到本标签栏最左（已固定的标签页之后）
+	pinToLeft(leaf) {
+		const parent = leaf.parent;
+		if (!parent || !Array.isArray(parent.children)) return;
+		if (typeof leaf.setPinned !== "function") return;
+		if (leaf.pinned) { leaf.setPinned(false); return; }   // 已固定 → 取消固定，位置不动
+		let at = 0;
+		parent.children.forEach((l, i) => { if (l !== leaf && l.pinned) at = i + 1; });
+		leaf.setPinned(true);
+		this.moveLeaf(leaf, parent, at);
+		this.activate(leaf);
+	}
+
 	activate(leaf, focus = true) {
 		this.app.workspace.setActiveLeaf(leaf, { focus });
 	}
@@ -804,5 +817,6 @@ module.exports = class ChromeTabGroups extends Plugin {
 		this.addCommand({ id: "new-tab-right", name: "在右侧新建标签页", checkCallback: withLeaf((l) => this.newTabRight(l)) });
 		this.addCommand({ id: "duplicate-tab", name: "复制当前标签页", checkCallback: withLeaf((l) => this.duplicate(l)) });
 		this.addCommand({ id: "move-to-new-split", name: "将当前标签页移到新拆分视图", checkCallback: withLeaf((l) => this.toNewSplit(l)) });
+		this.addCommand({ id: "pin-to-left", name: "锁定当前标签页并移到最左", checkCallback: withLeaf((l) => this.pinToLeft(l)) });
 	}
 };
