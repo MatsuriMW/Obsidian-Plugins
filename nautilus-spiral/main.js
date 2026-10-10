@@ -4,9 +4,9 @@ const LP_SCRIPT = "scripts/long-projects.js";   // 长期项目的数据层，�
 
 const VIEW_TYPE = "nautilus-spiral";
 const DEFAULTS = {
-  dayStart: 7,          // 螺旋从几点开始
-  dayEnd: 31,           // 螺旋和排程到几点结束，超过 24 表示次日凌晨（31 = 次日早上 7 点；个人作息夜里会一直干活）
-  dayCutoff: 7,         // 日记的日期分界：凌晨几点前还算前一天
+  dayStart: 8,          // 螺旋从几点开始
+  dayEnd: 32,           // 螺旋和排程到几点结束，超过 24 表示次日凌晨（32 = 次日早上 8 点；个人作息夜里会一直干活，早上七八点才睡）
+  dayCutoff: 8,         // 日记的日期分界：早上几点前还算前一天
   defaultDur: 15,       // 没写时长的任务按多少分钟算
   folder: "日记",
   format: "YYYY_MM_DD",
@@ -2682,8 +2682,8 @@ class SpiralSettings extends PluginSettingTab {
         this.plugin.refresh();
       }));
     num("一天从几点开始", "螺旋的起点（0–23）", "dayStart", 0, 23);
-    num("一天到几点结束", "螺旋和排程到几点为止，超过 24 表示次日凌晨，比如 31 = 次日早上 7 点", "dayEnd", 12, 36);
-    num("日记日期分界（点）", "凌晨几点前还算前一天的日记，比如 7 = 早上 7 点前都算昨天", "dayCutoff", 0, 12);
+    num("一天到几点结束", "螺旋和排程到几点为止，超过 24 表示次日凌晨，比如 32 = 次日早上 8 点", "dayEnd", 12, 36);
+    num("日记日期分界（点）", "早上几点前还算前一天的日记，比如 8 = 早上 8 点前都算昨天", "dayCutoff", 0, 12);
     num("默认任务时长（分钟）", "没写时长的任务按这个算", "defaultDur", 1, 240);
     const text = (name, desc, key) => new Setting(containerEl).setName(name).setDesc(desc).addText((t) => t
       .setValue(s[key])
