@@ -36,7 +36,6 @@ bookmark-icons
 close-sidebar-files
 
 ## 改过的社区插件
-telegram-inbox-local
 supertags-local
 journals
 flashcards-obsidian

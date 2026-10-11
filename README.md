@@ -23,7 +23,7 @@
 - **Roam Backlinks**（独立仓库 [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
 - **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
 - **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
-- **Telegram Inbox · 陪伴版**（[`telegram-inbox-local`](telegram-inbox-local)）★★：手机上随手发给 Telegram 机器人的话直接进日记；而且它读得到你的日记和日程，所以你说「好累」时它知道你这几天熬到几点、手上压着什么，说「搞定了」时它知道你搞定的是什么，「呱呱呱」它也会呱回来。睡前说一声「睡了」，它回一条今天的小结。[它能做什么 →](telegram-inbox-local/README.md)
+- **Telegram Companion**（独立仓库 [`telegram-companion`](https://github.com/MatsuriMW/telegram-companion)）★★★：手机上随手发给 Telegram 机器人的话直接进日记；想聊的时候，它读着你近一周的日记回你。可以给它换人设、教它你的口癖、切换背后的模型。
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
 
 ## 全部插件
@@ -56,7 +56,7 @@
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
 | **螺旋日程**<br>[`nautilus-spiral`](nautilus-spiral) | 螺旋日程：把今天日记里的事件和待办画成一圈螺旋，待办按预计时长自动排进空档，一眼看出今天还排不排得下，并记下实际用时；可以读入 macOS 日历；还能生成发到 Telegram 的图文版（⭐ 正在做、接下来、排不下） | ★★ | 日记里用 Logseq 式任务写法；macOS 日历、Raycast 可选 |
-| **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察和收工小结 | ★ | 螺旋日程；macOS；Telegram 推送要 Telegram Inbox；周洞察和小结要 claude 命令行 |
+| **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察 | ★ | 螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型 |
 | **Done To Top**<br>[`done-to-top`](done-to-top) | 日记里的任务按 DONE / DOING / TODO 自动分区；写着「明天」的事一键发到明天的日记 | ★★ | Logseq 式任务关键词 |
 | **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
 | **看板直达**<br>[`board-jump`](board-jump) | 常用看板一键直达：每个看板一条命令，外加看板切换器和 obsidian:// 链接 | ★★ | 看板笔记带 `type: 看板` 属性 |
@@ -76,7 +76,6 @@
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **Telegram Inbox · 陪伴版**<br>[`telegram-inbox-local`](telegram-inbox-local) | 一个读过你日记的 Telegram 陪伴机器人，分记录和对话两种模式：记录模式下消息随手发过去就记进日记，对话模式下每句都接着聊（对话不进日记），要等的回复先给一条「收到，在想……」；说「哈喽」「呱呱呱」马上回你，说累、难受、想念某人时读你的陪伴档案和最近日记陪你聊，开心时跟你一起高兴；「睡了」收工并回一条今天的小结，「?」看图文版螺旋日程，还能点「任务提醒」发来的按钮处理拖延任务。[说明 →](telegram-inbox-local/README.md) | ★★ | 自己的 Telegram 机器人；陪伴和小结要「任务提醒」「螺旋日程」和 Claude Code 命令行 |
 | **SuperTags（自用）**<br>[`supertags-local`](supertags-local) | Tana 式 supertag：在日记里写一行带 #标签 的内容，就建成一篇带字段的笔记。改动：标签按词边界匹配、每个标签可以定义字段（可以写可选值，待读 / 待看 / 待听看板按字段显示维度、筛选）、同名笔记不重复建、兼容 Bike | ★★ | 无 |
 | **Journals**<br>[`journals`](journals) | 日记日历。改动：日历上标出每篇日记整理完没有，⌘⇧J 列出近两个月没整理完的；日记总是以编辑模式打开；侧栏日历更紧凑 | ★★ | 无 |
 | **Flashcards**<br>[`flashcards-obsidian`](flashcards-obsidian) | 从笔记生成并同步 Anki 卡片。改动：卡片的上下文会带上包着它的各层母块，在 Anki 里也知道这张卡在讲什么 | ★★ | Anki + AnkiConnect |
