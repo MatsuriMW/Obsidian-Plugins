@@ -1,0 +1,40 @@
+.cbm-view.view-content { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* 顶上一行：连接状态 + 新建 / 折叠按钮 */
+.cbm-head { display: flex; align-items: center; gap: 2px; padding: 6px 8px 2px 14px; }
+.cbm-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.cbm-status-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbm-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--text-faint); }
+.cbm-dot.is-on { background: var(--color-green); }
+.cbm-dot.is-busy { background: var(--color-orange); }
+.cbm-btns { display: flex; flex: none; }
+
+.cbm-search { padding: 4px 10px 6px; }
+.cbm-search input[type="search"] { width: 100%; }
+
+.cbm-tree { flex: 1; overflow-y: auto; padding: 0 8px 28px; }
+.cbm-row { align-items: center; }
+.cbm-row .tree-item-inner { min-width: 0; flex: 1; }
+.cbm-title, .cbm-row.nav-folder-title .tree-item-inner { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbm-fav { width: 16px; height: 16px; flex: none; margin-inline-end: 7px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); }
+.cbm-fav img { width: 16px; height: 16px; border-radius: 3px; }
+.cbm-fav svg { width: 14px; height: 14px; }
+.cbm-sub { font-size: var(--font-ui-smaller); color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbm-hit { align-items: flex-start; }
+.cbm-hit .cbm-fav { margin-top: 3px; }
+.cbm-none { padding: 4px 10px; font-size: var(--font-ui-smaller); color: var(--text-faint); }
+
+/* 还在排队、Chrome 还没执行的 */
+.cbm-pending { opacity: 0.55; }
+
+/* 拖动时的落点 */
+.cbm-dragging { opacity: 0.4; }
+.cbm-row[data-drop="before"] { box-shadow: inset 0 2px 0 var(--interactive-accent); }
+.cbm-row[data-drop="after"] { box-shadow: inset 0 -2px 0 var(--interactive-accent); }
+.cbm-row[data-drop="into"] { background-color: hsla(var(--interactive-accent-hsl), 0.18); }
+
+.cbm-setup { padding: 8px 10px; font-size: var(--font-ui-small); color: var(--text-muted); }
+.cbm-setup ol { padding-inline-start: 1.4em; }
+.cbm-setup li { margin-bottom: 6px; }
+
+.cbm-input { width: 320px; max-width: 100%; }

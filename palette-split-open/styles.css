@@ -54,3 +54,48 @@
 	opacity: 0.55;
 	font-style: italic;
 }
+
+/* Chrome 书签结果：网站图标 + 标题，下面一行是所在文件夹和网址 */
+.better-command-palette .suggestion-title.pso-bm-title {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+}
+.better-command-palette .pso-bm-fav {
+	width: 16px;
+	height: 16px;
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-faint);
+}
+.better-command-palette .pso-bm-fav img {
+	width: 16px;
+	height: 16px;
+	border-radius: 3px;
+}
+.better-command-palette .pso-bm-fav svg {
+	width: 14px;
+	height: 14px;
+}
+.better-command-palette .pso-bm-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.better-command-palette .pso-bm-note {
+	padding-left: 23px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 选题结果右边的状态；已发表 / 已废弃的淡一点 */
+.better-command-palette .pso-topic-status {
+	white-space: nowrap;
+}
+.better-command-palette .pso-topic-status.is-dead {
+	opacity: 0.55;
+}

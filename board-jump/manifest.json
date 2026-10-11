@@ -3,7 +3,7 @@
   "name": "看板直达",
   "version": "0.1.0",
   "minAppVersion": "1.4.0",
-  "description": "一键跳到常用看板：每个看板一条命令（可配快捷键）+ 看板切换器（自动列出 type: 看板 的笔记）+ obsidian://board 链接",
+  "description": "跳到常用看板：看板切换器（Better Command Palette 的书签范围，书签和 type: 看板 的笔记一起搜）+ obsidian://board 链接 + 看板全宽",
   "author": "马自立",
   "isDesktopOnly": false
 }

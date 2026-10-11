@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+	body { width: 260px; margin: 0; padding: 14px 16px; font: 13px/1.5 -apple-system, "PingFang SC", sans-serif; color: #202124; }
+	@media (prefers-color-scheme: dark) { body { background: #202124; color: #e8eaed; } .sub { color: #9aa0a6; } button { background: #303134; color: #e8eaed; border-color: #5f6368; } }
+	.row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+	.dot { width: 8px; height: 8px; border-radius: 50%; background: #9aa0a6; flex: none; }
+	.dot.on { background: #1e8e3e; }
+	.dot.wait { background: #f29900; }
+	.sub { margin: 6px 0 12px; color: #5f6368; font-size: 12px; }
+	button { font: inherit; padding: 4px 12px; border: 1px solid #dadce0; border-radius: 6px; background: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+	<div class="row"><span class="dot" id="dot"></span><span id="title">…</span></div>
+	<div class="sub" id="sub"></div>
+	<button id="sync">立即同步</button>
+	<script src="popup.js"></script>
+</body>
+</html>

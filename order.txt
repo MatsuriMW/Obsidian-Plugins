@@ -21,7 +21,6 @@ qws-bridge
 journal-tidy
 
 ## 日程与任务
-nautilus-spiral
 nautilus-notify
 done-to-top
 diary-nav

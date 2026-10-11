@@ -2,6 +2,7 @@
 //   · 光标 / 选区碰到的行全是顶格列表项时才接管：去掉「- 」「1. 」和复选框，文字留在原处
 //   · 这一项下面的子项（缩进比它深的连续行）整体往前提一级，不会变成悬空的缩进
 //   · 只要有一行不是顶格列表项（有缩进、普通文字），就照常减少缩进
+//   · Bullet 聚焦中、光标在聚焦的列表根项上：交给 Bullet 连子项一起提一级（聚焦不退出）
 // 注册成 Obsidian 命令（默认 ⌘[），可以在「设置 → 快捷键」里搜到、改键
 const { Plugin } = require("obsidian");
 
@@ -55,7 +56,11 @@ module.exports = class ListOutdentPlain extends Plugin {
 			name: "减少缩进（顶格列表项再按 = 变成普通文字）",
 			hotkeys: [{ modifiers: ["Mod"], key: "[" }],
 			editorCallback: (editor) => {
-				if (!(editor.cm && outdentToPlain(editor.cm))) editor.exec("indentLess");
+				if (editor.cm && outdentToPlain(editor.cm)) return;
+				// Bullet 聚焦中、光标在聚焦的列表根项上：交给 Bullet 连子项一起提一级，聚焦跟着走
+				const bullet = this.app.plugins.plugins.bullet;
+				if (editor.cm && bullet && bullet.zoomOutdentRoot && bullet.zoomOutdentRoot(editor.cm)) return;
+				editor.exec("indentLess");
 			},
 		});
 	}

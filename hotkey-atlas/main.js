@@ -49,7 +49,11 @@ const CONTEXT = {
 	"palette-split-open": [
 		{ keys: ["Mod+Alt+Enter"], name: "在右侧拆分打开（最多 3 栏）", when: "⌘O 文件搜索面板里" },
 		{ keys: ["Tab"], name: "加一层全文搜索；再按一次打开全局搜索", when: "⌘O 文件搜索面板里" },
-		{ keys: ["Mod+Shift+O", "Mod+Shift+M", "Mod+Shift+K"], name: "切换搜索范围：Wiki 条目 / 书签 / 卡片（再按一次取消；键位跟着同名命令改）", when: "Better Command Palette 面板里" },
+		{ keys: ["、", "？", "《", "@", "#", "！"], name: "只搜某一类：书签和看板 / Chrome 书签 / 选题台 / 小说选题台 / Wiki 条目 / 卡片（中英文标点等效：\\ ? < ! 也行；符号在 Better Command Palette 设置的 Scope Trigger 里改）", when: "⌘O 文件搜索面板里，输入框的第一个字符" },
+		{ keys: ["Alt+Mod+K", "Mod+B"], name: "切到书签和看板范围，再按一次取消：⌥⌘K 跟着「看板切换器」命令；⌘B 在 Better Command Palette 设置里改", when: "Better Command Palette 面板里" },
+		{ keys: ["、"], name: "切到书签和看板范围（英文输入法打 \\ 也行；在 Better Command Palette 设置的 Bookmark Search Prefix 里改）", when: "⌘P 命令面板里，输入框的第一个字符" },
+		{ keys: ["Mod+Enter"], name: "换一边打开书签（默认内置浏览器 → Chrome，反过来也一样；这里不新建笔记）", when: "Chrome 书签范围里" },
+		{ keys: ["Mod+Alt+Enter"], name: "用内置浏览器在右侧拆分打开书签（最多 3 栏）", when: "Chrome 书签范围里" },
 		{ keys: ["Backspace"], name: "退出搜索范围，回到普通文件搜索", when: "范围搜索、输入框为空时" },
 	],
 	"llm-wiki": [{ keys: ["Mod+Enter"], name: "提交问题", when: "Wiki 面板提问框里" }],

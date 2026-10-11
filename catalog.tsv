@@ -10,11 +10,10 @@ outline-block	★★	一键把一大段文字整理成层级列表并加上双�
 task-toggle	★★	⌘/ 循环切换 TODO → DOING → DONE，自动写上开始和结束时间；⌘⇧/ 切换暂停、取消等状态	用 Logseq 式任务关键词
 second-brain	★★	跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑	Ollama + EmbeddingGemma；Anki + AnkiConnect（可选）
 llm-wiki	★★	仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检	本机 Claude Code；配合第二大脑效果更好
-palette-split-open	★★	增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、一键只搜某一类笔记（Wiki 条目 / 书签和看板 / 卡片）	Better Command Palette
+palette-split-open	★★	增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效）	Better Command Palette
 draft-desk	★	写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上	本机 Claude Code、第二大脑、作者的写作 skill
 qws-bridge	★	把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚	Claudian 插件 + QWS / grill-me skill
 journal-tidy	★	一键整理日记：任务分区、给带标签的条目补上字段，再把日记里的问题交给 Claude 联网查证、写上回答	本机 Claude Code；Logseq 式任务
-nautilus-spiral	★★	螺旋日程：把今天日记里的事件和待办画成一圈螺旋，待办按预计时长自动排进空档，一眼看出今天还排不排得下，并记下实际用时；可以读入 macOS 日历；还能生成发到 Telegram 的图文版（⭐ 正在做、接下来、排不下）	日记里用 Logseq 式任务写法；macOS 日历、Raycast 可选
 nautilus-notify	★	螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察	螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型
 done-to-top	★★	日记里的任务按 DONE / DOING / TODO 自动分区；写着「明天」的事一键发到明天的日记	Logseq 式任务关键词
 diary-nav	★★★	在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面	无

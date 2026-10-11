@@ -22,7 +22,7 @@
 - **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换（⌘\ 在无序 → 有序 → 段落之间循环）。
 - **Roam Backlinks**（独立仓库 [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
 - **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
-- **螺旋日程**（[`nautilus-spiral`](nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
+- **螺旋日程**（独立仓库 [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
 - **Telegram Companion**（独立仓库 [`telegram-companion`](https://github.com/MatsuriMW/telegram-companion)）★★★：手机上随手发给 Telegram 机器人的话直接进日记；想聊的时候，它读着你近一周的日记回你。可以给它换人设、教它你的口癖、切换背后的模型。
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
 
@@ -39,6 +39,7 @@
 | **List Outdent Plain**<br>[`list-outdent-plain`](list-outdent-plain) | 在顶格列表项上再按 ⌘[，它就变成普通段落，子项跟着往前提一级 | ★★★ | 无 |
 | **任务状态快切**<br>[`task-toggle`](task-toggle) | ⌘/ 循环切换 TODO → DOING → DONE，自动写上开始和结束时间；⌘⇧/ 切换暂停、取消等状态 | ★★ | 用 Logseq 式任务关键词 |
 | **Outline Block**<br>[`outline-block`](outline-block) | 一键把一大段文字整理成层级列表并加上双链，先预览再替换 | ★★ | 本机 Claude Code（`claude` 命令行） |
+| **Chrome 书签**<br>[`chrome-bookmarks`](chrome-bookmarks) | 侧栏里一棵和 Chrome 双向同步的书签树：点一下用内置浏览器（或 Chrome）打开；在这里新建、改名、拖动、删除，Chrome 那边跟着变，反过来也一样。命令「搜索 Chrome 书签」在 Better Command Palette 里搜（要装 Palette Enhancements，没装就用自带的小面板）。在 Chrome 里新收藏的网页会按内容量自动记进笔记：单篇进待读、视频进待看、Wiki 式的进长期项目。要配合仓库里的 Chrome 扩展「Obsidian 书签桥」用，两边只走本机 127.0.0.1 通信。 |  |  |
 
 ### 知识库与 AI：本地语义检索、LLM Wiki、复习和写作
 
@@ -46,7 +47,7 @@
 |---|---|---|---|
 | **第二大脑（自用）**<br>[`second-brain`](second-brain) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑 | ★★ | Ollama + EmbeddingGemma；Anki + AnkiConnect（可选） |
 | **LLM Wiki**<br>[`llm-wiki`](llm-wiki) | 仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检 | ★★ | 本机 Claude Code；配合第二大脑效果更好 |
-| **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、一键只搜某一类笔记 | ★★ | Better Command Palette |
+| **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效） | ★★ | Better Command Palette |
 | **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
 | **追问成稿（QWS / grill-me）**<br>[`qws-bridge`](qws-bridge) | 把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚 | ★ | Claudian 插件 + QWS / grill-me skill |
 | **日记整理**<br>[`journal-tidy`](journal-tidy) | 一键整理日记：任务分区、给带标签的条目补上字段，再把日记里的问题交给 Claude 联网查证、写上回答 | ★ | 本机 Claude Code；Logseq 式任务 |
@@ -55,11 +56,10 @@
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **螺旋日程**<br>[`nautilus-spiral`](nautilus-spiral) | 螺旋日程：把今天日记里的事件和待办画成一圈螺旋，待办按预计时长自动排进空档，一眼看出今天还排不排得下，并记下实际用时；可以读入 macOS 日历；还能生成发到 Telegram 的图文版（⭐ 正在做、接下来、排不下） | ★★ | 日记里用 Logseq 式任务写法；macOS 日历、Raycast 可选 |
 | **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察 | ★ | 螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型 |
 | **Done To Top**<br>[`done-to-top`](done-to-top) | 日记里的任务按 DONE / DOING / TODO 自动分区；写着「明天」的事一键发到明天的日记 | ★★ | Logseq 式任务关键词 |
 | **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
-| **看板直达**<br>[`board-jump`](board-jump) | 常用看板一键直达：每个看板一条命令，外加看板切换器和 obsidian:// 链接 | ★★ | 看板笔记带 `type: 看板` 属性 |
+| **看板直达**<br>[`board-jump`](board-jump) | 跳到常用看板：看板切换器（开在 Better Command Palette 里，书签和看板一起搜）、obsidian:// 链接、看板全宽显示 | ★★ | 看板笔记带 `type: 看板` 属性；切换器要配合 Better Command Palette 和 Palette Enhancements |
 | **看板聚焦**<br>[`board-zoom`](board-zoom) | 从 Dataview 看板点开某一条时，自动聚焦到那个列表块 | ★ | Dataview + Bullet |
 
 ### 界面与导航
