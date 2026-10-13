@@ -6,7 +6,7 @@
 
 - **编辑与大纲**：Obsidian 原生的列表编辑和反链比 Logseq / Roam 弱一截，这一组把「块」的体验补回来：整块选中和移动、Roam 式反链面板、块引用显示内容、列表与段落互转。
 - **知识库与 AI**：笔记越记越多，就越难再找到、再用上。这一组在本机建一个语义检索层（笔记不出这台电脑），再让 Claude 把散落的笔记整理成带出处的 Wiki、在写作时推荐相关段落、把卡片复习接进 Anki。
-- **日程与任务**：在日记里用 TODO / DOING / DONE 写任务，插件把它们画成一圈螺旋日程，按预计时长自动排进今天的空档，并记下实际用时。
+- **日程与任务**：在日记里用 TODO / DOING / DONE 写任务，插件把它们画成一圈螺旋日程，按预计时长自动排进今天的空档，并记下实际用时。一行任务还能直接交给 Claude Code 去做：发出去的是这一块，进度、用掉的 token 和它最后说的话都回到这一行下面。
 - **界面与导航**：Chrome 式标签页分组、可以自定义的新标签页、按插件整理的快捷键总览等，让窗口管理更顺手。
 
 ## 推荐度怎么看
@@ -22,7 +22,8 @@
 - **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换（⌘\ 在无序 → 有序 → 段落之间循环）。
 - **Roam Backlinks**（独立仓库 [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
 - **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
-- **螺旋日程**（独立仓库 [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。[用法和原理 →](nautilus-spiral/README.md)
+- **螺旋日程**（独立仓库 [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。日记大纲同时是 Agent 干活的仪表盘：任务行下面有进度条和会话最后说的话，状态栏报几个在跑、几个在等你。[用法和原理 →](https://github.com/MatsuriMW/nautilus-spiral/blob/main/README.zh-CN.md)
+- **块去向**（[`done-to-top`](done-to-top)）★★：决定一个块去哪儿。日记里的任务按 DONE / DOING / TODO 自动分区；`⌥⌘S` 把光标所在的块连同子块发到别处：页面顶部、明天的日记、日历、提醒事项，或者 Claude Code。发给 Claude Code 时一块就是一个会话：选中几块并列的，同时开几个；让母块当共同背景，每个子块各开一个。会话可以开在终端窗口里，也可以放在后台的 tmux 里跑，配合螺旋日程在大纲里看进度。
 - **Telegram Companion**（独立仓库 [`telegram-companion`](https://github.com/MatsuriMW/telegram-companion)）★★★：手机上随手发给 Telegram 机器人的话直接进日记；想聊的时候，它读着你近一周的日记回你。可以给它换人设、教它你的口癖、切换背后的模型。
 - **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
 
@@ -57,7 +58,7 @@
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
 | **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察 | ★ | 螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型 |
-| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历或提醒事项。发给 Claude CLI 时在这一行下面记下是哪个会话；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑；发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午 3 点这类时刻 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
+| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历或提醒事项。发给 Claude CLI 时在这一行下面记下是哪个会话（🔗）；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑。发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午3点这类时刻。还可以让 Obsidian 自带的斜杠命令只留名字里带「块」的命令 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
 | **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
 | **看板直达**<br>[`board-jump`](board-jump) | 跳到常用看板：看板切换器（开在 Better Command Palette 里，书签和看板一起搜）、obsidian:// 链接、看板全宽显示 | ★★ | 看板笔记带 `type: 看板` 属性；切换器要配合 Better Command Palette 和 Palette Enhancements |
 | **看板聚焦**<br>[`board-zoom`](board-zoom) | 从 Dataview 看板点开某一条时，自动聚焦到那个列表块 | ★ | Dataview + Bullet |

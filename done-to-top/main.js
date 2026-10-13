@@ -30,6 +30,8 @@ const DEFAULTS = {
 	claudeMarkDoing: true,          // 发出去以后，TODO 的那一行改成 DOING（螺旋日程的进度条就会开始监听这个会话）
 	claudeLink: true,               // 发出去时给会话定好会话号、起好名字，并在这一行下面记一行「🔗」（螺旋日程靠它把这一行和会话绑死）
 	claudeMaxParallel: 6,           // 选中几块并列的一起发时，一次最多开几个会话（多了不发，免得误选一大片）
+	slashOnly: false,               // 斜杠命令（Obsidian 自带的「/」）只留名字里带下面这个词的命令，别的不出现
+	slashKeyword: "块",             // 名字里（连同前面的插件名）带这个词的命令才留下
 	claudeRun: "terminal",          // 会话跑在哪儿：terminal = macOS「终端」的窗口；tmux = 后台的 tmux 会话（不弹窗口）；headless = claude -p（没有窗口，答完一轮就退出）
 	claudeTmuxSession: "agents",    // 跑在 tmux 里时用哪个 tmux 会话（没有就建）。想看：tmux attach -t agents
 	claudeHeadlessArgs: "",         // 无头跑的时候多带的参数，比如 --permission-mode acceptEdits（不给权限它只能读、不能改）
@@ -767,6 +769,10 @@ class SendSettings extends PluginSettingTab {
 		containerEl.empty();
 		const text = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
 			.addText((t) => t.setPlaceholder(placeholder || "").setValue(s[key] || "").onChange(async (v) => { s[key] = v.trim(); await this.plugin.saveData(s); }));
+		new Setting(containerEl).setName("斜杠命令").setHeading();
+		new Setting(containerEl).setName("斜杠命令只留带这个词的").setDesc("Obsidian 自带的斜杠命令（编辑器里打 /）默认把全部命令都列出来。打开以后只留名字里带下面这个词的命令，「发送到 Claude CLI」只要对得上你打的字就排第一个。要先在「核心插件」里开着「斜杠命令」")
+			.addToggle((t) => t.setValue(!!s.slashOnly).onChange(async (v) => { s.slashOnly = v; await this.plugin.saveData(s); this.plugin.patchSlash(); }));
+		text("留下哪个词", "命令的名字（连同前面的插件名，比如「块去向: …」）里带这个词才留下", "slashKeyword", DEFAULTS.slashKeyword);
 		new Setting(containerEl).setName("发给 Claude CLI").setHeading();
 		text("运行的命令", "在「终端」里运行它，后面跟上这一块的内容当第一句话。换成 codex 也行", "claudeCommand", "claude");
 		text("在哪个目录里运行", "留空 = 这个库的根目录。可以写 ~/某个目录", "claudeCwd", "留空用库的根目录");
@@ -857,7 +863,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		this.addCommand({
 			id: "send-block",
 			name: "发送这一块到…（顶部 / 明天 / Claude CLI / 子块各开一个会话 / Claudian / MD Flow / 日历 / 提醒事项）",
-			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "s" }],
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "S" }],   // 字母要大写：Mac 上按住 ⌥ 打出来的是 ß，Obsidian 改按键位 S 比对，区分大小写
 			editorCallback: (editor, ctx) => new SendModal(this, editor, ctx && ctx.file).open(),
 		});
 		for (const d of this.directions()) {
@@ -866,6 +872,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		}
 		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
 		this.addSettingTab(new SendSettings(this.app, this));
+		this.app.workspace.onLayoutReady(() => this.patchSlash());
 		// 不给默认快捷键，免得误按；要用就在「设置 → 快捷键」里自己绑
 		this.addCommand({
 			id: "delete-rest",
@@ -973,6 +980,24 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
 		editor.setCursor({ line: next, ch: editor.getLine(next).length });
 		new Notice(`🗑 已删除以下全部：${count} 行（⌘Z 可撤回）`);
+	}
+
+	// 斜杠命令瘦身：Obsidian 自带的「/」会把六百多条命令全列出来。设置里打开以后只留名字里带「块」的（词可以改），
+	// 并且只要「发送到 Claude CLI」对得上你打的字，就排第一个。改的是那个建议器实例自己的 getSuggestions，停用插件时还原
+	patchSlash() {
+		const sp = this.app.internalPlugins.getPluginById("slash-command"), sg = sp && sp.instance && sp.instance.suggest;
+		if (!sg || Object.prototype.hasOwnProperty.call(sg, "getSuggestions")) return;
+		const orig = sg.getSuggestions, FIRST = "done-to-top:send-block-to-claude";
+		sg.getSuggestions = (ctx) => {
+			const list = orig.call(sg, ctx);
+			const word = (this.settings.slashKeyword || DEFAULTS.slashKeyword).trim();
+			if (!this.settings.slashOnly || !word || !Array.isArray(list)) return list;
+			const kept = list.filter((x) => x && x.item && String(x.item.name || "").includes(word));
+			const at = kept.findIndex((x) => x.item.id === FIRST);
+			if (at > 0) kept.unshift(...kept.splice(at, 1));
+			return kept;
+		};
+		this.register(() => { delete sg.getSuggestions; });
 	}
 
 	// 全部去向。command = 单独那条命令的 id（没有的是别处已经有命令了）；desktop = 只在桌面端有
