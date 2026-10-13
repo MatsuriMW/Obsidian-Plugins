@@ -18,7 +18,7 @@
 //     「子块各开一个」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
 //     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项。后面五个只在桌面端有
 //     日历 / 提醒事项的时间：任务下面一行的「SCHEDULED: <2026-10-14 Wed 19:30>」「DEADLINE: <…>」和行里的「⏳ / 📅 2026-10-14」定哪天，
-//     没写就看「明天 / 后天 / 大后天」，再没有就是这篇日记的那一天；时刻认 14:00、14:00-15:30、8pm、8:00pm、7am-9am，有时刻的就不是全天
+//     没写就看「明天 / 后天 / 大后天」，再没有就是这篇日记的那一天；时刻认 14:00、14:00-15:30、8pm、8:00pm、7am-9am、下午3点、晚上8点半、下午3点到5点，有时刻的就不是全天
 //   · 音效：发出去的那一下响一声，用的是螺旋日程那套任务状态的音（开关也跟它走，没装就不响）。
 //     页面顶部、今天 / 明天的日记、日历、提醒事项是 DONE 那一声；交给 Claude CLI、Claudian、MD Flow 去做的是 DOING 那一声
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
@@ -561,37 +561,88 @@ function plainText(line, keepPlan = false) {
 	return rest.replace(FROM_RE, "").replace(/\s+\^[A-Za-z0-9-]+$/, "").trim();
 }
 
-// 一个时刻：14:00、8pm、8:00pm、7 am（三组：时、分、a / p）
-const CLOCK = String.raw`(\d{1,2})(?:[:：](\d{2}))?(?:\s*([ap])\.?m\.?(?![a-z]))?`;
-const CLOCK_RANGE_RE = new RegExp(String.raw`(?<![\w:：.])${CLOCK}\s*(?:[-–—~～]|到|至)\s*${CLOCK}(?![\d:：])`, "gi");
-const CLOCK_RE = new RegExp(String.raw`(?<![\w:：.])${CLOCK}(?![\d:：])`, "gi");
+// 一个时刻有三种写法：14:00、8pm / 8:00pm、3点 / 3点半 / 三点一刻 / 3点15分；前面可以带「下午」「晚上」这类时段词。
+// moment(i) 是认一个时刻的正则，分组名后面带 i（一段起止里有两个时刻）：p 时段词、h 数字的时、m 冒号后面的分、
+// d「点」、t「点」后面的半 / 整 / 钟 / 一刻 / 15分、a 是 am / pm 的 a / p；c、u 是时用汉字写的那种写法的时和「点」后面的
+const PERIODS = "凌晨|半夜|深夜|夜里|清晨|早上|早晨|今早|明早|上午|中午|午后|下午|傍晚|晚上|今晚|明晚";
+const CN_NUM = "[零〇一二两三四五六七八九十]{1,3}";
+const TIME_TAIL = String.raw`半(?!小时|个|天|年)|整|钟|[一三]刻|\d{1,2}分|\d{2}(?!\d)|${CN_NUM}分`;
+const moment = (i) => String.raw`(?:(?<p${i}>${PERIODS})\s*|(?<![\w:：.第零〇一二两三四五六七八九十]))` +
+	String.raw`(?:(?<h${i}>\d{1,2})(?:[:：](?<m${i}>\d{2})|(?<d${i}>点)(?<t${i}>${TIME_TAIL})?(?!点))?(?:\s*(?<a${i}>[ap])\.?m\.?(?![a-z]))?` +
+	String.raw`|(?<c${i}>${CN_NUM})点(?<u${i}>${TIME_TAIL})?(?!点))`;
+const CLOCK_RANGE_RE = new RegExp(String.raw`${moment(1)}\s*(?:[-–—~～]|到|至)\s*${moment(2)}(?![\d:：])`, "gi");
+const CLOCK_RE = new RegExp(String.raw`${moment(1)}(?![\d:：])`, "gi");
+
+// 「十五」「两」「三十」「15」→ 数
+function cnNum(s) {
+	if (/^\d+$/.test(s)) return +s;
+	const d = (c) => "零一二三四五六七八九".indexOf(c === "〇" ? "零" : c === "两" ? "二" : c);
+	const i = s.indexOf("十");
+	if (i < 0) return s.length === 1 ? d(s) : NaN;
+	return (i ? d(s[0]) : 1) * 10 + (i < s.length - 1 ? d(s[i + 1]) : 0);
+}
+
+// 从一次匹配里取出第 i 个时刻：{ h, min, ap, period, colon 写了冒号分钟, dian 写了「点」, tail「点」后面还有东西 }
+function momentOf(g, i) {
+	const cn = g["c" + i], tail = cn ? g["u" + i] : g["t" + i];
+	let min = g["m" + i] ? +g["m" + i] : 0;
+	if (tail) min = tail === "半" ? 30 : tail === "整" || tail === "钟" ? 0 : tail === "一刻" ? 15 : tail === "三刻" ? 45 : cnNum(tail.replace(/分$/, ""));
+	return { h: cn ? cnNum(cn) : +g["h" + i], min, ap: g["a" + i] || "", period: g["p" + i] || "", colon: !!g["m" + i], dian: !!cn || !!g["d" + i], tail: !!tail };
+}
 
 // 时、分、a / p → 当天第几分钟；不是个时刻返回 null。12am 是 0 点，12pm 是中午；14:00pm 这种按 24 小时算
 function clockMinutes(h, m, ap) {
 	h = +h; m = +(m || 0);
-	if (h > 23 || m > 59) return null;
+	if (!(h <= 23) || !(m <= 59)) return null;
 	if (ap && h >= 1 && h <= 12) h = (h % 12) + (/p/i.test(ap) ? 12 : 0);
 	return h * 60 + m;
 }
 
-// 从一段话里找出时刻：{ start, end }（当天第几分钟），没有就是 null
-//   起止：「14:00-15:30」「14:00 到 15:30」「7am-9am」「8-10pm」；单独一个「14:00」「8pm」「8:00pm」算一小时
-//   光一个数字不算（「3-5」「10-14」）：要么写了分钟，要么写了 am / pm
-//   起止里只有一头写了 am / pm：另一头先跟它一样，顺序不对再换成另一半天（10-2pm = 上午 10 点到下午 2 点）
+// 带时段词的 1–12 点是 24 小时制的几点。晚上 12 点是 24 点、晚上 1–4 点是过了半夜的那几个钟头（都算到第二天去）
+function periodHour(h, p) {
+	if (/凌晨/.test(p)) return h % 12;                        // 凌晨 12 点 = 0 点
+	if (/早|晨|上午/.test(p)) return h;                       // 清晨 早上 早晨 今早 明早 上午
+	if (/中午/.test(p)) return h <= 4 ? h + 12 : h;           // 中午 1 点 = 13 点
+	if (/午后|下午|傍晚/.test(p)) return h < 12 ? h + 12 : 12;
+	if (/晚/.test(p)) return h <= 4 ? h + 24 : h + 12;         // 晚上 今晚 明晚
+	return h >= 6 ? h + 12 : h;                                // 半夜 深夜 夜里：11 点是 23 点，2 点是凌晨 2 点
+}
+
+// 一个时刻是当天第几分钟。mark = 它自己的、或者从起止另一头借来的 { ap } / { period }
+function momentMinutes(t, mark) {
+	if (mark && mark.ap) return clockMinutes(t.h, t.min, mark.ap);
+	if (!(t.h <= 23) || !(t.min <= 59)) return null;
+	const h = mark && mark.period && t.h >= 1 && t.h <= 12 ? periodHour(t.h, mark.period) : t.h;
+	return h * 60 + t.min;
+}
+
+// 从一段话里找出时刻：{ start, end（当天第几分钟）, day（时段词带出来的往后几天：明早 / 明晚 = 1）}，没有就是 null
+//   起止：「14:00-15:30」「14:00 到 15:30」「7am-9am」「8-10pm」「下午3点到5点」「晚上8-10点」；单独一个时刻算一小时
+//   单个时刻要够明确才算：写了分钟（14:00、8点半、3点15分、8点整）、写了 am / pm、或者带时段词（下午3点、晚上八点）。
+//   光一个数字（「3-5」「10-14」）、光一个「3点」「三点」不算：「总结 3 点」「有一点累」不是时刻
+//   起止里只有一头写了 am / pm 或时段词：另一头先跟它一样，顺序不对再换成另一半天（10-2pm、上午10点到2点 都是 10:00–14:00）
 function timeIn(text) {
-	const flip = (ap) => (/p/i.test(ap) ? "a" : "p");
-	for (const [, h1, m1, a1, h2, m2, a2] of text.matchAll(CLOCK_RANGE_RE)) {
-		if (!(m1 || a1 || a2) || !(m2 || a2)) continue;
-		let start = clockMinutes(h1, m1, a1 || a2), end = clockMinutes(h2, m2, a2 || a1);
+	const own = (t) => (t.ap ? { ap: t.ap } : t.period ? { period: t.period } : null);
+	const flip = (v, t) => (t.h >= 1 && t.h <= 12 && v < 1440 ? (v >= 720 ? v - 720 : v + 720) : v);
+	const day = (...ts) => (ts.some((t) => /^明/.test(t.period)) ? 1 : 0);
+	for (const r of text.matchAll(CLOCK_RANGE_RE)) {
+		const a = momentOf(r.groups, 1), b = momentOf(r.groups, 2);
+		const sure = a.colon || a.ap || a.period || a.tail;
+		if (!(b.colon || b.ap || (b.dian && (b.period || b.tail || sure)))) continue;
+		if (!(a.colon || a.ap || (a.dian ? a.period || a.tail || b.period || b.tail || b.ap : b.ap || (b.dian && (a.period || b.period || b.tail))))) continue;
+		const ma = own(a), mb = own(b);
+		let start = momentMinutes(a, ma || mb), end = momentMinutes(b, mb || ma);
 		if (start === null || end === null) continue;
-		if (end <= start && !a1 && a2) start = clockMinutes(h1, m1, flip(a2));
-		else if (end <= start && a1 && !a2) end = clockMinutes(h2, m2, flip(a1));
+		if (end <= start && !ma && mb) start = flip(start, a);
+		else if (end <= start && ma && !mb) end = flip(end, b);
 		if (end <= start) end += 1440;
-		return { start, end };
+		return { start, end, day: day(a, b) };
 	}
-	for (const [, h, m, ap] of text.matchAll(CLOCK_RE)) {
-		const start = m || ap ? clockMinutes(h, m, ap) : null;
-		if (start !== null) return { start, end: start + 60 };
+	for (const r of text.matchAll(CLOCK_RE)) {
+		const t = momentOf(r.groups, 1);
+		if (!(t.colon || t.ap || (t.dian && (t.period || t.tail)))) continue;
+		const start = momentMinutes(t, own(t));
+		if (start !== null) return { start, end: start + 60, day: day(t) };
 	}
 	return null;
 }
@@ -616,7 +667,7 @@ function planOf(lines) {
 
 // 这一块什么时候：{ date: Date（那天 0 点）, start / end: 当天第几分钟或 null, dayGiven: 知不知道是哪天, dated: 这一块自己说了哪天 }
 //   lines = 一块（首行 + 跟着的行），只给首行那一行字也行
-//   哪天：SCHEDULED / DEADLINE / ⏳ / 📅 写的日期；没有就看行里的「明天 / 后天 / 大后天」；再没有就是这篇日记的那一天，不在日记里就是今天
+//   哪天：SCHEDULED / DEADLINE / ⏳ / 📅 写的日期；没有就看行里的「明天 / 后天 / 大后天」「明早 / 明晚」；再没有就是这篇日记的那一天，不在日记里就是今天
 //   几点：SCHEDULED / DEADLINE 里写了就用它的；没写就看这一行里的（见 timeIn）。DOING / DONE 后面紧跟的时刻是记录，不算
 function whenOf(lines, fileName, now = new Date()) {
 	if (typeof lines === "string") lines = [lines];
@@ -625,9 +676,10 @@ function whenOf(lines, fileName, now = new Date()) {
 	const base = jm ? new Date(+jm[1], +jm[2] - 1, +jm[3]) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
 	const plan = planOf(lines);
 	const dw = plan ? null : DAY_WORD_RE.exec(text);
-	const date = plan ? plan.date : new Date(base.getFullYear(), base.getMonth(), base.getDate() + (dw ? DAY_OFFSET[dw[0]] : 0));
 	const t = (plan && plan.time) || timeIn(text.replace(/\d{4}-\d{1,2}-\d{1,2}/g, " "));   // 日期里的数字不当时刻看
-	return { date, start: t ? t.start : null, end: t ? t.end : null, dayGiven: !!plan || !!dw || !!jm, dated: !!plan || !!dw };
+	const later = plan ? 0 : dw ? DAY_OFFSET[dw[0]] : (t && t.day) || 0;                    // 往后几天
+	const date = plan ? plan.date : new Date(base.getFullYear(), base.getMonth(), base.getDate() + later);
+	return { date, start: t ? t.start : null, end: t ? t.end : null, dayGiven: !!plan || !!later || !!jm, dated: !!plan || !!later };
 }
 
 // AppleScript 里造一个日期：从 current date 改年月日时分，不依赖系统的日期格式
@@ -1220,7 +1272,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		if (!r.ok) { console.error("[done-to-top] 发到提醒事项失败", r.err); return new Notice(`没能写进提醒事项${/-1743|not allowed|不允许/.test(r.err) ? "：先在「系统设置 → 隐私与安全性 → 自动化」里允许 Obsidian 控制提醒事项" : "。详情见控制台"}`); }
 		this.cue("DONE");
 		const day = `${when.date.getMonth() + 1}/${when.date.getDate()}`;
-		const due = when.start !== null ? `${day} ${pad(Math.floor(when.start / 60))}:${pad(when.start % 60)} ` : when.dated ? `${day} ` : "";
+		const due = when.start !== null ? `${day} ${pad(Math.floor(when.start / 60) % 24)}:${pad(when.start % 60)}${when.start >= 1440 ? "（次日）" : ""} ` : when.dated ? `${day} ` : "";
 		new Notice(`☑️ 已加到提醒事项（${r.out || "默认列表"}）：${due}${g.title.slice(0, 24)}`);
 	}
 
