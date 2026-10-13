@@ -1,6 +1,6 @@
 // 段落块 → 层级列表（⌘⌥L）
 //   · 只整理光标所在的那一个块：光标在列表项里 = 这一项连同它的子项；否则 = 光标所在的那一段（空行之间）
-//   · 交给本机 Claude（claude -p，和 journal-tidy 同一套调用方式）拆成列表。层级按 backlink-defaults 改过的反链面板来定，
+//   · 交给本机 Claude（claude -p，和 journal-tidy 同一套调用方式，模型固定用 MODEL 里写的 Haiku）拆成列表。层级按 backlink-defaults 改过的反链面板来定，
 //     不按排版美观：链接写在哪一项，那一项连同全部子项就是该页反链里的一条（母项只显示成面包屑，子树里重复的链接会被并掉）。
 //     所以引出 [[X]] 的那一项，后面展开讲 X 的内容都挂成它的子项，直到换话题 / 关联变弱再提回上层；
 //     顺带提到的概念不链在带着无关子树的项上；同一棵子树里不重复链，隔开后重新展开时再链一次
@@ -18,6 +18,7 @@ const os = require("os");
 const path = require("path");
 
 const CLAUDE = "~/.local/bin/claude";
+const MODEL = "claude-haiku-5-5";  // 重新分层、加双链不用强模型；写全名，别名会跟着版本变
 const TIMEOUT_SEC = 300;
 const MAX_CANDIDATES = 120;
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])(\s+)/;
@@ -139,7 +140,7 @@ module.exports = class OutlineBlock extends Plugin {
 	callClaude(prompt) {
 		return new Promise((resolve, reject) => {
 			const bin = CLAUDE.replace(/^~(?=\/)/, os.homedir());
-			const args = ["-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"];
+			const args = ["-p", "--model", MODEL, "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"];
 			const env = { ...process.env, PATH: [path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
 			let child;
 			try { child = spawn(bin, args, { cwd: os.tmpdir(), env }); }

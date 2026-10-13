@@ -1162,7 +1162,7 @@ const SYNC_METHODS = {
 
 	blockFor(i) {
 		const L = [], kid = (s) => L.push("\t\t- " + s);
-		const where = `收藏于：${today()} · Chrome「${i.folder}」`;
+		const where = `收藏于：${today()} ${window.moment().format("HH:mm")} · Chrome「${i.folder}」`;   // 带上时刻：之后能按时间看这一天收了什么
 		if (i.kind === "collection") {
 			L.push(`\t- 学完 [${i.title}](${i.url}) [[长期计划]] #领域/${i.area} 🛫 ${today()}`);
 			if (i.author) kid(`作者：${i.author}`);

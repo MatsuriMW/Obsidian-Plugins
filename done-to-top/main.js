@@ -9,11 +9,36 @@
 //   · DONE 栏 = 正文第一条「- ---」之前的那一段；手动放进去的普通条目留在栏里不动
 //   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED 归 DONE 区，PAUSED（停一下）归 DOING 区，WAITING/SUSPENDED 归 TODO 区
 //   · core 挂在插件实例上，Telegram Inbox（自用版）收消息时也用它归位
+//   · 单独占一行的块 ID（闪卡插件写在卡片下面一行、顶格的「^q-r7d4」这类）算在它上面那一块里：
+//     移到顶部、归位、一键整理、发送到今天 / 明天时都跟着块一起走，不会落在原地
 //   · 一键整理时，顶格条目带「明天 / 后天 / 大后天」的，整块搬到那一天的日记，行尾记上「← [[来源日记]]」
 //     （带这个记号的不会再被搬；DONE 和 DONE 栏里的不搬）。⌥Space 快速记录（nautilus-cli.js）用同一份规则
-const { Plugin, Notice } = require("obsidian");
+//   · 发送：光标所在块（连同子项）可以发到几个去向（命令「发送这一块到…」列出全部，每个去向也各有一条命令）：
+//     页面顶部、明天的日记、Claude CLI（开一个会话，这一块当第一句话；选中几块并列的就每块各开一个；
+//     「子块各开一个」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
+//     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项。后面五个只在桌面端有
+//     日历 / 提醒事项的时间：任务下面一行的「SCHEDULED: <2026-10-14 Wed 19:30>」「DEADLINE: <…>」和行里的「⏳ / 📅 2026-10-14」定哪天，
+//     没写就看「明天 / 后天 / 大后天」，再没有就是这篇日记的那一天；时刻认 14:00、14:00-15:30、8pm、8:00pm、7am-9am，有时刻的就不是全天
+//   · 音效：发出去的那一下响一声，用的是螺旋日程那套任务状态的音（开关也跟它走，没装就不响）。
+//     页面顶部、今天 / 明天的日记、日历、提醒事项是 DONE 那一声；交给 Claude CLI、Claudian、MD Flow 去做的是 DOING 那一声
+//   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
+const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
 
-const BULLET_RE = /^(\s*)([-*+])(\s+|$)(.*)$/;
+const DEFAULTS = {
+	claudeCommand: "claude",        // 发给 Claude CLI 时在终端里运行的命令
+	claudeCwd: "",                  // 在哪个目录里运行；空 = 这个库的根目录
+	claudeMarkDoing: true,          // 发出去以后，TODO 的那一行改成 DOING（螺旋日程的进度条就会开始监听这个会话）
+	claudeLink: true,               // 发出去时给会话定好会话号、起好名字，并在这一行下面记一行「🔗」（螺旋日程靠它把这一行和会话绑死）
+	claudeMaxParallel: 6,           // 选中几块并列的一起发时，一次最多开几个会话（多了不发，免得误选一大片）
+	claudeRun: "terminal",          // 会话跑在哪儿：terminal = macOS「终端」的窗口；tmux = 后台的 tmux 会话（不弹窗口）；headless = claude -p（没有窗口，答完一轮就退出）
+	claudeTmuxSession: "agents",    // 跑在 tmux 里时用哪个 tmux 会话（没有就建）。想看：tmux attach -t agents
+	claudeHeadlessArgs: "",         // 无头跑的时候多带的参数，比如 --permission-mode acceptEdits（不给权限它只能读、不能改）
+	calendar: "",                   // 发到哪个日历；空 = 第一个能写的日历
+	remindersList: "",              // 发到提醒事项的哪个列表；空 = 默认列表
+	mdflowNote: "MD Flow/块.md",    // 发到 MD Flow 时，这一块先写进这篇中转笔记（每次覆盖）
+};
+
+const BULLET_RE = /^(\s*)([-*+]|\d+[.)])(\s+|$)(.*)$/;   // 列表项：无序（- * +）和有序（1. 1)）一样对待
 const ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 const SEP_RE = /^[-*+]\s+-{3,}\s*$/;                 // 分割线只认「- ---」（*** ___ 不算）
 const SEP = "- ---";
@@ -30,6 +55,12 @@ const ZONE = {
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO", SUSPENDED: "TODO",
 };
 const TAB_WIDTH = 4;
+// 单独占一行的块 ID：闪卡插件（flashcards-obsidian）把卡片的标识符写在卡片最后一行的下一行、顶格，比如「^q-r7d4」。
+// 它没有缩进，但属于上面那一块，切块时不能把它当成新的一块
+const ID_LINE_RE = /^[ \t]*\^[A-Za-z0-9-]+[ \t]*$/;
+const CARD_TAG_RE = /(?:^|\s)#card(?![\w/-])/;           // 多行卡片：这一项连同子项是一张卡，ID 写在整块后面
+// 机器记在任务下面的记号行：🔗 绑定的会话、⏱ 实际时段、💬 会话最后说的话（螺旋日程写的）。它们不是内容：不当成一块发出去，也不带进发给 Agent 的话里
+const MARK_LINE_RE = /^\s*[-*+]\s+(?:🔗|⏱|💬)/;
 
 const pad = (n) => String(n).padStart(2, "0");
 const nowHM = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -105,7 +136,7 @@ function parse(text) {
 	for (let i = bodyStart; i < bodyEnd; i++) {
 		const line = lines[i];
 		const fence = /^\s*(```|~~~)/.test(line);
-		const startsNew = !inFence && !isBlank(line) && !/^\s/.test(line);
+		const startsNew = !inFence && !isBlank(line) && !/^\s/.test(line) && !ID_LINE_RE.test(line);   // 块 ID 那一行跟着上一块
 		if (startsNew || !blocks.length) {
 			const sep = SEP_RE.test(line);
 			blocks.push({ lines: [line], start: i, sep, zone: sep ? null : zoneOf(line) });
@@ -141,7 +172,7 @@ const ITEM_LINE_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;          // 这一行是�
 //   ③ 里面有平台链接
 //   ④ 不是任务：没有 TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED… 也没有复选框
 function isLinkBlock(lines) {
-	const ls = trimBlock(lines);
+	const ls = trimBlock(lines).filter((l, i) => i === 0 || !ID_LINE_RE.test(l));   // 块 ID 那一行不算
 	if (ls.length > 2) return false;
 	if (/^[ \t]/.test(ls[0])) return false;                   // 有母块（不是顶格条目）
 	if (ls.length > 1 && ls.slice(1).some((l) => ITEM_LINE_RE.test(l))) return false;   // 带子块
@@ -175,7 +206,7 @@ function organizeInner(lines) {
 	for (let i = 1; i < lines.length; i++) {
 		const l = lines[i];
 		if (FENCE_RE.test(l)) return lines;          // 带代码块的不动
-		if (isBlank(l)) continue;
+		if (isBlank(l) || ID_LINE_RE.test(l)) continue;   // 块 ID 那一行顶格，不算缩进层级
 		const w = indentWidth(l);
 		if (w1 < 0 || w < w1) w1 = w;
 	}
@@ -183,7 +214,8 @@ function organizeInner(lines) {
 	const lead = [], groups = [];                    // lead：块首行后面、第一个子项之前的空行
 	for (let i = 1; i < lines.length; i++) {
 		const l = lines[i];
-		if (isBlank(l)) { (groups.length ? groups[groups.length - 1] : lead).push(l); continue; }
+		// 空行、块 ID 那一行跟着上面的子项走
+		if (isBlank(l) || ID_LINE_RE.test(l)) { (groups.length ? groups[groups.length - 1] : lead).push(l); continue; }
 		if (indentWidth(l) === w1) groups.push([l]);
 		else if (groups.length) groups[groups.length - 1].push(l);
 	}
@@ -442,20 +474,272 @@ function diffChange(oldText, newText) {
 	return { from, to, text };
 }
 
+// 同上，但拆成好几处小改动（按行求最长公共子序列）：只动真的变了的那几行。
+// 一整段替换会把中间折叠着的块全部展开、页面跟着跳；拆开以后没动的行连折叠带位置都不变。
+// 太大（两边变动的行数相乘超过四百万）就退回一整段替换
+function diffChanges(oldText, newText) {
+	const a = oldText.split("\n"), b = newText.split("\n");
+	let s = 0;
+	while (s < a.length && s < b.length && a[s] === b[s]) s++;
+	if (s === a.length && s === b.length) return [];
+	let ea = a.length - 1, eb = b.length - 1;
+	while (ea >= s && eb >= s && a[ea] === b[eb]) { ea--; eb--; }
+	const n = ea - s + 1, m = eb - s + 1;
+	const whole = () => { const c = diffChange(oldText, newText); return c ? [c] : []; };
+	if (n === 0 || m === 0 || n * m > 4e6) return whole();
+	const W = m + 1, t = new Uint32Array((n + 1) * W);
+	for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) {
+		t[i * W + j] = a[s + i] === b[s + j] ? t[(i + 1) * W + j + 1] + 1 : Math.max(t[(i + 1) * W + j], t[i * W + j + 1]);
+	}
+	// 一段段「旧的第 i0…i1 行换成新的第 j0…j1 行」（都是左闭右开）
+	const hunks = [];
+	let i = 0, j = 0, cur = null;
+	const open = () => (cur ||= { i0: s + i, i1: s + i, j0: s + j, j1: s + j });
+	const close = () => { if (cur) { hunks.push(cur); cur = null; } };
+	while (i < n || j < m) {
+		if (i < n && j < m && a[s + i] === b[s + j]) { close(); i++; j++; }
+		else if (j < m && (i === n || t[i * W + j + 1] >= t[(i + 1) * W + j])) { open().j1 = s + ++j; }
+		else { open().i1 = s + ++i; }
+	}
+	close();
+	const out = [];
+	for (const h of hunks) {
+		const text = b.slice(h.j0, h.j1).join("\n");
+		if (h.i1 < a.length) {
+			// 后面还有旧行：整行整行地换，换行符跟着新的那几行走
+			out.push({ from: { line: h.i0, ch: 0 }, to: { line: h.i1, ch: 0 }, text: h.j1 > h.j0 ? text + "\n" : "" });
+		} else if (h.i0 < a.length && h.j1 > h.j0) {
+			out.push({ from: { line: h.i0, ch: 0 }, to: { line: a.length - 1, ch: a[a.length - 1].length }, text });
+		} else if (h.i0 < a.length) {
+			// 删到文末：连同前面那个换行
+			if (h.i0 === 0) return whole();
+			out.push({ from: { line: h.i0 - 1, ch: a[h.i0 - 1].length }, to: { line: a.length - 1, ch: a[a.length - 1].length }, text: "" });
+		} else {
+			out.push({ from: { line: a.length - 1, ch: a[a.length - 1].length }, to: { line: a.length - 1, ch: a[a.length - 1].length }, text: "\n" + text });
+		}
+	}
+	return out;
+}
+
 function applyText(editor, newText, cursor) {
-	const change = diffChange(editor.getValue(), newText);
-	if (!change) return false;
-	const tx = { changes: [change] };
+	const changes = diffChanges(editor.getValue(), newText);
+	if (!changes.length) return false;
+	const tx = { changes };
 	if (cursor) tx.selection = { from: cursor };
 	editor.transaction(tx);
 	return true;
 }
 
-const core = { parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, toggleQuadrant, diffChange, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
+const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, toggleQuadrant, diffChange, diffChanges, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
+
+// ---------- 发送去向 ----------
+const execFile = (cmd, args, timeout = 30000, env = undefined) => new Promise((ok) => {
+	try { require("child_process").execFile(cmd, args, { timeout, env }, (err, out, errOut) => ok({ ok: !err, out: String(out || "").trim(), err: String(errOut || (err && err.message) || "").trim() })); }
+	catch (e) { ok({ ok: false, out: "", err: String(e) }); }
+});
+const shq = (x) => `'${String(x).replace(/'/g, `'\\''`)}'`;                 // 给 shell 的单引号串
+const asStr = (x) => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r?\n/g, "\\n")}"`;   // 给 AppleScript 的字符串
+
+// 一块里要发给 Agent 的子项：记号行（🔗 / ⏱ / 💬）不发过去
+const contentOf = (g) => g.kids.filter((l) => !MARK_LINE_RE.test(l));
+// 从访达启动的 Obsidian 拿不到终端里的 PATH：先看几个常见的安装位置
+const findBin = (name) => {
+	const fs = require("fs"), home = require("os").homedir();
+	return [`${home}/.local/bin`, "/opt/homebrew/bin", "/usr/local/bin", `${home}/.npm-global/bin`, `${home}/.bun/bin`, "/usr/bin"].map((d) => `${d}/${name}`).find((p) => fs.existsSync(p)) || name;
+};
+// 在「终端」里各开一个窗口运行这几条命令（一条命令一个窗口）
+const claudeScript = (cmds) => `tell application "Terminal"\nactivate\n${cmds.map((c) => `do script ${asStr(c)}`).join("\n")}\nend tell`;
+
+// 一行任务的正文：去掉列表符号、**07:37** 记录点、复选框、关键字和紧跟的时刻 / 时间段
+// keepPlan = true 时，开头写的计划时间（TODO 14:00-15:30 …）留着，只去掉 DOING / DONE 后面那种记录下来的时刻
+function plainText(line, keepPlan = false) {
+	const m = line.match(ITEM_RE);
+	let rest = (m ? m[2] : line.trim()).replace(STAMP_RE, "").replace(CHECKBOX_RE, "");
+	const k = rest.match(KEYWORD_RE);
+	if (k) rest = rest.slice(k[0].length);
+	if (!keepPlan || (k && /^(DOING|NOW|IN-PROGRESS|DONE)$/.test(k[1]))) rest = rest.replace(TIME_OR_RANGE_RE, "");
+	return rest.replace(FROM_RE, "").replace(/\s+\^[A-Za-z0-9-]+$/, "").trim();
+}
+
+// 一个时刻：14:00、8pm、8:00pm、7 am（三组：时、分、a / p）
+const CLOCK = String.raw`(\d{1,2})(?:[:：](\d{2}))?(?:\s*([ap])\.?m\.?(?![a-z]))?`;
+const CLOCK_RANGE_RE = new RegExp(String.raw`(?<![\w:：.])${CLOCK}\s*(?:[-–—~～]|到|至)\s*${CLOCK}(?![\d:：])`, "gi");
+const CLOCK_RE = new RegExp(String.raw`(?<![\w:：.])${CLOCK}(?![\d:：])`, "gi");
+
+// 时、分、a / p → 当天第几分钟；不是个时刻返回 null。12am 是 0 点，12pm 是中午；14:00pm 这种按 24 小时算
+function clockMinutes(h, m, ap) {
+	h = +h; m = +(m || 0);
+	if (h > 23 || m > 59) return null;
+	if (ap && h >= 1 && h <= 12) h = (h % 12) + (/p/i.test(ap) ? 12 : 0);
+	return h * 60 + m;
+}
+
+// 从一段话里找出时刻：{ start, end }（当天第几分钟），没有就是 null
+//   起止：「14:00-15:30」「14:00 到 15:30」「7am-9am」「8-10pm」；单独一个「14:00」「8pm」「8:00pm」算一小时
+//   光一个数字不算（「3-5」「10-14」）：要么写了分钟，要么写了 am / pm
+//   起止里只有一头写了 am / pm：另一头先跟它一样，顺序不对再换成另一半天（10-2pm = 上午 10 点到下午 2 点）
+function timeIn(text) {
+	const flip = (ap) => (/p/i.test(ap) ? "a" : "p");
+	for (const [, h1, m1, a1, h2, m2, a2] of text.matchAll(CLOCK_RANGE_RE)) {
+		if (!(m1 || a1 || a2) || !(m2 || a2)) continue;
+		let start = clockMinutes(h1, m1, a1 || a2), end = clockMinutes(h2, m2, a2 || a1);
+		if (start === null || end === null) continue;
+		if (end <= start && !a1 && a2) start = clockMinutes(h1, m1, flip(a2));
+		else if (end <= start && a1 && !a2) end = clockMinutes(h2, m2, flip(a1));
+		if (end <= start) end += 1440;
+		return { start, end };
+	}
+	for (const [, h, m, ap] of text.matchAll(CLOCK_RE)) {
+		const start = m || ap ? clockMinutes(h, m, ap) : null;
+		if (start !== null) return { start, end: start + 60 };
+	}
+	return null;
+}
+
+// 写明了日期的：任务下面一行的「SCHEDULED: <2026-10-14 Wed 19:30>」「DEADLINE: <…>」（TODOseq / Logseq 的写法，
+// 尖括号、方括号都认，后面的重复规则 .+1d 不管），和行里的「⏳ 2026-10-14」「📅 2026-10-14」
+const PLAN_LINE_RE = /^[ \t>]*(SCHEDULED|DEADLINE):\s*[<\[]\s*(\d{4})-(\d{1,2})-(\d{1,2})([^>\]]*)[>\]]/;
+const PLAN_MARK_RE = /(⏳|📅)️?\s*(\d{4})-(\d{1,2})-(\d{1,2})/gu;
+
+// lines = 一块（首行 + 跟着的行）。返回 { date, time: { start, end } 或 null }，没写就是 null。
+// 只看这一项自己的（到第一个子项为止）；先认计划哪天做（SCHEDULED、⏳），没有再认截止（DEADLINE、📅）
+function planOf(lines) {
+	const at = (m, time) => ({ date: new Date(+m[2], +m[3] - 1, +m[4]), time });
+	const found = {};
+	for (let i = 1; i < lines.length && !ITEM_LINE_RE.test(lines[i]); i++) {
+		const m = PLAN_LINE_RE.exec(lines[i]);
+		if (m) found[m[1]] ||= at(m, timeIn(m[5]));
+	}
+	for (const m of lines[0].matchAll(PLAN_MARK_RE)) found[m[1]] ||= at(m, null);
+	return found.SCHEDULED || found["⏳"] || found.DEADLINE || found["📅"] || null;
+}
+
+// 这一块什么时候：{ date: Date（那天 0 点）, start / end: 当天第几分钟或 null, dayGiven: 知不知道是哪天, dated: 这一块自己说了哪天 }
+//   lines = 一块（首行 + 跟着的行），只给首行那一行字也行
+//   哪天：SCHEDULED / DEADLINE / ⏳ / 📅 写的日期；没有就看行里的「明天 / 后天 / 大后天」；再没有就是这篇日记的那一天，不在日记里就是今天
+//   几点：SCHEDULED / DEADLINE 里写了就用它的；没写就看这一行里的（见 timeIn）。DOING / DONE 后面紧跟的时刻是记录，不算
+function whenOf(lines, fileName, now = new Date()) {
+	if (typeof lines === "string") lines = [lines];
+	const text = plainText(lines[0], true).replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "");
+	const jm = JOURNAL_NAME_RE.exec(fileName || "");
+	const base = jm ? new Date(+jm[1], +jm[2] - 1, +jm[3]) : new Date(now.getFullYear(), now.getMonth(), now.getDate());
+	const plan = planOf(lines);
+	const dw = plan ? null : DAY_WORD_RE.exec(text);
+	const date = plan ? plan.date : new Date(base.getFullYear(), base.getMonth(), base.getDate() + (dw ? DAY_OFFSET[dw[0]] : 0));
+	const t = (plan && plan.time) || timeIn(text.replace(/\d{4}-\d{1,2}-\d{1,2}/g, " "));   // 日期里的数字不当时刻看
+	return { date, start: t ? t.start : null, end: t ? t.end : null, dayGiven: !!plan || !!dw || !!jm, dated: !!plan || !!dw };
+}
+
+// AppleScript 里造一个日期：从 current date 改年月日时分，不依赖系统的日期格式
+const asDate = (name, d, minutes) => [
+	`set ${name} to current date`, `set day of ${name} to 1`, `set year of ${name} to ${d.getFullYear()}`, `set month of ${name} to ${d.getMonth() + 1}`,
+	`set day of ${name} to ${d.getDate()}`, `set time of ${name} to ${Math.round((minutes || 0) * 60)}`].join("\n");
+
+// 发到日历：有时刻的是定时事件，没有的是全天事件
+function calendarScript({ title, notes, when, calendar }) {
+	const allDay = when.start === null;
+	const target = calendar ? `calendar ${asStr(calendar)}` : "(first calendar whose writable is true)";
+	return [asDate("s", when.date, allDay ? 0 : when.start), asDate("e", when.date, allDay ? 0 : when.end),
+		`tell application "Calendar"`, `tell ${target}`,
+		`set ev to make new event with properties {summary:${asStr(title)}, start date:s, end date:e, allday event:${allDay}, description:${asStr(notes)}}`,
+		`return name of it`, `end tell`, `end tell`].join("\n");
+}
+
+// 发到提醒事项：有时刻的到点提醒；只说了哪天（行里写了明天这类词，或者 SCHEDULED / ⏳ 这类日期）的记成那天的全天提醒；都没有就不设日期
+function remindersScript({ title, notes, when, list, dated }) {
+	const props = [`name:${asStr(title)}`, `body:${asStr(notes)}`];
+	const pre = [];
+	if (when.start !== null) { pre.push(asDate("d", when.date, when.start)); props.push("due date:d"); }
+	else if (dated) { pre.push(asDate("d", when.date, 0)); props.push("allday due date:d"); }
+	const target = list ? `list ${asStr(list)}` : "default list";
+	return [...pre, `tell application "Reminders"`, `tell ${target}`, `make new reminder with properties {${props.join(", ")}}`, `return name of it`, `end tell`, `end tell`].join("\n");
+}
+
+// 发到 MD Flow 的中转笔记长什么样：这一块自己是标题，直接子项各成一段，再往下的照旧是列表
+function mdflowText(lines) {
+	const title = plainText(lines[0]);
+	const kids = lines.slice(1).filter((l) => !ID_LINE_RE.test(l));
+	if (!kids.some((l) => !isBlank(l))) return title + "\n";
+	const w = Math.min(...kids.filter((l) => !isBlank(l)).map(indentWidth));
+	const body = [];
+	for (const l of kids) {
+		if (isBlank(l)) { body.push(""); continue; }
+		const d = dedent(l, w), m = /^[ \t]/.test(d) ? null : d.match(ITEM_RE);
+		if (m) body.push("", plainText(d));
+		else body.push(d.replace(/^\t/, "").replace(/^ {1,4}/, ""));
+	}
+	return `# ${title}\n${body.join("\n")}\n`.replace(/\n{3,}/g, "\n\n");
+}
+
+class SendModal extends FuzzySuggestModal {
+	constructor(plugin, editor, file) {
+		super(plugin.app);
+		this.plugin = plugin; this.editor = editor; this.file = file;
+		// 选中了几块并列的：只有写了 many 的去向会几块一起发，其余的还是只发光标所在的那一块
+		this.many = (plugin.pickedStarts(editor) || []).length;
+		this.setPlaceholder(this.many > 1 ? `选中了 ${this.many} 块：发给 Claude CLI 是各开一个会话，其它去向只发光标所在的那一块` : "这一块发到哪儿…");
+	}
+	getItems() { return this.plugin.directions().filter((d) => !d.desktop || (Platform && Platform.isDesktopApp)); }
+	getItemText(d) { return `${d.icon} ${d.name}　${this.many > 1 && d.many ? d.many(this.many) : d.desc}`; }
+	onChooseItem(d) { d.run(this.editor, this.file); }
+}
+
+// 选一个在后台无头跑着的会话停掉
+class StopModal extends FuzzySuggestModal {
+	constructor(app, items, done) {
+		super(app);
+		this.items = items; this.done = done;
+		this.setPlaceholder("停掉哪一个…");
+	}
+	getItems() { return this.items; }
+	getItemText(x) { return `${x.title}　${x.sid.slice(0, 8)}`; }
+	onChooseItem(x) { this.done(x); }
+}
+
+// 选一个 MD Flow 的模板
+class TemplateModal extends FuzzySuggestModal {
+	constructor(app, items, current, done) {
+		super(app);
+		this.items = items; this.current = current; this.done = done;
+		this.setPlaceholder("用哪个模板排…");
+	}
+	getItems() { return this.items; }
+	getItemText(t) { return `${t.name}${t.id === this.current ? "（现在用的）" : ""}　${t.id}`; }
+	onChooseItem(t) { this.done(t); }
+}
+
+class SendSettings extends PluginSettingTab {
+	constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
+	display() {
+		const { containerEl } = this, s = this.plugin.settings;
+		containerEl.empty();
+		const text = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
+			.addText((t) => t.setPlaceholder(placeholder || "").setValue(s[key] || "").onChange(async (v) => { s[key] = v.trim(); await this.plugin.saveData(s); }));
+		new Setting(containerEl).setName("发给 Claude CLI").setHeading();
+		text("运行的命令", "在「终端」里运行它，后面跟上这一块的内容当第一句话。换成 codex 也行", "claudeCommand", "claude");
+		text("在哪个目录里运行", "留空 = 这个库的根目录。可以写 ~/某个目录", "claudeCwd", "留空用库的根目录");
+		new Setting(containerEl).setName("发出去以后改成 DOING").setDesc("这一行原来是 TODO 的话改成 DOING 并记下时刻。没有任务关键字的块不动")
+			.addToggle((t) => t.setValue(s.claudeMarkDoing !== false).onChange(async (v) => { s.claudeMarkDoing = v; await this.plugin.saveData(s); }));
+		new Setting(containerEl).setName("记下是哪个会话").setDesc("命令是 claude 的时候：发出去前替这个会话定好会话号、用这一行的字起名，并在这一行下面记一行「🔗 [Claude：名字](claude://…)」。螺旋日程的进度条靠它直接认这个会话，不用再按名字去对")
+			.addToggle((t) => t.setValue(s.claudeLink !== false).onChange(async (v) => { s.claudeLink = v; await this.plugin.saveData(s); }));
+		text("一次最多发几块", "选中几块并列的再发、或者按子块发，每块各开一个会话。超过这个数就不发，免得误选一大片", "claudeMaxParallel", String(DEFAULTS.claudeMaxParallel));
+		new Setting(containerEl).setName("会话跑在哪儿").setDesc("终端窗口：macOS 自带的「终端」，一个会话一个窗口。tmux 后台：桌面上什么都不弹，想看、想答话时在随便哪个终端里 tmux attach（要先装 tmux）。无头：claude -p，没有窗口，答完一轮就退出，只在大纲里看进度条和它最后说的话")
+			.addDropdown((d) => d.addOption("terminal", "终端窗口").addOption("tmux", "tmux 后台").addOption("headless", "无头（claude -p）").setValue(["tmux", "headless"].includes(s.claudeRun) ? s.claudeRun : "terminal")
+				.onChange(async (v) => { s.claudeRun = v; await this.plugin.saveData(s); }));
+		text("tmux 会话的名字", "跑在 tmux 后台时，会话都开在这个 tmux 会话里（没有就建），一个 Agent 会话一个窗口。进去看：tmux attach -t 这个名字", "claudeTmuxSession", DEFAULTS.claudeTmuxSession);
+		text("无头跑时多带的参数", "无头的时候没人能替它点「允许」：不给权限它只能读、不能改文件也不能跑命令。要它动手就写在这里，比如 --permission-mode acceptEdits", "claudeHeadlessArgs", "留空 = 只读");
+		new Setting(containerEl).setName("发到日历和提醒事项").setHeading();
+		text("日历", "macOS「日历」里那个日历的名字。留空 = 第一个能写的日历", "calendar", "留空用第一个能写的");
+		text("提醒事项的列表", "macOS「提醒事项」里那个列表的名字。留空 = 默认列表", "remindersList", "留空用默认列表");
+		new Setting(containerEl).setName("发到 MD Flow").setHeading();
+		text("中转笔记", "这一块先写进这篇笔记（每次覆盖），再打开 MD Flow 的面板来排", "mdflowNote", DEFAULTS.mdflowNote);
+	}
+}
 
 module.exports = class DoneToTopPlugin extends Plugin {
-	onload() {
+	async onload() {
 		this.core = core;
+		this.settings = Object.assign({}, DEFAULTS, await this.loadData());
 		this.addCommand({
 			id: "mark-done-and-move-to-top",
 			name: "标记 DONE 并移到页面顶部",
@@ -517,6 +801,19 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			hotkeys: [{ modifiers: ["Alt"], key: "3" }],
 			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file, "tomorrow"),
 		});
+		// 发送：光标所在块（连同子项）发到别处。「发送这一块到…」列出全部去向；每个去向也各有一条命令，可以单独绑快捷键
+		this.addCommand({
+			id: "send-block",
+			name: "发送这一块到…（顶部 / 明天 / Claude CLI / 子块各开一个会话 / Claudian / MD Flow / 日历 / 提醒事项）",
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "s" }],
+			editorCallback: (editor, ctx) => new SendModal(this, editor, ctx && ctx.file).open(),
+		});
+		for (const d of this.directions()) {
+			if (!d.command) continue;
+			this.addCommand({ id: d.command, name: `发送到 ${d.name}：${d.desc}`, editorCallback: (editor, ctx) => d.run(editor, ctx && ctx.file) });
+		}
+		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
+		this.addSettingTab(new SendSettings(this.app, this));
 		// 不给默认快捷键，免得误按；要用就在「设置 → 快捷键」里自己绑
 		this.addCommand({
 			id: "delete-rest",
@@ -594,6 +891,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		editor.transaction({ changes: [{ from, to: { line: editor.lastLine(), ch: editor.getLine(editor.lastLine()).length }, text: "" }] });
 		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
 		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+		this.cue("DONE");
 		const tops = moved.filter((l) => !isBlank(l) && !/^\s/.test(l) && !isSep(l)).length;
 		new Notice(`➡️ 已追加到${dayLabel}（${to.name}）：${tops} 块，共 ${orig.length} 行`);
 	}
@@ -602,9 +900,10 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	restStart(lines, cursorLine) {
 		const bodyStart = topInsertLine(lines);
 		let start = Math.max(cursorLine, bodyStart);
-		if (start > bodyStart && !isBlank(lines[start]) && /^\s/.test(lines[start])) {
+		const tails = (l) => /^\s/.test(l) || ID_LINE_RE.test(l);   // 续行，或者块 ID 那一行
+		if (start > bodyStart && !isBlank(lines[start]) && tails(lines[start])) {
 			let i = start;
-			while (i > bodyStart && !ITEM_RE.test(lines[i]) && (isBlank(lines[i]) || /^\s/.test(lines[i]))) i--;
+			while (i > bodyStart && !ITEM_RE.test(lines[i]) && (isBlank(lines[i]) || tails(lines[i]))) i--;
 			if (ITEM_RE.test(lines[i])) start = i;
 		}
 		return start;
@@ -622,6 +921,307 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const next = Math.max(0, Math.min(start - 1, editor.lastLine()));
 		editor.setCursor({ line: next, ch: editor.getLine(next).length });
 		new Notice(`🗑 已删除以下全部：${count} 行（⌘Z 可撤回）`);
+	}
+
+	// 全部去向。command = 单独那条命令的 id（没有的是别处已经有命令了）；desktop = 只在桌面端有
+	directions() {
+		return [
+			{ icon: "⬆️", name: "页面顶部", desc: "整块移到这篇笔记最上面", run: (ed) => this.run(ed, false) },
+			{ icon: "➡️", name: "明天", desc: "整块移到明天的日记", run: (ed, f) => this.sendToTomorrow(ed, f) },
+			{ icon: "🤖", name: "Claude CLI", desc: "在终端里开一个会话，这一块当第一句话", command: "send-block-to-claude", desktop: true, many: (n) => `选中的 ${n} 块各开一个会话（并列 = 并发）`, run: (ed, f) => this.sendToClaude(ed, f) },
+			{ icon: "🧩", name: "Claude CLI · 子块各开一个", desc: "母块当共同背景，它的每个子块各开一个会话（纵深 = 子会话）", command: "send-kids-to-claude", desktop: true, run: (ed, f) => this.sendKidsToClaude(ed, f) },
+			{ icon: "✏️", name: "Claudian Inline edit", desc: "选中整块，叫出 Claudian 的行内编辑", command: "send-block-to-claudian", desktop: true, run: (ed) => this.sendToClaudian(ed) },
+			{ icon: "🖼", name: "MD Flow", desc: "写进中转笔记，选一个模板，打开排版面板", command: "send-block-to-mdflow", desktop: true, run: (ed, f) => this.sendToMdflow(ed, f) },
+			{ icon: "📅", name: "日历", desc: "在 macOS 日历里建一个事件", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
+			{ icon: "☑️", name: "提醒事项", desc: "在 macOS 提醒事项里建一条", command: "send-block-to-reminders", desktop: true, run: (ed, f) => this.sendToReminders(ed, f) },
+		];
+	}
+
+	// 光标所在块（连同子项），去掉了它自己那一层缩进。块 ID 那一行不带（那是给闪卡插件看的）
+	grab(editor) {
+		const g = this.grabAt(editor.getValue().split("\n"), editor.getCursor().line);
+		if (!g) { new Notice("光标不在列表项里"); return null; }
+		if (!g.title) { new Notice("这一块是空的"); return null; }
+		return g;
+	}
+	// 第 at 行所在的那一块。不在列表项里返回 null；title 为空 = 这一块是空的
+	grabAt(lines, at) {
+		const b = this.blockAt(lines, at);
+		if (!b) return null;
+		const block = lines.slice(b.start, b.end + 1).map((l) => (isBlank(l) ? "" : dedent(l, b.baseIndent))).filter((l) => !ID_LINE_RE.test(l));
+		while (block.length > 1 && isBlank(block[block.length - 1])) block.pop();
+		const title = plainText(block[0]);
+		// 子项去掉它们共有的那一层缩进：发出去的文字里，直接子项是顶格的列表
+		const rest = block.slice(1), w = Math.min(...rest.filter((l) => !isBlank(l)).map(indentWidth), Infinity);
+		const kids = rest.map((l) => (isBlank(l) || !isFinite(w) ? l : dedent(l, w)));
+		return { ...b, raw: lines[b.start], block, title, kids };
+	}
+	// 选区里并列的几块，各自第一行的行号：起始行落在选区里、缩进最浅的那一层列表项，各算一块（子项跟着它走）；
+	// 分隔线、🔗 / ⏱ 记号行不算。选区只落在一行里（或者根本没选）返回 null，按光标所在的那一块办
+	pickedStarts(editor) {
+		const picked = new Set();
+		for (const { anchor, head } of (editor.listSelections ? editor.listSelections() : [])) {
+			const [a, b] = anchor.line < head.line || (anchor.line === head.line && anchor.ch <= head.ch) ? [anchor, head] : [head, anchor];
+			const last = b.line > a.line && b.ch === 0 ? b.line - 1 : b.line;   // 选区停在下一行的行首：那一行不算
+			for (let i = a.line; i <= last; i++) picked.add(i);
+		}
+		if (picked.size < 2) return null;
+		const lines = editor.getValue().split("\n"), body = topInsertLine(lines);
+		const items = [...picked].sort((x, y) => x - y).filter((i) => i >= body && BULLET_RE.test(lines[i]) && !ANY_SEP_RE.test(lines[i]) && !MARK_LINE_RE.test(lines[i]));
+		if (!items.length) return null;
+		const w = Math.min(...items.map((i) => indentWidth(lines[i])));
+		return items.filter((i) => indentWidth(lines[i]) === w);
+	}
+	// 发出去的那一下响一声：name = "DOING" / "DONE"，就是螺旋日程里任务切到这个状态时的那一声，开关也跟它走；没装螺旋日程就不响。
+	// changed = 这一下顺带把状态改成了 name 的那几行（改完以后的样子）：先跟螺旋日程登记，不然它看到这次状态变化还会再响一遍。
+	// 所以要在改编辑器之前调
+	cue(name, changed = []) {
+		const sp = this.app.plugins?.plugins?.["nautilus-spiral"];
+		if (!sp || typeof sp.sound !== "function") return;
+		const kwLine = sp.constructor && sp.constructor.core && sp.constructor.core.kwLine;
+		if (changed.length && kwLine && typeof sp.kwFresh === "function") {
+			const file = this.app.workspace.activeEditor?.file ?? this.app.workspace.getActiveFile();
+			sp.kwFresh(file ? file.path : "", changed.map((l) => ({ body: (kwLine(l) || {}).body, to: name })).filter((c) => c.body));
+		}
+		sp.sound(name);
+	}
+	desktopOnly() {
+		if (Platform && Platform.isDesktopApp) return true;
+		new Notice("这个去向只在电脑上有");
+		return false;
+	}
+	// 点了能回到这一块所在笔记的链接（写进日历事件、提醒事项的备注里）
+	backLink(file) {
+		return file ? `obsidian://open?vault=${encodeURIComponent(this.app.vault.getName())}&file=${encodeURIComponent(file.path)}` : "";
+	}
+	notesOf(g, file) {
+		const kids = g.kids.filter((l) => !PLAN_LINE_RE.test(l));   // SCHEDULED / DEADLINE 那一行已经成了事件的时间，不进备注
+		return [kids.join("\n"), this.backLink(file)].filter((x) => x && x.trim()).join("\n\n");
+	}
+
+	// 发给 Claude CLI：进到设置的目录，运行 claude '这一块的内容'（跑在哪儿见 dispatchClaude）。
+	// 并列 = 并发：选中了几块并列的，每块各开一个会话、各写各的 🔗（做完的那几块跳过）
+	async sendToClaude(editor, file) {
+		if (!this.desktopOnly()) return;
+		const lines = editor.getValue().split("\n");
+		const starts = this.pickedStarts(editor);
+		let gs, skipped = 0;
+		if (starts && starts.length > 1) {
+			const all = starts.map((i) => this.grabAt(lines, i)).filter((g) => g && g.title);
+			gs = all.filter((g) => itemZone(g.raw) !== "DONE");
+			skipped = all.length - gs.length;
+			if (!gs.length) return new Notice("选中的几块都是做完了的，没有发");
+		} else {
+			// 选区只圈住了一块（母项连同子项）：发的是圈住的那一块，不是光标停着的那个子项
+			const g = starts ? this.grabAt(lines, starts[0]) : this.grab(editor);
+			if (!g) return;
+			if (!g.title) return new Notice("这一块是空的");
+			gs = [g];
+		}
+		return this.dispatchClaude(editor, gs.map((g) => ({ g, prompt: [g.title, ...contentOf(g)].join("\n") })), { skipped });
+	}
+
+	// 纵深 = 子会话：光标所在的母块不整块发，它的每个直接子块各开一个会话；母块的字是每个会话开头都带的共同背景。
+	// 🔗 记在各个子块下面，所以进度条、会话最后说的话（💬）也都回到各自的子块下面。做完的子块、记号行、分隔线跳过
+	async sendKidsToClaude(editor, file) {
+		if (!this.desktopOnly()) return;
+		const lines = editor.getValue().split("\n");
+		const starts = this.pickedStarts(editor);
+		if (starts && starts.length > 1) return new Notice("母块一次发一个：把光标放在母块上，不要选中好几块");
+		const top = starts ? this.grabAt(lines, starts[0]) : this.grab(editor);
+		if (!top) return;
+		if (!top.title) return new Notice("这一块是空的");
+		const inner = [];
+		for (let i = top.start + 1; i <= top.end; i++) if (BULLET_RE.test(lines[i]) && !ANY_SEP_RE.test(lines[i]) && !MARK_LINE_RE.test(lines[i])) inner.push(i);
+		if (!inner.length) return new Notice("这一块下面没有子块。只发这一块，用「Claude CLI」那个去向");
+		const w = Math.min(...inner.map((i) => indentWidth(lines[i])));
+		const all = inner.filter((i) => indentWidth(lines[i]) === w).map((i) => this.grabAt(lines, i)).filter((g) => g && g.title);
+		const gs = all.filter((g) => itemZone(g.raw) !== "DONE");
+		if (!gs.length) return new Notice("子块都是做完了的，没有发");
+		const jobs = gs.map((g) => ({ g, prompt: [
+			`背景：这是「${top.title}」里的一项。`,
+			...(gs.length > 1 ? [`同一件事里别的几项另有会话在做，不用你管：${gs.filter((o) => o !== g).map((o) => o.title).join("；")}`] : []),
+			"", "你要做的这一项：", g.title, ...contentOf(g)].join("\n") }));
+		return this.dispatchClaude(editor, jobs, { skipped: all.length - gs.length, parent: top });
+	}
+
+	// 把几块各开成一个会话。jobs = [{ g: 那一块, prompt: 第一句话 }]；parent = 它们共同的母块（按子会话发的时候）。
+	// 命令是 claude 的时候，先替每个会话定好会话号（--session-id）、用那一行的字起名（-n），再在那一行下面记一行
+	// 「🔗 [Claude：名字](claude://resume?session=会话号)」：会话还没开口，这一行和它就已经绑死了，螺旋日程的进度条直接听它。
+	// 跑在哪儿（设置 claudeRun）：terminal = macOS「终端」里一个会话一个窗口；tmux = 后台的 tmux 会话里一个会话一个窗口，
+	// 桌面上什么都不弹，想看、想答话时 tmux attach；headless = claude -p 在后台跑，答完一轮就退出，只在大纲里看进度条
+	async dispatchClaude(editor, jobs, { skipped = 0, parent = null } = {}) {
+		const s = this.settings;
+		const max = Math.max(1, parseInt(s.claudeMaxParallel, 10) || DEFAULTS.claudeMaxParallel);
+		if (jobs.length > max) return new Notice(`一共 ${jobs.length} 块，一次最多发 ${max} 块（设置里可以改），这次没有发`);
+		const bin = (s.claudeCommand || "claude").trim(), isClaude = /(^|\/)claude$/.test(bin.split(/\s+/)[0]);
+		const mode = ["tmux", "headless"].includes(s.claudeRun) ? s.claudeRun : "terminal";
+		if (mode === "headless" && !isClaude) return new Notice("无头的跑法只支持 claude 命令。换一种跑法，或者把命令改回 claude");
+		let cwd = (s.claudeCwd || "").trim() || (this.app.vault.adapter.getBasePath ? this.app.vault.adapter.getBasePath() : "");
+		if (cwd.startsWith("~")) cwd = require("os").homedir() + cwd.slice(1);
+		const linked = isClaude && (s.claudeLink !== false || mode === "headless");   // 无头的会话没有窗口可看，一定要记下是哪个
+		for (const j of jobs) {
+			j.sid = linked ? require("crypto").randomUUID() : "";
+			j.name = j.g.title.replace(/[\r\n]+/g, " ").slice(0, 60);
+			j.flags = j.sid ? ["--session-id", j.sid, "-n", j.name] : [];
+			j.cmd = `${cwd ? `cd ${shq(cwd)} && ` : ""}${bin}${j.sid ? ` --session-id ${j.sid} -n ${shq(j.name)}` : ""} ${shq(j.prompt)}`;
+		}
+		const doing = (raw) => (s.claudeMarkDoing !== false && itemZone(raw) === "TODO" ? mark(raw, "DOING") : raw);
+		// 这一声在发出去之前响：终端一打开 Obsidian 就不在最前面了，等它回来再响就听不到了
+		this.cue("DOING", [...jobs.map((j) => j.g.raw), ...(parent ? [parent.raw] : [])].filter((raw) => doing(raw) !== raw).map(doing));
+		const r = mode === "tmux" ? await this.runTmux(jobs, cwd) : mode === "headless" ? await this.runHeadless(jobs, cwd, bin)
+			: await execFile("/usr/bin/osascript", ["-e", claudeScript(jobs.map((j) => j.cmd))]);
+		if (!r.ok) { console.error("[done-to-top] 发给 Claude CLI 失败", r.err); return new Notice(mode === "tmux" ? `tmux 没跑起来：${r.err.slice(0, 120) || "详情见控制台"}` : mode === "headless" ? `后台没跑起来：${r.err.slice(0, 120) || "详情见控制台"}` : "没能打开终端。详情见控制台"); }
+		// 各块原地改：TODO 的那一行改成 DOING（不挪位置），下面记上 🔗。这期间被改过的那一行不动它
+		const now = editor.getValue().split("\n"), changes = [];
+		const spiral = this.app.plugins.plugins["nautilus-spiral"], sc = spiral && spiral.constructor && spiral.constructor.core;
+		let moved = 0;
+		for (const { g, sid, name } of jobs) {
+			if (now[g.start] !== g.raw) { moved++; continue; }
+			let line = doing(g.raw);
+			if (sid) {
+				const indent = (g.raw.match(/^[ \t]*/) || [""])[0] + "\t";
+				const link = sc && sc.linkLine ? sc.linkLine(indent, "claude", name, sid) : `${indent}- 🔗 [Claude：${name.replace(/[\[\]()`]+/g, " ").slice(0, 40)}](claude://resume?session=${sid})`;
+				// 以前发过、下面已经有一行 🔗：换成这次的
+				const had = sc && sc.linkUnder ? sc.linkUnder(now, g.start) : null;
+				if (had) changes.push({ from: { line: had.line, ch: 0 }, to: { line: had.line, ch: now[had.line].length }, text: link });
+				else line += "\n" + link;
+			}
+			if (line !== g.raw) changes.push({ from: { line: g.start, ch: 0 }, to: { line: g.start, ch: g.raw.length }, text: line });
+		}
+		// 母块自己：子块都发出去了，它也算开始做了（不记 🔗，会话是子块的）
+		if (parent && now[parent.start] === parent.raw && doing(parent.raw) !== parent.raw) changes.push({ from: { line: parent.start, ch: 0 }, to: { line: parent.start, ch: parent.raw.length }, text: doing(parent.raw) });
+		if (changes.length) editor.transaction({ changes: changes.sort((x, y) => x.from.line - y.from.line) });
+		const where = mode === "tmux" ? `\n在后台的 tmux 里跑，想看就在终端里：tmux attach -t ${this.tmuxSession()}` : mode === "headless" ? "\n在后台跑，进度看这一行下面的进度条" : "";
+		const tail = [skipped ? `跳过 ${skipped} 块做完了的` : "", moved ? `${moved} 块在这期间被改过，没有记 🔗` : ""].filter(Boolean).join("；");
+		if (jobs.length === 1 && !parent) new Notice(`🤖 已发给 ${bin}：${jobs[0].g.title.slice(0, 24)}${where}${tail ? `\n${tail}` : ""}`, where ? 8000 : undefined);
+		else new Notice(`🤖 已发给 ${bin}：${parent ? `「${parent.title.slice(0, 16)}」的 ${jobs.length} 个子块` : `${jobs.length} 块`}各开了一个会话\n${jobs.map((j) => `· ${j.g.title.slice(0, 24)}`).join("\n")}${where}${tail ? `\n${tail}` : ""}`, 8000);
+	}
+
+	tmuxSession() { return (this.settings.claudeTmuxSession || DEFAULTS.claudeTmuxSession).trim().replace(/[.:\s]+/g, "-") || DEFAULTS.claudeTmuxSession; }
+	// tmux 后台：设置里那个名字的 tmux 会话（没有就建），每个 Agent 会话是里面的一个窗口。命令交给登录 shell 跑（拿得到终端里的 PATH）；
+	// claude 没跑起来或者出错退出时窗口留着，能看到它说了什么；正常退出窗口就关了
+	async runTmux(jobs, cwd) {
+		const tmux = findBin("tmux"), shell = process.env.SHELL || "/bin/zsh", session = this.tmuxSession();
+		// 从访达启动的 Obsidian 没有 UTF-8 的语言环境，tmux 会把窗口名里的中文换成下划线：-u 加上 LC_CTYPE 让它按 UTF-8 来
+		const run = (args) => execFile(tmux, ["-u", ...args], 30000, { ...process.env, LC_CTYPE: process.env.LC_CTYPE || "en_US.UTF-8" });
+		let made = (await run(["has-session", "-t", `=${session}`])).ok;
+		for (const j of jobs) {
+			const inner = `${j.cmd} || { echo; echo '[块去向] 这个会话没跑起来，或者出错退出了。上面是它说的话'; exec ${shq(shell)} -l; }`;
+			const win = j.name.replace(/[.:]+/g, " ").slice(0, 24);
+			const args = made ? ["new-window", "-d", "-t", `=${session}:`, "-n", win] : ["new-session", "-d", "-s", session, "-n", win];
+			if (cwd) args.push("-c", cwd);
+			const r = await run([...args, `${shq(shell)} -lic ${shq(inner)}`]);
+			if (!r.ok) return r;
+			made = true;
+		}
+		return { ok: true };
+	}
+	// 无头：claude -p 在后台跑，不开任何窗口；答完一轮它就退出，说的话在会话日志里（螺旋日程读得到），也另存一份到缓存目录。
+	// 这种跑法没人能替它点「允许」，要它改文件、跑命令，在设置的「附加参数」里给权限（比如 --permission-mode acceptEdits）
+	async runHeadless(jobs, cwd, bin) {
+		const fs = require("fs"), path = require("path"), os = require("os");
+		const [prog, ...pre] = bin.split(/\s+/);
+		const exe = prog.includes("/") ? prog.replace(/^~(?=\/)/, os.homedir()) : findBin(prog);
+		const extra = (this.settings.claudeHeadlessArgs || "").trim().split(/\s+/).filter(Boolean);
+		const dir = path.join(os.homedir(), "Library/Caches/done-to-top");
+		const env = { ...process.env, PATH: [path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+		try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { return { ok: false, err: String(e) }; }
+		const running = (this.running ||= new Map());
+		for (const j of jobs) {
+			const log = path.join(dir, `${j.sid}.log`);
+			let child;
+			try {
+				const fd = fs.openSync(log, "a");
+				child = require("child_process").spawn(exe, [...pre, "-p", ...j.flags, ...extra, j.prompt], { cwd: cwd || undefined, env, detached: true, stdio: ["ignore", fd, fd] });
+				fs.closeSync(fd);
+			} catch (e) { return { ok: false, err: String(e && e.message || e) }; }
+			const title = j.g.title.slice(0, 24);
+			running.set(j.sid, { title, child, log });
+			child.on("error", (e) => { running.delete(j.sid); new Notice(`🤖 后台会话没跑起来：${title}\n${e.message}`, 10000); });
+			child.on("exit", (code, sig) => {
+				running.delete(j.sid);
+				if (!code && !sig) return new Notice(`🤖 后台会话答完了：${title}`);
+				let last = "";
+				try { last = fs.readFileSync(log, "utf8").trim().split("\n").pop().slice(0, 160); } catch (e) { /* 没有日志 */ }
+				new Notice(`🤖 后台会话${sig ? "被停掉了" : `出错退出了（${code}）`}：${title}${last ? `\n${last}` : ""}`, 10000);
+			});
+			child.unref();
+		}
+		return { ok: true };
+	}
+	// 停掉一个无头跑着的会话（只认这次打开 Obsidian 以后发出去的）
+	stopHeadless() {
+		const list = [...(this.running || new Map())].map(([sid, v]) => ({ sid, ...v }));
+		if (!list.length) return new Notice("现在没有在后台跑着的无头会话");
+		new StopModal(this.app, list, (x) => { try { x.child.kill(); } catch (e) { new Notice(`没停掉：${e.message}`); } }).open();
+	}
+
+	// 触发 Claudian 的 Inline edit：把整块（连同子项）选中，再叫它的命令
+	sendToClaudian(editor) {
+		const lines = editor.getValue().split("\n");
+		const b = this.blockAt(lines, editor.getCursor().line);
+		if (!b) return new Notice("光标不在列表项里");
+		if (!this.app.commands.commands["realclaudian:inline-edit"]) return new Notice("没找到 Claudian 的 Inline edit 命令（插件没开？）");
+		editor.setSelection({ line: b.start, ch: 0 }, { line: b.end, ch: lines[b.end].length });
+		this.cue("DOING");
+		this.app.commands.executeCommandById("realclaudian:inline-edit");
+	}
+
+	// 发到 MD Flow：选一个模板 → 这一块写进中转笔记 → 打开那篇笔记和 MD Flow 的面板
+	sendToMdflow(editor, file) {
+		if (!this.desktopOnly()) return;
+		const g = this.grab(editor);
+		if (!g) return;
+		const md = this.app.plugins.plugins["mdflow-local"] || this.app.plugins.plugins["mdflow"];
+		const rs = md && md.redNoteSettings;
+		if (!md || !rs || typeof rs.getTemplates !== "function") return new Notice("没找到 MD Flow 插件");
+		const cur = (rs.getSettings && rs.getSettings().templateId) || "";
+		(this.picker = new TemplateModal(this.app, rs.getTemplates(), cur, async (tpl) => {
+			try {
+				const path = (this.settings.mdflowNote || DEFAULTS.mdflowNote).replace(/^\/+/, "").replace(/(\.md)?$/, ".md");
+				const dir = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+				if (dir && !this.app.vault.getAbstractFileByPath(dir)) await this.app.vault.createFolder(dir).catch(() => {});
+				const text = mdflowText(g.block) + (file ? `\n<!-- 来自 [[${file.basename}]] -->\n` : "");
+				let note = this.app.vault.getAbstractFileByPath(path);
+				if (note) await this.app.vault.modify(note, text); else note = await this.app.vault.create(path, text);
+				if (tpl.id !== cur) await rs.update({ templateId: tpl.id });
+				await this.app.workspace.getLeaf("tab").openFile(note);
+				if (typeof md.activateView === "function") await md.activateView();
+				this.cue("DOING");
+				new Notice(`🖼 已发到 MD Flow（${tpl.name}）：${g.title.slice(0, 24)}`);
+			} catch (e) {
+				console.error("[done-to-top] 发到 MD Flow 失败", e);
+				new Notice("发到 MD Flow 失败。详情见控制台");
+			}
+		})).open();
+	}
+
+	// 发到 macOS 日历：标题是这一行的正文，备注是子项和回到这篇笔记的链接
+	async sendToCalendar(editor, file) {
+		if (!this.desktopOnly()) return;
+		const g = this.grab(editor);
+		if (!g) return;
+		const when = whenOf(g.block, file && file.basename);
+		const r = await execFile("/usr/bin/osascript", ["-e", calendarScript({ title: g.title, notes: this.notesOf(g, file), when, calendar: this.settings.calendar })]);
+		if (!r.ok) { console.error("[done-to-top] 发到日历失败", r.err); return new Notice(`没能写进日历${/-1743|not allowed|不允许/.test(r.err) ? "：先在「系统设置 → 隐私与安全性 → 自动化」里允许 Obsidian 控制日历" : "。详情见控制台"}`); }
+		this.cue("DONE");
+		const hm = (t) => `${pad(Math.floor(t / 60) % 24)}:${pad(t % 60)}`;
+		new Notice(`📅 已建事件（${r.out || "日历"}）：${when.date.getMonth() + 1}/${when.date.getDate()} ${when.start === null ? "全天" : `${hm(when.start)}–${hm(when.end)}`} ${g.title.slice(0, 24)}`);
+	}
+
+	// 发到 macOS 提醒事项
+	async sendToReminders(editor, file) {
+		if (!this.desktopOnly()) return;
+		const g = this.grab(editor);
+		if (!g) return;
+		const when = whenOf(g.block, file && file.basename);
+		const r = await execFile("/usr/bin/osascript", ["-e", remindersScript({ title: g.title, notes: this.notesOf(g, file), when, list: this.settings.remindersList, dated: when.dated })]);
+		if (!r.ok) { console.error("[done-to-top] 发到提醒事项失败", r.err); return new Notice(`没能写进提醒事项${/-1743|not allowed|不允许/.test(r.err) ? "：先在「系统设置 → 隐私与安全性 → 自动化」里允许 Obsidian 控制提醒事项" : "。详情见控制台"}`); }
+		this.cue("DONE");
+		const day = `${when.date.getMonth() + 1}/${when.date.getDate()}`;
+		const due = when.start !== null ? `${day} ${pad(Math.floor(when.start / 60))}:${pad(when.start % 60)} ` : when.dated ? `${day} ` : "";
+		new Notice(`☑️ 已加到提醒事项（${r.out || "默认列表"}）：${due}${g.title.slice(0, 24)}`);
 	}
 
 	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，行尾记上「← [[来源]]」
@@ -658,11 +1258,13 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		editor.transaction({ changes: [{ from, to: until, text: "" }] });
 		const next = Math.min(start, editor.lastLine());
 		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+		this.cue("DONE");
 		const label = orig[0].replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").slice(0, 24);
 		new Notice(`➡️ 已发送到明天（${to.name}）：${label}${orig.length > 1 ? `（含 ${orig.length - 1} 行子项）` : ""}`);
 	}
 
-	// 光标所在的列表项（光标在续行/空行时向上找）连同子项
+	// 光标所在的列表项（光标在续行/空行时向上找）连同子项。
+	// 单独占一行的块 ID（「^q-r7d4」这类，顶格写在卡片下面）也算在块里：这一项自己的、子项的都带上
 	blockAt(lines, cursorLine) {
 		let start = cursorLine;
 		while (start >= 0 && !BULLET_RE.test(lines[start])) start--;
@@ -670,18 +1272,44 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const baseIndent = indentWidth(lines[start]);
 		let end = start;
 		for (let i = start + 1; i < lines.length; i++) {
-			if (isBlank(lines[i]) || indentWidth(lines[i]) > baseIndent) end = i;
+			if (isBlank(lines[i]) || indentWidth(lines[i]) > baseIndent || ID_LINE_RE.test(lines[i])) end = i;
 			else break;
 		}
 		while (end > start && isBlank(lines[end])) end--;
+		if (end > start && this.idBelongsAbove(lines, start, end, baseIndent)) end--;
+		while (end > start && isBlank(lines[end])) end--;
 		return { start, end, baseIndent };
+	}
+
+	// 块末尾那一行块 ID 是不是上一级的：上一级是 #card 多行卡片（这一项连同子项是一张卡，ID 写在整块后面），
+	// 而这一块正好是它最后一个子项、自己又不是 #card —— 这个 ID 是那张卡的，留在原处
+	idBelongsAbove(lines, start, end, baseIndent) {
+		if (!ID_LINE_RE.test(lines[end]) || indentWidth(lines[end]) >= baseIndent) return false;
+		if (baseIndent === 0 || CARD_TAG_RE.test(lines[start])) return false;
+		// 块后面第一行真正的内容有多深：比某一级浅或一样，说明那一级也在这里结束
+		let after = -1;
+		for (let i = end + 1; i < lines.length; i++) {
+			if (isBlank(lines[i]) || ID_LINE_RE.test(lines[i])) continue;
+			after = indentWidth(lines[i]);
+			break;
+		}
+		let level = baseIndent;
+		for (let i = start - 1; i >= 0 && level > 0; i--) {
+			if (isBlank(lines[i]) || !BULLET_RE.test(lines[i]) && !ITEM_RE.test(lines[i])) continue;
+			const w = indentWidth(lines[i]);
+			if (w >= level) continue;
+			level = w;                               // 往上一级
+			if (after > w) return false;             // 这一级后面还有子项，卡片没在这里结束
+			if (CARD_TAG_RE.test(lines[i])) return true;
+		}
+		return false;
 	}
 
 	run(editor, markAsDone) {
 		const lines = editor.getValue().split("\n");
 		const b = this.blockAt(lines, editor.getCursor().line);
 		if (!b) {
-			new Notice("光标不在无序列表里");
+			new Notice("光标不在列表项里");
 			return;
 		}
 		const { start, end, baseIndent } = b;
@@ -691,24 +1319,47 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		if (markAsDone) block[0] = mark(block[0], "DONE");
 		const moved = block.map((l) => (isBlank(l) ? "" : dedent(l, baseIndent)));
 
-		// 一次性替换 [insertAt, end]，保证一次 Cmd+Z 就能撤销
+		// 一次事务（一次 ⌘Z 撤销）里两处小改动：顶部插进去、原处删掉。中间那段一个字不碰——
+		// 以前是把「页首到这一块」整段替换，中间折叠着的块（DONE 区）会全部展开，页面高度一变，光标就不在原来的地方了
 		const insertAt = topInsertLine(lines);
-		const between = start > insertAt ? lines.slice(insertAt, start) : [];
-		const newText = moved.concat(between).join("\n");
-		const from = { line: Math.min(insertAt, start), ch: 0 };
-		const to = { line: end, ch: lines[end].length };
-		editor.transaction({ changes: [{ from, to, text: newText }] });
+		if (start < insertAt) return;
+		const changes = start === insertAt
+			? [{ from: { line: start, ch: 0 }, to: { line: end, ch: lines[end].length }, text: moved.join("\n") }]
+			: [{ from: { line: insertAt, ch: 0 }, to: { line: insertAt, ch: 0 }, text: moved.join("\n") + "\n" },
+				{ from: { line: start - 1, ch: lines[start - 1].length }, to: { line: end, ch: lines[end].length }, text: "" }];
+		if (start === insertAt && moved.join("\n") === block.join("\n")) return;   // 已经在最上面，也不用改状态
+		// 光标落到原位置的下一项，方便连续处理（上面多了几行、这里少了几行，下一项的行号正好没变）
+		const next = Math.min(end + 1, lines.length - 1);
+		const nextLen = (next === end + 1 ? lines[next] : start === insertAt ? moved[moved.length - 1] : lines[start - 1] || "").length;
+		this.cue("DONE", block[0] !== lines[start] ? [block[0]] : []);   // 顶上是 DONE 栏：挪上去就是 DONE 那一声；⌘⇧D 顺带改了状态的，这一声就顶了螺旋日程那一声
+		this.keepInPlace(editor, start, next, () => editor.transaction({ changes, selection: { from: { line: next, ch: nextLen } } }));
+	}
 
-		// 光标落到原位置的下一项，方便连续处理
-		const next = Math.min(end + 1, editor.lineCount() - 1);
-		editor.setCursor({ line: next, ch: editor.getLine(next).length });
+	// 做一次改动，做完以后让第 after 行出现在屏幕上第 before 行原来的高度：页面不跳，眼睛不用重新找位置。
+	// 第 before 行本来就不在屏幕上、或者不是 CodeMirror 6 的编辑器，就只做改动
+	keepInPlace(editor, before, after, change) {
+		const cm = editor.cm;
+		let offset = null;
+		try {
+			if (cm && cm.coordsAtPos && cm.scrollDOM) {
+				const c = cm.coordsAtPos(editor.posToOffset({ line: before, ch: 0 })), box = cm.scrollDOM.getBoundingClientRect();
+				if (c && c.top >= box.top && c.bottom <= box.bottom) offset = c.top - box.top;
+			}
+		} catch (e) { /* 量不到就算了 */ }
+		change();
+		if (offset === null) return;
+		try {
+			const { EditorView } = require("@codemirror/view");
+			const line = Math.min(after, editor.lineCount() - 1);
+			cm.dispatch({ effects: EditorView.scrollIntoView(editor.posToOffset({ line, ch: 0 }), { y: "start", yMargin: offset }) });
+		} catch (e) { /* 滚不了就留在 CodeMirror 自己定的位置 */ }
 	}
 
 	moveTo(editor, zone) {
 		const lines = editor.getValue().split("\n");
 		const b = this.blockAt(lines, editor.getCursor().line);
 		if (!b) {
-			new Notice("光标不在无序列表里");
+			new Notice("光标不在列表项里");
 			return;
 		}
 		const { start, end, baseIndent } = b;
@@ -762,7 +1413,11 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		if (fm) folds.push(fm);
 		blocks.forEach((b, i) => {
 			if (b.sep || !(i < end || b.zone === "DONE")) return;
-			const n = trimBlock(b.lines).length;
+			// 顶格的块 ID 那一行不在 Obsidian 的折叠范围里：只折到它前面
+			const ls = trimBlock(b.lines);
+			const cut = ls.findIndex((l, k) => k > 0 && ID_LINE_RE.test(l) && !/^\s/.test(l));
+			let n = cut < 0 ? ls.length : cut;
+			while (n > 1 && isBlank(ls[n - 1])) n--;
 			if (n > 1) folds.push({ from: b.start, to: b.start + n - 1 });
 		});
 		mode.applyFoldInfo({ folds, lines: view.editor.lineCount() });

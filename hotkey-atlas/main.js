@@ -20,6 +20,7 @@ const CORE_NAMES = {
 
 // 情境快捷键：写死在插件里、只在某个场景下才生效（不是 Obsidian 命令）。按插件 id 登记；
 // 插件自己也可以在实例上挂 contextHotkeys = [{ keys, name, when }]，会优先用插件自己的
+const ALIAS = { "nautilus-spiral": "螺旋日程" };   // 清单里是英文名的自制插件，平时叫的中文名
 const CONTEXT = {
 	"roam-backlinks": [
 		{ keys: ["Mod+Enter", "Mod+S"], name: "保存就地编辑", when: "反链里就地编辑时" },
@@ -131,7 +132,8 @@ module.exports = class HotkeyAtlas extends Plugin {
 		const man = this.app.plugins.manifests[pid];
 		if (man) {
 			const a = man.author || "";
-			return { id: pid, name: man.name, source: /^马自立/.test(a) ? (/改自/.test(a) ? "mod" : "mine") : "community" };
+			// 公开发布的几个自制插件，清单里作者写的是 MatsuriMW、名字是英文：照样算自制，有中文名的把中文名放前面
+			return { id: pid, name: ALIAS[pid] ? `${ALIAS[pid]}（${man.name}）` : man.name, source: /^马自立/.test(a) ? (/改自/.test(a) ? "mod" : "mine") : /^MatsuriMW/.test(a) ? "mine" : "community" };
 		}
 		const ip = this.app.internalPlugins && this.app.internalPlugins.plugins[pid];
 		const name = (ip && ip.instance && ip.instance.name) || CORE_NAMES[pid] || pid;

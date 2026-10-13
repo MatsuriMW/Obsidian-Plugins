@@ -2561,3 +2561,24 @@
 .todoseq-dropdown .search-suggest-history-item:hover .suggestion-aux {
   opacity: 1;
 }
+
+/* ---------- 本地补丁：关键词按状态上色 ----------
+   往前走的（TODO / DOING / DONE）是蓝、红、绿；停下来的、没成的用偏暖偏灰的颜色，和状态音效的情绪对应。
+   整套都压低了饱和度（灰一点的雾蓝、砖红、鼠尾草绿…），长时间看不刺眼。
+   颜色只按浅色底调过。想换色改这里的 --tsq-kw 就行，发光描边跟着走。 */
+.todoseq-keyword-formatted[data-task-keyword] {
+  --tsq-kw: var(--interactive-accent);
+  color: var(--tsq-kw);
+}
+:is(.cm-editor, .markdown-preview-view) .todoseq-keyword-formatted[data-task-keyword],
+.markdown-source-view .table-cell-wrapper .todoseq-keyword-formatted[data-task-keyword] {
+  text-shadow: 0 0 1px color-mix(in srgb, var(--tsq-kw) 25%, transparent);
+}
+.todoseq-keyword-formatted:is([data-task-keyword='TODO'], [data-task-keyword='LATER']) { --tsq-kw: #5c86b4; }
+.todoseq-keyword-formatted:is([data-task-keyword='DOING'], [data-task-keyword='NOW'], [data-task-keyword='IN-PROGRESS']) { --tsq-kw: #c8635f; }
+.todoseq-keyword-formatted[data-task-keyword='DONE'] { --tsq-kw: #629c7f; }
+.todoseq-keyword-formatted[data-task-keyword='PAUSED'] { --tsq-kw: #b8934f; }
+.todoseq-keyword-formatted:is([data-task-keyword='WAITING'], [data-task-keyword='WAIT']) { --tsq-kw: #8f7fb6; }
+.todoseq-keyword-formatted[data-task-keyword='SUSPENDED'] { --tsq-kw: #a17f66; }
+.todoseq-keyword-formatted:is([data-task-keyword='CANCELLED'], [data-task-keyword='CANCELED']) { --tsq-kw: #a4a8ac; }
+.todoseq-keyword-formatted[data-task-keyword='FAILED'] { --tsq-kw: #93606b; }

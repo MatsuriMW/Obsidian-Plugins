@@ -1,4 +1,9 @@
-/* 日记整理：手动触发（快捷键 / 命令 / 左侧按钮），不会自动运行。
+/* 日记整理：整理由你手动触发（快捷键 / 命令 / 左侧按钮），分两种方式。
+ *
+ * 基础整理（纯本地，马上完成）：下面的 1 和 3，整理完把 DONE 区折起来。
+ * 进阶整理（要问本机的 Claude，一两分钟）：先做一遍基础整理，再做 2、4、5、6。
+ *
+ * 另有一件自己在后台做的事：你在 Claude 桌面 app 里归档一个会话，今天的日记里记一笔（见文件后面「归档记一笔」）。
  *
  * 1. 任务分区：顶格任务块（连同子块）按状态排成 DONE → DOING → TODO → 没状态的（原样在最下面），区之间用「- ---」隔开。
  *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
@@ -11,6 +16,16 @@
  *
  * 3. SuperTag 字段：列表项里写了 [[标签名]]（比如「- [[菜谱]]毛血旺」），而 SuperTags 插件给这个标签定义了字段，
  *    就把还没有的字段作为子项「键:: 默认值」插在这一项下面（比如「学会:: 否」），留给你填。已经有的字段不重复插。
+ *
+ * 4. 机器行按主题归类：全篇机器写的行（🤖 开头的任务行）超过门槛（默认 10 条）时，把顶格的、已经 DONE 的机器行
+ *    连同下面的 ⏱ 子项收到各自主题的母块下面（「- 🤖 Obsidian 改造 · 6 条 · 共 2h13m」），母块留在 DONE 栏里，整理完折起来。
+ *    主题先用螺旋日程自动记日记时归好的大方向，对不上的才问 Claude。DOING / SUSPENDED / TODO 的机器行还在动，留在原处。
+ *
+ * 5. 摘录记号：从别处原样搬来的别人的话，顶格那一行末尾挂「#quote」。进阶整理时由 Claude 判断哪些块是摘录（拿不准不标），
+ *    也可以用命令「把光标所在的块标成摘录 / 取消」手动标。
+ *
+ * 6. 念头记号：挂着 TODO 的条目里，口述的想法、疑问、还没想清楚做不做的事不是任务，行尾挂「#thoughts」（TODO 留着不动）。
+ *    进阶整理时由 Claude 判断（拿不准算任务），也可以用命令「把光标所在的行标成念头 / 取消」手动标。
  *
  * 每次改动前会备份原文，「撤销上一次日记整理」可以恢复。
  */
@@ -28,8 +43,19 @@ const DEFAULTS = {
     moveTodos: true,
     answerQuestions: true,
     fillFields: true,
+    groupMachine: true,
+    machineThreshold: 10,
+    markExcerpts: true,
+    excerptTag: "#quote",
+    markThoughts: true,
+    thoughtTag: "#thoughts",
+    lastMode: "basic",
+    archiveLog: true,
+    archiveReady: false,   // 第一次扫过了没有：扫之前就归档了的会话算旧账，不补记
+    archiveSeen: {},       // 会话号 → 记下的时刻（毫秒）；记过的不再记，取消归档再归档也不重复
     backups: [],
 };
+const MODE_LABEL = { basic: "基础整理", deep: "进阶整理" };
 const MAX_BACKUPS = 5;
 const RECENT_LIMIT = 15;
 
@@ -229,27 +255,234 @@ function applyAnswers(text, kept, title) {
     return { text: lines.join("\n").replace(/\n{3,}/g, "\n\n"), written: removed.length };
 }
 
+// ---------------- 机器行按主题归类 ----------------
+// 机器行 = 螺旋日程自动记日记、下面「归档记一笔」写的任务行：状态词（和时间）后面以 🤖 开头，
+// 比如「- DONE 09:17-09:50 🤖 让 done-to-top 移动时带上块标识符」。主题母块没有状态词：「- 🤖 Obsidian 改造 · 6 条 · 共 2h13m」。
+const MACHINE_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(?:\[.\][ \t]+)?(TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)[ \t]+(?:\d{1,2}[:：]\d{2}(?:[ \t]*[-–~～][ \t]*\d{1,2}[:：]\d{2})?[ \t]+)?🤖[ \t]*(.*)$/;
+const THEME_HEAD_RE = /^- 🤖 (.+?)(?: · \d+ 条(?: · 共 [\dhm]+)?)?[ \t]*$/;
+const CLOCK_TOTAL_RE = /^[ \t]*[-*+][ \t]+⏱.*共[ \t]*(?:(\d+)h)?(?:(\d+)m)?/;
+const NO_THEME = "杂事";
+const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m" : ""}` : `${m}m`);
+const machineKey = (s) => s.replace(/🤖/g, "").replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").replace(/\s+/g, "");
+const cleanTheme = (s) => String(s || "").replace(/[\r\n\[\]#·`*=~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 12);
+
+// 全篇的机器行。top = 顶格；done = 已经 DONE（顶格又 DONE 的才会被收进主题）
+function machineLines(text) {
+    const out = [];
+    for (const l of splitFrontmatter(text).body) {
+        const m = l.match(MACHINE_RE);
+        if (m) out.push({ line: l, top: m[1] === "", done: m[2] === "DONE", label: m[3].replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").trim() });
+    }
+    return out;
+}
+
+// themes：Map(那一行原文 → 主题名)，没给主题的行不动。新母块放在它第一条成员原来的位置，已有的母块往里追加
+function groupMachine(text, themes) {
+    const { fm, body } = splitFrontmatter(text);
+    const unit = body.some(l => /^\t/.test(l)) || !body.some(l => /^ {2,}\S/.test(l)) ? "\t" : "    ";
+    const segs = segment(body);
+    const heads = new Map();
+    for (const s of segs) { const h = s.lines[0].match(THEME_HEAD_RE); if (h && !heads.has(h[1].trim())) heads.set(h[1].trim(), s); }
+    const out = [];
+    let grouped = 0;
+    for (const s of segs) {
+        const m = s.lines[0].match(MACHINE_RE);
+        const theme = m && m[1] === "" && m[2] === "DONE" ? cleanTheme(themes.get(s.lines[0])) : "";
+        if (!theme) { out.push(s); continue; }
+        let head = heads.get(theme);
+        if (!head) { head = { todo: false, lines: [`- 🤖 ${theme}`] }; heads.set(theme, head); out.push(head); }
+        head.lines.push(...s.lines.map(l => (isBlank(l) ? l : unit + l)));
+        grouped++;
+    }
+    // 母块那一行的条数和用时每次重算（螺旋日程之后还会改里面的 ⏱）
+    for (const [theme, head] of heads) {
+        const kids = head.lines.slice(1).filter(l => !isBlank(l));
+        const depth = kids.length ? Math.min(...kids.map(indentOf)) : 0;
+        const n = kids.filter(l => indentOf(l) === depth && MACHINE_RE.test(l)).length;
+        let min = 0;
+        for (const l of kids) { const c = l.match(CLOCK_TOTAL_RE); if (c) min += (+c[1] || 0) * 60 + (+c[2] || 0); }
+        if (n) head.lines[0] = `- 🤖 ${theme} · ${n} 条` + (min ? ` · 共 ${fmtMin(min)}` : "");
+    }
+    return { text: [...fm, ...out.flatMap(s => s.lines)].join("\n").replace(/\n{3,}/g, "\n\n"), grouped, themes: [...new Set([...themes.values()].map(cleanTheme).filter(Boolean))] };
+}
+
+// ---------------- 摘录记号 ----------------
+const SEP_LINE = /^[-*+][ \t]+-{3,}[ \t]*$/;
+const TASK_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[.\][ \t]+|(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)\b)/;
+const hasTag = (line, tag) => line.split(/\s+/).includes(tag);
+const bareText = (s) => s.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "").replace(/[\s\-*+>#=|]/g, "");
+
+// 可能是摘录的顶格块：不是任务、不是卡片 / 待读、不是问题汇总和主题母块、还没标过、去掉链接后够长
+function findExcerptCandidates(text, tag, summaryTitle) {
+    const out = [];
+    for (const s of segment(splitFrontmatter(text).body)) {
+        const first = s.lines[0];
+        if (!LIST_ITEM.test(first) || SEP_LINE.test(first) || TASK_TOP.test(first) || THEME_HEAD_RE.test(first)) continue;
+        if (hasTag(first, tag) || first.startsWith("- " + summaryTitle)) continue;
+        const all = s.lines.join("\n");
+        if (/#(?:card|toread|towatch)\b/.test(all) || /^[ \t]*(```|~~~)/m.test(all)) continue;
+        if (bareText(all).length < 60) continue;
+        const kids = s.lines.slice(1).filter(l => !isBlank(l)).slice(0, 3).map(l => l.trim().slice(0, 160));
+        out.push({ id: out.length + 1, line: first, sample: [first.replace(/^[-*+][ \t]+/, "").slice(0, 240), ...kids].join("\n  ") });
+        if (out.length >= 30) break;
+    }
+    return out;
+}
+
+// 在这一行末尾挂上 / 摘掉记号；行尾的块 ID（ ^abc）留在最后
+function setTag(line, tag, on) {
+    const m = line.match(/^(.*?)([ \t]\^[A-Za-z0-9-]+)?[ \t]*$/);
+    const esc = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const body = m[1].replace(new RegExp(`(^|[ \\t]+)${esc}(?=[ \\t]|$)`, "g"), "").replace(/[ \t]+$/, "");
+    return (on ? `${body} ${tag}` : body) + (m[2] || "");
+}
+
+// 可能是念头的行：顶格、挂着 TODO / LATER 或空复选框、不是机器行、还没标过
+const OPEN_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[ \][ \t]+|(?:TODO|LATER)[ \t]+)(.*)$/;
+function findThoughtCandidates(text, tag) {
+    const out = [];
+    for (const l of splitFrontmatter(text).body) {
+        const m = l.match(OPEN_TOP);
+        if (!m || MACHINE_RE.test(l) || hasTag(l, tag) || !bareText(m[1])) continue;
+        out.push({ id: out.length + 1, line: l, content: m[1].trim().slice(0, 300) });
+        if (out.length >= 40) break;
+    }
+    return out;
+}
+
+// 给挑出来的行在行尾挂上记号（摘录、念头共用）
+function applyExcerpts(text, picked, tag) {
+    const lines = text.split("\n");
+    let marked = 0;
+    for (const c of picked) {
+        const idx = lines.indexOf(c.line);
+        if (idx < 0 || hasTag(lines[idx], tag)) continue;   // 这段时间里被改过了，跳过
+        lines[idx] = setTag(lines[idx], tag, true);
+        marked++;
+    }
+    return { text: lines.join("\n"), marked };
+}
+
+function buildClassifyPrompt(filePath, machine, knownThemes, excerpts, thoughts = []) {
+    const parts = [`你在帮我整理 Obsidian 日记「${filePath}」。全部用中文，只做下面列出的判断。`];
+    if (machine.length) parts.push("",
+        "【一、机器行归主题】下面每一行是 AI 助手替我做完的一件事，给每一行归一个主题。",
+        `已有的主题：${knownThemes.join(" / ") || "（还没有）"}`,
+        `优先用已有的名字；都不合适才自己起一个不超过 6 个字的（比如「投资研究」「健康」），同一类事用同一个名字；纯粹的杂事填「${NO_THEME}」。`,
+        ...machine.map(m => `${m.id}: ${m.label}`));
+    if (excerpts.length) parts.push("",
+        "【二、哪些是摘录】下面每一项是日记里的一块（首行 + 前几条子项，可能被截断）。判断它是不是「摘录」：从别处原样搬来的、别人写的话，",
+        "比如书摘、文章或帖子的段落、别人视频的简介和字幕、歌词台词、别人的评论。只有明显是别人原话的才填 true，拿不准一律 false。",
+        "以下都不算摘录：我自己写的记录、想法、计划、口述的念头；我自己作品的文案和简介；AI 回答我的解释、整理出来的知识点和表格；只有标题和链接的条目。",
+        ...excerpts.map(e => `${e.id}: ${e.sample}`));
+    if (thoughts.length) parts.push("",
+        "【三、哪些是念头】下面每一行是日记里挂着 TODO 的条目。判断它是「任务」还是「念头」：任务 = 知道要做什么、做完能勾掉的事（哪怕很大）；",
+        "念头 = 口述的想法、疑问、感受，或者还没想清楚做不做、怎么做的事（常见说法：「是否有办法…」「我感觉…」「要不要…」「能不能…」）。是念头填 true，拿不准填 false。",
+        ...thoughts.map(t => `${t.id}: ${t.content}`));
+    parts.push("", "只输出一个 JSON 对象，不要任何别的文字，格式：", '{"themes":{"m1":"主题名"},"excerpts":{"e1":false},"thoughts":{"t1":false}}');
+    return parts.join("\n");
+}
+
+function parseJsonObject(s) {
+    const a = s.indexOf("{"), b = s.lastIndexOf("}");
+    if (a < 0 || b < a) throw new Error("Claude 的回复里没有 JSON");
+    return JSON.parse(s.slice(a, b + 1));
+}
+
+// ---------------- 归档记一笔：Claude 桌面 app 里的会话 ----------------
+// app 给每个会话存一份 claude-code-sessions/<账号>/<组织>/local_….json，归档就是把里面的 isArchived 设成 true。
+// cache：路径 → { mtime, sid, title, archived }，没变的文件不重读。返回 Map(会话号 → { sid, title, archived, mtime })
+async function scanDesktopSessions(cache) {
+    const fs = require("fs");
+    const home = os.homedir();
+    const base = process.platform === "darwin" ? path.join(home, "Library/Application Support")
+        : process.platform === "win32" ? (process.env.APPDATA || path.join(home, "AppData/Roaming"))
+        : (process.env.XDG_CONFIG_HOME || path.join(home, ".config"));
+    const out = new Map();
+    const walk = async (dir, depth) => {
+        let ents;
+        try { ents = await fs.promises.readdir(dir, { withFileTypes: true }); } catch (e) { return; }
+        for (const e of ents) {
+            const p = path.join(dir, e.name);
+            if (e.isDirectory()) { if (depth < 3) await walk(p, depth + 1); continue; }
+            if (!e.isFile() || !/^local_.*\.json$/.test(e.name)) continue;
+            let st;
+            try { st = await fs.promises.stat(p); } catch (err) { continue; }
+            let c = cache.get(p);
+            if (!c || c.mtime !== st.mtimeMs) {
+                c = { mtime: st.mtimeMs, sid: "", title: "", archived: false };
+                try {
+                    const d = JSON.parse(await fs.promises.readFile(p, "utf8"));
+                    c.sid = String(d.cliSessionId || d.sessionId || "");
+                    c.title = String(d.title || "");
+                    c.archived = d.isArchived === true;
+                } catch (err) { c.mtime = 0; }   // app 正好在写这个文件：下一轮再读
+                cache.set(p, c);
+            }
+            if (c.sid) out.set(c.sid, c);
+        }
+    };
+    await walk(path.join(base, "Claude", "claude-code-sessions"), 0);
+    return out;
+}
+
+// 会话标题要能原样写成一行任务：去掉会被当成时间、格式标记、挪动标记的写法
+const safeTitle = (s) => String(s || "").replace(/[\r\n\[\]`←*=~「」]/g, " ").replace(/(\d)[:：](\d)/g, "$1.$2").replace(/\s+/g, " ").trim().slice(0, 60) || "没起名的会话";
+
 // ---------------- 插件 ----------------
 module.exports = class JournalTidy extends Plugin {
     async onload() {
         this.settings = Object.assign({}, DEFAULTS, await this.loadData());
-        this.addCommand({ id: "open", name: "整理日记…（选文件）", hotkeys: [{ modifiers: ["Mod", "Shift"], key: "J" }], callback: () => new TidyModal(this).open() });
-        this.addCommand({ id: "today", name: "整理今天的日记", callback: () => this.runOn(this.todayFile(), this.settings) });
-        this.addCommand({
-            id: "current", name: "整理当前打开的日记",
-            checkCallback: (checking) => {
-                const f = this.app.workspace.getActiveFile();
-                if (!f || f.extension !== "md") return false;
-                if (!checking) this.runOn(f, this.settings);
-                return true;
-            },
-        });
+        this.addCommand({ id: "open", name: "整理日记…（选文件、选方式）", hotkeys: [{ modifiers: ["Mod", "Shift"], key: "J" }], callback: () => new TidyModal(this).open() });
+        for (const mode of ["basic", "deep"]) {
+            const id = mode === "basic" ? "" : "-deep";
+            this.addCommand({ id: "today" + id, name: `${MODE_LABEL[mode]}今天的日记`, callback: () => this.runOn(this.todayFile(), this.optFor(mode)) });
+            this.addCommand({
+                id: "current" + id, name: `${MODE_LABEL[mode]}当前打开的日记`,
+                checkCallback: (checking) => {
+                    const f = this.app.workspace.getActiveFile();
+                    if (!f || f.extension !== "md") return false;
+                    if (!checking) this.runOn(f, this.optFor(mode));
+                    return true;
+                },
+            });
+        }
+        this.addCommand({ id: "toggle-excerpt", name: "把光标所在的块标成摘录 / 取消", editorCallback: (editor) => this.toggleExcerpt(editor) });
+        this.addCommand({ id: "toggle-thought", name: "把光标所在的行标成念头 / 取消", editorCallback: (editor) => this.toggleThought(editor) });
+        this.addCommand({ id: "archive-check", name: "现在查一次有没有刚归档的 Claude 会话", callback: () => this.archiveTick(true) });
         this.addCommand({ id: "undo", name: "撤销上一次日记整理", callback: () => this.undo() });
         this.addRibbonIcon("list-checks", "整理日记", () => new TidyModal(this).open());
         this.addSettingTab(new TidySettings(this));
+        // 归档记一笔：每分钟看一眼 Claude 桌面 app 的会话
+        this.app.workspace.onLayoutReady(() => this.archiveTick());
+        this.registerInterval(window.setInterval(() => this.archiveTick(), 60 * 1000));
     }
 
     async save() { await this.saveData(this.settings); }
+
+    toggleThought(editor) {
+        const at = editor.getCursor().line, line = editor.getLine(at), tag = this.settings.thoughtTag;
+        if (!LIST_ITEM.test(line.replace(/^[ \t]+/, "")) || SEP_LINE.test(line)) return new Notice("光标不在列表项上");
+        const on = !hasTag(line, tag);
+        editor.setLine(at, setTag(line, tag, on));
+        new Notice(on ? `已标成念头（${tag}）` : "已取消念头记号");
+    }
+
+    // 这种方式做哪几步：基础整理只做本地的；进阶整理再加上要问 Claude 的（各自还受设置里的开关管）
+    optFor(mode) {
+        const s = this.settings, deep = mode === "deep";
+        return { mode, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
+    }
+
+    toggleExcerpt(editor) {
+        let at = editor.getCursor().line;
+        while (at > 0 && (isBlank(editor.getLine(at)) || /^[ \t]/.test(editor.getLine(at)))) at--;
+        const line = editor.getLine(at), tag = this.settings.excerptTag;
+        if (!LIST_ITEM.test(line) || SEP_LINE.test(line)) return new Notice("光标不在列表块里");
+        const on = !hasTag(line, tag);
+        editor.setLine(at, setTag(line, tag, on));
+        new Notice(on ? `已标成摘录（${tag}）` : "已取消摘录记号");
+    }
 
     todayName() { return moment().format("YYYY_MM_DD"); }
     todayPath() { return `${this.settings.journalFolder}/${this.todayName()}.md`; }
@@ -326,26 +559,84 @@ module.exports = class JournalTidy extends Plugin {
                     report.push(moved ? `${moved} 个待办块移到了元信息下方（done-to-top 插件没开，用的旧规则）` : "没有需要移动的待办");
                 }
             }
-            // 2. 问题汇总 + AI 回答
-            if (opt.answerQuestions) {
+            // 2. 进阶整理：问题回答、机器行按主题归类、摘录记号。两次问 Claude（联网查问题 / 归类判断）同时发出去，回来再依次写
+            if (opt.answerQuestions || opt.groupMachine || opt.markExcerpts || opt.markThoughts) {
+                const s = this.settings;
                 const text = await this.app.vault.read(file);
-                const cands = findQuestionCandidates(text, this.settings.questionBlockTitle);
-                if (!cands.length) report.push("没有找到需要回答的问句");
-                else {
-                    const wait = new Notice(`正在请 Claude 判断并联网查证 ${cands.length} 个问句…（大约一两分钟，可以继续写）`, 0);
-                    let result;
-                    try { result = parseJsonArray(await this.runClaude(buildPrompt(cands, file.path))); }
-                    finally { wait.hide(); }
-                    const byId = new Map(result.map(r => [Number(r.id), r]));
-                    const kept = cands.map(c => ({ ...c, ...(byId.get(c.id) || {}) })).filter(c => c.keep && Array.isArray(c.items) && c.items.length);
-                    const skipped = cands.length - kept.length;
-                    let written = 0;
-                    await this.app.vault.process(file, (data) => { const r = applyAnswers(data, kept, this.settings.questionBlockTitle); written = r.written; return r.text; });
-                    report.push(written ? `${written} 行问题挪进了「问题汇总」并写好回答` : "没有需要挪出来回答的问题");
-                    if (skipped) report.push(`${skipped} 行没动（自言自语 / 游戏 / 提醒 / 摘抄等）`);
+                const cands = opt.answerQuestions ? findQuestionCandidates(text, s.questionBlockTitle) : [];
+                // 机器行：超过门槛才归类。螺旋日程归过大方向的直接用，剩下的问 Claude
+                const all = opt.groupMachine ? machineLines(text) : [];
+                const over = all.length > Math.max(0, s.machineThreshold);
+                const themes = new Map(), ask = [];
+                if (over) {
+                    const known = this.spiralThemes();
+                    for (const m of all.filter(x => x.top && x.done)) {
+                        const k = machineKey(m.label);
+                        const hit = known.find(r => r.key === k) || known.find(r => r.key.length >= 4 && k.startsWith(r.key));
+                        if (hit) themes.set(m.line, hit.dir || NO_THEME);
+                        else ask.push({ id: "m" + (ask.length + 1), line: m.line, label: m.label });
+                    }
+                }
+                const exc = (opt.markExcerpts ? findExcerptCandidates(text, s.excerptTag, s.questionBlockTitle) : []).map(e => ({ ...e, id: "e" + e.id }));
+                const tho = (opt.markThoughts ? findThoughtCandidates(text, s.thoughtTag) : []).map(t => ({ ...t, id: "t" + t.id }));
+                const doing = [cands.length ? `联网查证 ${cands.length} 个问句` : "", ask.length ? `给 ${ask.length} 条机器行归主题` : "", exc.length ? `看 ${exc.length} 块是不是摘录` : "", tho.length ? `看 ${tho.length} 条待办是不是念头` : ""].filter(Boolean);
+                const wait = doing.length ? new Notice(`正在请 Claude ${doing.join("、")}…（大约一两分钟，可以继续写）`, 0) : null;
+                let qa, cls;
+                try {
+                    [qa, cls] = await Promise.allSettled([
+                        cands.length ? this.runClaude(buildPrompt(cands, file.path)).then(parseJsonArray) : null,
+                        ask.length || exc.length || tho.length ? this.runClaude(buildClassifyPrompt(file.path, ask, this.knownThemes(text), exc, tho), { tools: false }).then(parseJsonObject) : null,
+                    ]);
+                } finally { if (wait) wait.hide(); }
+                const why = (r) => String((r.reason && r.reason.message) || r.reason).slice(0, 120);
+                // 2a. 问题汇总 + AI 回答
+                if (opt.answerQuestions) {
+                    if (!cands.length) report.push("没有找到需要回答的问句");
+                    else if (qa.status === "rejected") report.push(`问题没答成：${why(qa)}`);
+                    else {
+                        const byId = new Map(qa.value.map(r => [Number(r.id), r]));
+                        const kept = cands.map(c => ({ ...c, ...(byId.get(c.id) || {}) })).filter(c => c.keep && Array.isArray(c.items) && c.items.length);
+                        const skipped = cands.length - kept.length;
+                        let written = 0;
+                        await this.app.vault.process(file, (data) => { const r = applyAnswers(data, kept, s.questionBlockTitle); written = r.written; return r.text; });
+                        report.push(written ? `${written} 行问题挪进了「问题汇总」并写好回答` : "没有需要挪出来回答的问题");
+                        if (skipped) report.push(`${skipped} 行没动（自言自语 / 游戏 / 提醒 / 摘抄等）`);
+                    }
+                }
+                // 2b. 机器行按主题归类
+                if (opt.groupMachine) {
+                    if (!over) report.push(`机器行 ${all.length} 条，没超过 ${s.machineThreshold} 条，不归类`);
+                    else {
+                        if (ask.length && cls.status === "fulfilled") for (const m of ask) { const t = cleanTheme((cls.value.themes || {})[m.id]); if (t) themes.set(m.line, t); }
+                        let r = null;
+                        await this.app.vault.process(file, (data) => { r = groupMachine(data, themes); return r.text; });
+                        const left = ask.filter(m => !themes.has(m.line)).length;
+                        report.push(r.grouped ? `机器行 ${all.length} 条，${r.grouped} 条做完的收进了主题：${r.themes.join("、")}` : `机器行 ${all.length} 条，没有新的要归类`);
+                        if (left) report.push(`${left} 条机器行没归上主题` + (cls.status === "rejected" ? `（${why(cls)}）` : ""));
+                    }
+                }
+                // 2c. 摘录记号
+                if (opt.markExcerpts && exc.length) {
+                    if (cls.status === "rejected") report.push(`摘录没判断成：${why(cls)}`);
+                    else {
+                        const picked = exc.filter(e => (cls.value.excerpts || {})[e.id] === true);
+                        let marked = 0;
+                        if (picked.length) await this.app.vault.process(file, (data) => { const r = applyExcerpts(data, picked, s.excerptTag); marked = r.marked; return r.text; });
+                        if (marked) report.push(`${marked} 块标成了摘录（${s.excerptTag}）`);
+                    }
+                }
+                // 2d. 念头记号
+                if (opt.markThoughts && tho.length) {
+                    if (cls.status === "rejected") report.push(`念头没判断成：${why(cls)}`);
+                    else {
+                        const picked = tho.filter(t => (cls.value.thoughts || {})[t.id] === true);
+                        let marked = 0;
+                        if (picked.length) await this.app.vault.process(file, (data) => { const r = applyExcerpts(data, picked, s.thoughtTag); marked = r.marked; return r.text; });
+                        if (marked) report.push(`${marked} 条待办标成了念头（${s.thoughtTag}）`);
+                    }
                 }
             }
-            new Notice(`${file.basename} 整理完了：\n` + report.join("\n") + "\n（撤销：命令「撤销上一次日记整理」）", 10000);
+            new Notice(`${file.basename} ${MODE_LABEL[opt.mode] || "整理"}完了：\n` + report.join("\n") + "\n（撤销：命令「撤销上一次日记整理」）", 10000);
         } catch (e) {
             console.error("[journal-tidy]", e);
             new Notice("日记整理出错：" + (e.message || e) + (report.length ? "\n已完成：" + report.join("；") : ""), 12000);
@@ -356,12 +647,122 @@ module.exports = class JournalTidy extends Plugin {
         }
     }
 
-    runClaude(prompt) {
+    // 螺旋日程自动记日记时给每个会话归过的大方向：[{ key: 去掉 🤖 和空白的那行文字, dir }]，dir 是空的 = 它判断是杂事
+    spiralThemes() {
+        const st = this.app.plugins.plugins["nautilus-spiral"]?.settings?.autoLogState || {};
+        const out = [];
+        for (const day of Object.values(st)) for (const r of Object.values(day || {})) {
+            if (r && r.label && typeof r.dir === "string" && !r.skip) out.push({ key: machineKey(r.label), dir: cleanTheme(r.dir) });
+        }
+        return out;
+    }
+
+    // 给 Claude 参考的主题名：螺旋日程的大方向 + 这篇日记里已有的主题母块
+    knownThemes(text) {
+        const sp = this.app.plugins.plugins["nautilus-spiral"];
+        const dirs = sp && typeof sp.knownDirs === "function" ? sp.knownDirs() : [];
+        const here = splitFrontmatter(text).body.map(l => l.match(THEME_HEAD_RE)).filter(Boolean).map(m => m[1].trim());
+        return [...new Set([...dirs, ...here].map(cleanTheme).filter(t => t && t !== NO_THEME))];
+    }
+
+    // ---------------- 归档记一笔 ----------------
+    // 你在 Claude 桌面 app 里归档一个会话，今天的日记里记一行「DONE 时刻 🤖 归档「标题」」（进 DONE 区）。
+    // 螺旋日程自动记日记已经给这个会话记了一行的，由它把那一行标成 DONE，这里不重复记；它没记的（太短、当成闲聊跳过、不是今天的会话）记在这里。
+    // 第一次运行时已经归档的会话算旧账，不补记。manual = 命令触发的，没有新归档也说一声
+    async archiveTick(manual = false) {
+        const s = this.settings;
+        if ((!s.archiveLog && !manual) || this._archBusy) return;
+        this._archBusy = true;
+        try {
+            const all = await scanDesktopSessions(this._archCache ||= new Map());
+            if (!all.size) { if (manual) new Notice("没找到 Claude 桌面 app 的会话记录"); return; }
+            const seen = (s.archiveSeen ||= {});
+            let dirty = false;
+            if (!s.archiveReady) {
+                for (const [sid, x] of all) if (x.archived) seen[sid] = 0;
+                s.archiveReady = true; dirty = true;
+            }
+            const fresh = [];
+            const waits = (this._archWait ||= new Map());
+            for (const [sid, x] of all) {
+                if (!x.archived || sid in seen) continue;
+                const own = this.spiralOwns(sid);
+                if (own.wait) {
+                    if (!waits.has(sid)) waits.set(sid, Date.now());
+                    if (Date.now() - waits.get(sid) < own.wait) continue;   // 等螺旋日程下一轮；等过头了就自己记
+                }
+                seen[sid] = Date.now(); dirty = true;
+                if (!own.line) fresh.push({ ...x, min: own.min || 0 });
+            }
+            const lines = fresh.length ? await this.logArchived(fresh) : [];
+            if (dirty) await this.save();
+            if (lines.length) new Notice(`📦 归档了 ${lines.length} 个会话，记进了今天的日记：\n` + fresh.map(x => safeTitle(x.title)).join("\n"), 8000);
+            else if (manual) new Notice("没有新归档的会话要记");
+        } catch (e) {
+            console.error("[journal-tidy] 归档记一笔", e);
+            if (manual) new Notice("归档记一笔出错：" + (e.message || e));
+        } finally { this._archBusy = false; }
+    }
+
+    // 这个会话螺旋日程管不管：line = 它已经记了一行；wait = 它下一轮就会记，等这么多毫秒；min = 今天这个会话动了多少分钟
+    spiralOwns(sid) {
+        const sp = this.app.plugins.plugins["nautilus-spiral"];
+        const cfg = sp && sp.settings;
+        let min = 0;
+        try {
+            const key = sp.today().format(cfg.format || "YYYY_MM_DD");
+            const x = ((sp.aiStore.days[key] || {}).list || []).find(v => v.sid === sid);
+            if (x) min = Math.round(x.min || 0);
+        } catch (e) { /* 没装螺旋日程，或者它还没扫完 */ }
+        if (!cfg || !cfg.autoLog || cfg.autoLogArchiveDone === false) return { min };
+        for (const day of Object.values(cfg.autoLogState || {})) {
+            const r = day && day[sid];
+            if (r) return { min, line: !!(r.key && !r.skip && !r.gone) };
+        }
+        return min >= 3 ? { min, wait: (Math.max(5, cfg.autoLogEvery || 20) + 5) * 60e3 } : { min };
+    }
+
+    async logArchived(list) {
+        const dtt = this.app.plugins.plugins["done-to-top"];
+        const to = dtt && typeof dtt.todayOf === "function" ? dtt.todayOf(null) : null;   // 和螺旋日程同一个凌晨分界
+        const filePath = to ? (to.folder ? to.folder + "/" : "") + to.name + ".md" : this.todayPath();
+        let file = this.app.vault.getAbstractFileByPath(filePath);
+        if (!file) file = await this.app.vault.create(filePath, `---\njournal: 每日\njournal-date: ${to ? to.date : moment().format("YYYY-MM-DD")}\n---\n`);
+        const lines = list.map((x) => {
+            const at = Date.now() - x.mtime < 12 * 3600e3 ? x.mtime : Date.now();   // 会话文件最后一次改动 ≈ 归档的时刻
+            return `- DONE ${moment(at).format("HH:mm")} 🤖 归档「${safeTitle(x.title)}」` + (x.min >= 1 ? ` ${fmtMin(x.min)}` : "");
+        });
+        const written = [];
+        await this.edit(file, (text) => {
+            for (const l of lines) {
+                if (text.includes(l.slice(l.indexOf("🤖")).replace(/ \d+h?\d*m?$/, ""))) continue;   // 今天已经记过这个标题
+                text = dtt && dtt.core && dtt.core.addBlock ? dtt.core.addBlock(text, [l]) : text.replace(/\s*$/, "\n") + l + "\n";
+                written.push(l);
+            }
+            return text;
+        });
+        return written;
+    }
+
+    // 改一篇笔记：开着编辑器就走编辑器（只动变了的那几行，不打断你打字），没开就直接改文件
+    async edit(file, fn) {
+        const leaf = this.app.workspace.getLeavesOfType("markdown").find((l) => l.view && l.view.file === file && l.view.getMode && l.view.getMode() === "source");
+        const core = this.app.plugins.plugins["done-to-top"]?.core;
+        if (leaf && leaf.view.editor && core && core.diffChange) {
+            const old = leaf.view.editor.getValue();
+            const ch = core.diffChange(old, fn(old));
+            if (ch) leaf.view.editor.transaction({ changes: [ch] });
+            return;
+        }
+        await this.app.vault.process(file, fn);
+    }
+
+    runClaude(prompt, { tools = true } = {}) {
         return new Promise((resolve, reject) => {
             const bin = this.settings.claudePath.replace(/^~(?=\/)/, os.homedir());
             const args = ["-p", "--output-format", "json", "--no-session-persistence", "--strict-mcp-config"];
             if (this.settings.model) args.push("--model", this.settings.model);
-            args.push("--allowedTools", "WebSearch", "WebFetch");
+            if (tools) args.push("--allowedTools", "WebSearch", "WebFetch");
             const env = { ...process.env, PATH: [path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
             let child;
             try { child = spawn(bin, args, { cwd: os.tmpdir(), env }); }
@@ -419,18 +820,30 @@ class TidyModal extends Modal {
                 }).open();
             });
         });
-        const opt = { moveTodos: s.moveTodos, answerQuestions: s.answerQuestions, fillFields: s.fillFields };
+        let mode = s.lastMode === "deep" ? "deep" : "basic";
+        const opt = { moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
+        const deepRows = [];
+        const show = () => deepRows.forEach(r => r.settingEl.toggle(mode === "deep"));
+        new Setting(this.contentEl).setName("方式").setDesc("基础整理只在本地排，马上完成；进阶整理先做一遍基础整理，再请本机的 Claude 做下面几件，要一两分钟")
+            .addDropdown(d => d.addOption("basic", "基础整理").addOption("deep", "进阶整理").setValue(mode).onChange(v => { mode = v; show(); }));
         new Setting(this.contentEl).setName("补 SuperTag 字段").setDesc("写了 [[菜谱]] 这类 SuperTag 的项，下面插上还没有的字段（如「学会:: 否」），留给你填")
             .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
-        new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开；块内用「- ---」分了栏的，子项也在块内按状态排")
+        new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开，整理完把 DONE 区折起来；块内用「- ---」分了栏的，子项也在块内按状态排")
             .addToggle(t => t.setValue(opt.moveTodos).onChange(v => { opt.moveTodos = v; }));
-        new Setting(this.contentEl).setName("汇总问题并用 AI 回答").setDesc("问句挪到文末「问题汇总」，Claude 联网查证后写回答；自言自语、游戏相关的不动")
-            .addToggle(t => t.setValue(opt.answerQuestions).onChange(v => { opt.answerQuestions = v; }));
+        deepRows.push(new Setting(this.contentEl).setName("汇总问题并用 AI 回答").setDesc("问句挪到文末「问题汇总」，Claude 联网查证后写回答；自言自语、游戏相关的不动")
+            .addToggle(t => t.setValue(opt.answerQuestions).onChange(v => { opt.answerQuestions = v; })));
+        deepRows.push(new Setting(this.contentEl).setName("机器行按主题归类").setDesc(`🤖 开头的机器行超过 ${s.machineThreshold} 条时，把做完的按主题收到各自的母块下面（留在 DONE 区，折起来）；还在做、搁置的留在原处`)
+            .addToggle(t => t.setValue(opt.groupMachine).onChange(v => { opt.groupMachine = v; })));
+        deepRows.push(new Setting(this.contentEl).setName("给摘录挂记号").setDesc(`从别处原样搬来的别人的话，顶格那一行末尾挂「${s.excerptTag}」；拿不准的不标`)
+            .addToggle(t => t.setValue(opt.markExcerpts).onChange(v => { opt.markExcerpts = v; })));
+        deepRows.push(new Setting(this.contentEl).setName("给念头挂记号").setDesc(`挂着 TODO 的条目里，口述的想法、疑问、还没想清楚做不做的事，行尾挂「${s.thoughtTag}」，TODO 留着；拿不准的算任务`)
+            .addToggle(t => t.setValue(opt.markThoughts).onChange(v => { opt.markThoughts = v; })));
+        show();
         new Setting(this.contentEl).addButton(b => b.setButtonText("开始整理").setCta().onClick(async () => {
             if (!chosen) return new Notice("先选一篇日记");
-            s.moveTodos = opt.moveTodos; s.answerQuestions = opt.answerQuestions; await p.save();
+            Object.assign(s, opt, { lastMode: mode }); await p.save();
             this.close();
-            p.runOn(chosen, opt);
+            p.runOn(chosen, p.optFor(mode));
         }));
     }
     onClose() { this.contentEl.empty(); }
@@ -454,7 +867,12 @@ class TidySettings extends PluginSettingTab {
         text("模型", "留空用 Claude Code 的默认模型；也可以填 opus / sonnet 或完整的模型 ID", "model");
         text("超时（秒）", "问题多、要联网时会久一些", "timeoutSec", true);
         text("问题汇总块的标题", "顶格那一行 `- ` 后面的文字；已有这个块就往里追加", "questionBlockTitle");
+        text("机器行超过几条才归类", "进阶整理时，全篇 🤖 开头的机器行超过这个数，才把做完的按主题收起来", "machineThreshold", true);
+        text("摘录的记号", "挂在摘录那一块顶格行的末尾。改了以后，以前标的旧记号不会跟着换", "excerptTag");
+        text("念头的记号", "挂在念头那一行的末尾（TODO 留着不动）", "thoughtTag");
+        new Setting(containerEl).setName("归档记一笔").setDesc("在 Claude 桌面 app 里归档一个会话，今天的日记里记一行「DONE 时刻 🤖 归档「标题」」。螺旋日程自动记日记已经给它记过一行的，由螺旋日程把那一行标成 DONE，这里不重复记")
+            .addToggle(t => t.setValue(s.archiveLog !== false).onChange(async v => { s.archiveLog = v; await this.plugin.save(); }));
     }
 }
 
-module.exports.__test = { moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter };
+module.exports.__test = { moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
