@@ -762,6 +762,19 @@ class TemplateModal extends FuzzySuggestModal {
 	onChooseItem(t) { this.done(t); }
 }
 
+// 一条命令现在绑着哪些键（你改过的优先，没改过就是默认的），写成 ⌥⌘S 这种样子；没绑返回 ""
+function hotkeyText(app, id) {
+	const hm = app.hotkeyManager, list = hm.getHotkeys(id) || hm.getDefaultHotkeys(id) || [];
+	const mac = Platform && Platform.isMacOS, sym = { Mod: mac ? "⌘" : "Ctrl+", Meta: mac ? "⌘" : "Win+", Ctrl: mac ? "⌃" : "Ctrl+", Alt: mac ? "⌥" : "Alt+", Shift: mac ? "⇧" : "Shift+" };
+	return list.map((h) => ["Ctrl", "Alt", "Shift", "Mod", "Meta"].filter((m) => (h.modifiers || []).includes(m)).map((m) => sym[m]).join("") + String(h.key || "").toUpperCase()).join(" / ");
+}
+// 打开「设置 → 快捷键」并只列出名字里带 word 的命令
+function openHotkeys(app, word) {
+	app.setting.open();
+	const tab = app.setting.openTabById("hotkeys");
+	if (tab && typeof tab.setQuery === "function") tab.setQuery(word);
+}
+
 class SendSettings extends PluginSettingTab {
 	constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
 	display() {
@@ -769,6 +782,9 @@ class SendSettings extends PluginSettingTab {
 		containerEl.empty();
 		const text = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
 			.addText((t) => t.setPlaceholder(placeholder || "").setValue(s[key] || "").onChange(async (v) => { s[key] = v.trim(); await this.plugin.saveData(s); }));
+		new Setting(containerEl).setName("快捷键").setHeading();
+		new Setting(containerEl).setName("叫出「发送这一块到…」面板").setDesc(`现在：${hotkeyText(this.app, "done-to-top:send-block") || "没有绑键"}。键位在 Obsidian 的「设置 → 快捷键」里改，改了就用你的，默认的那个自动让位。每个去向也各有一条命令，想给哪个单独绑键也在那里绑`)
+			.addButton((b) => b.setButtonText("去改").onClick(() => openHotkeys(this.app, "块去向")));
 		new Setting(containerEl).setName("斜杠命令").setHeading();
 		new Setting(containerEl).setName("斜杠命令只留带这个词的").setDesc("Obsidian 自带的斜杠命令（编辑器里打 /）默认把全部命令都列出来。打开以后只留名字里带下面这个词的命令，「发送到 Claude CLI」只要对得上你打的字就排第一个。要先在「核心插件」里开着「斜杠命令」")
 			.addToggle((t) => t.setValue(!!s.slashOnly).onChange(async (v) => { s.slashOnly = v; await this.plugin.saveData(s); this.plugin.patchSlash(); }));
@@ -881,24 +897,32 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		});
 	}
 
-	// 明天的日记：当前笔记是日记就取它的后一天；不是日记就取「今天」的后一天（和螺旋日程同一个凌晨分界）
+	// 「今天」是哪一天（那天 0 点的 Date）：直接问螺旋日程，它设置里的「日记日期分界」之前还算前一天，它那边怎么算这边就怎么算。
+	// 螺旋日程没开着：照它的设置自己算一遍；连设置都没有就按早上 7 点分
+	dayNow() {
+		const sp = this.app.plugins?.plugins?.["nautilus-spiral"];
+		try { if (sp && typeof sp.today === "function") return sp.today().toDate(); } catch (e) { /* 问不到就自己算 */ }
+		const d = new Date();
+		if (d.getHours() * 60 + d.getMinutes() < ((sp && sp.settings && sp.settings.dayCutoff) ?? 7) * 60) d.setDate(d.getDate() - 1);
+		return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+	}
+
+	// 明天的日记：当前笔记是日记就取它的后一天；不是日记就取「今天」的后一天（和螺旋日程同一个日期分界，见 dayNow）
 	tomorrowOf(file) {
 		if (file && JOURNAL_NAME_RE.test(file.basename)) {
 			const to = journalAfter(file.basename, 1);
 			return { ...to, folder: file.parent && file.parent.path !== "/" ? file.parent.path : "", source: file.basename };
 		}
 		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
-		const d = new Date();
-		if (d.getHours() * 60 + d.getMinutes() < (cfg.dayCutoff ?? 7) * 60) d.setDate(d.getDate() - 1);
+		const d = this.dayNow();
 		const today = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())].join("_");
 		return { ...journalAfter(today, 1), folder: cfg.folder || "日记", source: file ? file.basename : today };
 	}
 
-	// 今天的日记（和螺旋日程同一个凌晨分界）；当前笔记是日记就放在它那个文件夹
+	// 今天的日记（和螺旋日程同一个日期分界，见 dayNow）；当前笔记是日记就放在它那个文件夹
 	todayOf(file) {
 		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
-		const d = new Date();
-		if (d.getHours() * 60 + d.getMinutes() < (cfg.dayCutoff ?? 7) * 60) d.setDate(d.getDate() - 1);
+		const d = this.dayNow();
 		const ymd = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())];
 		const isJournal = file && JOURNAL_NAME_RE.test(file.basename);
 		const folder = isJournal ? (file.parent && file.parent.path !== "/" ? file.parent.path : "") : cfg.folder || "日记";

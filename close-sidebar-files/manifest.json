@@ -1,9 +1,9 @@
 {
 	"id": "close-sidebar-files",
 	"name": "Close Sidebar Files",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"minAppVersion": "1.0.0",
-	"description": "一键关掉右侧栏里打开的笔记（只关文件，插件面板不动）。",
+	"description": "一键关掉两侧边栏里打开的笔记（只关文件，插件面板不动）。默认 ⌥⌘W，键位在「设置 → 快捷键」里改。",
 	"author": "马自立",
 	"isDesktopOnly": false
 }

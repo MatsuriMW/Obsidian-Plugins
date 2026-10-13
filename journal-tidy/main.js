@@ -484,7 +484,21 @@ module.exports = class JournalTidy extends Plugin {
         new Notice(on ? `已标成摘录（${tag}）` : "已取消摘录记号");
     }
 
-    todayName() { return moment().format("YYYY_MM_DD"); }
+    // 「今天」是哪一篇日记：和螺旋日程用同一个日期分界（它的设置「日记日期分界」，这个时刻之前还算前一天）。
+    // 直接问螺旋日程要，它那边改了这边跟着变；螺旋日程没开着才按零点分
+    todayMoment() {
+        const sp = this.app.plugins.plugins["nautilus-spiral"];
+        try { if (sp && typeof sp.today === "function") return sp.today().clone(); } catch (e) { /* 问不到就按零点 */ }
+        return moment().startOf("day");
+    }
+    todayName() { return this.todayMoment().format("YYYY_MM_DD"); }
+    // 给设置页看的：现在按哪个时刻分
+    cutoffText() {
+        const sp = this.app.plugins.plugins["nautilus-spiral"], cut = sp && sp.settings ? sp.settings.dayCutoff : null;
+        if (typeof cut !== "number") return "螺旋日程没开着，现在按零点分：过了 0 点就是新的一天";
+        const t = Math.round(cut * 60), hm = `${String(Math.floor(t / 60) % 24).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+        return `现在是 ${hm}：${hm} 之前还算前一天的日记（今天这篇是 ${this.todayName()}）`;
+    }
     todayPath() { return `${this.settings.journalFolder}/${this.todayName()}.md`; }
     todayFile() { return this.app.vault.getAbstractFileByPath(this.todayPath()); }
 
@@ -723,11 +737,9 @@ module.exports = class JournalTidy extends Plugin {
     }
 
     async logArchived(list) {
-        const dtt = this.app.plugins.plugins["done-to-top"];
-        const to = dtt && typeof dtt.todayOf === "function" ? dtt.todayOf(null) : null;   // 和螺旋日程同一个凌晨分界
-        const filePath = to ? (to.folder ? to.folder + "/" : "") + to.name + ".md" : this.todayPath();
+        const filePath = this.todayPath();   // 和螺旋日程同一个日期分界（见 todayMoment）
         let file = this.app.vault.getAbstractFileByPath(filePath);
-        if (!file) file = await this.app.vault.create(filePath, `---\njournal: 每日\njournal-date: ${to ? to.date : moment().format("YYYY-MM-DD")}\n---\n`);
+        if (!file) file = await this.app.vault.create(filePath, `---\njournal: 每日\njournal-date: ${this.todayMoment().format("YYYY-MM-DD")}\n---\n`);
         const lines = list.map((x) => {
             const at = Date.now() - x.mtime < 12 * 3600e3 ? x.mtime : Date.now();   // 会话文件最后一次改动 ≈ 归档的时刻
             return `- DONE ${moment(at).format("HH:mm")} 🤖 归档「${safeTitle(x.title)}」` + (x.min >= 1 ? ` ${fmtMin(x.min)}` : "");
@@ -863,6 +875,8 @@ class TidySettings extends PluginSettingTab {
         containerEl.empty();
         const text = (name, desc, key, num = false) => new Setting(containerEl).setName(name).setDesc(desc).addText(t => t.setValue(String(s[key])).onChange(async v => { s[key] = num ? (parseInt(v, 10) || DEFAULTS[key]) : v.trim(); await this.plugin.save(); }));
         text("日记文件夹", "日记文件名是 YYYY_MM_DD", "journalFolder");
+        new Setting(containerEl).setName("几点之前算前一天").setDesc(`「整理今天的日记」「归档记一笔」里的「今天」，跟着螺旋日程设置里的「日记日期分界」走，不在这里单独设。${this.plugin.cutoffText()}`)
+            .addButton(b => b.setButtonText("去螺旋日程里改").onClick(() => { this.app.setting.openTabById("nautilus-spiral"); }));
         text("claude 命令路径", "本机 Claude Code 的命令行（要先登录过）", "claudePath");
         text("模型", "留空用 Claude Code 的默认模型；也可以填 opus / sonnet 或完整的模型 ID", "model");
         text("超时（秒）", "问题多、要联网时会久一些", "timeoutSec", true);

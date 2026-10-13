@@ -1,11 +1,39 @@
-const { Plugin, Notice, FileView } = require("obsidian");
+const { Plugin, Notice, FileView, PluginSettingTab, Setting, Platform } = require("obsidian");
+
+// 一条命令现在绑着哪些键（你改过的优先，没改过就是默认的），写成 ⌥⌘W 这种样子；没绑返回 ""
+function hotkeyText(app, id) {
+    const hm = app.hotkeyManager, list = (hm.getHotkeys(id) || hm.getDefaultHotkeys(id) || []);
+    const mac = Platform.isMacOS, sym = { Mod: mac ? "⌘" : "Ctrl+", Meta: mac ? "⌘" : "Win+", Ctrl: mac ? "⌃" : "Ctrl+", Alt: mac ? "⌥" : "Alt+", Shift: mac ? "⇧" : "Shift+" };
+    const order = ["Ctrl", "Alt", "Shift", "Mod", "Meta"];
+    return list.map((h) => order.filter((m) => (h.modifiers || []).includes(m)).map((m) => sym[m]).join("") + String(h.key || "").toUpperCase()).join(" / ");
+}
+// 打开「设置 → 快捷键」并只列出名字里带 word 的命令
+function openHotkeys(app, word) {
+    app.setting.open();
+    const tab = app.setting.openTabById("hotkeys");
+    if (tab && typeof tab.setQuery === "function") tab.setQuery(word);
+}
+
+class CloseSidebarSettings extends PluginSettingTab {
+    constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
+    display() {
+        const { containerEl } = this;
+        containerEl.empty();
+        new Setting(containerEl).setName("快捷键").setHeading();
+        const row = (id, name) => new Setting(containerEl).setName(name).setDesc(`现在：${hotkeyText(this.app, id) || "没有绑键"}。键位在 Obsidian 的「设置 → 快捷键」里改，改了就用你的，默认的那个自动让位`)
+            .addButton((b) => b.setButtonText("去改").onClick(() => openHotkeys(this.app, "侧边栏里打开的笔记")));
+        row("close-sidebar-files:close-sidebar-files", "清空两侧边栏里打开的笔记");
+        new Setting(containerEl).setName("只清空右侧栏里打开的笔记").setDesc(`现在：${hotkeyText(this.app, "close-sidebar-files:close-right-sidebar-files") || "没有绑键"}`)
+            .addButton((b) => b.setButtonText("去改").onClick(() => openHotkeys(this.app, "右侧栏里打开的笔记")));
+    }
+}
 
 module.exports = class CloseSidebarFiles extends Plugin {
     onload() {
         this.addCommand({
             id: "close-sidebar-files",
             name: "清空两侧边栏里打开的笔记（插件面板不动）",
-            hotkeys: [{ modifiers: ["Mod", "Alt"], key: "w" }],
+            hotkeys: [{ modifiers: ["Mod", "Alt"], key: "W" }],   // 字母要大写：Mac 上按住 ⌥ 打出来的是特殊字符，Obsidian 改按键位比对，区分大小写
             callback: () => this.closeFiles(["left", "right"]),
         });
         this.addCommand({
@@ -14,6 +42,7 @@ module.exports = class CloseSidebarFiles extends Plugin {
             callback: () => this.closeFiles(["right"]),
         });
         this.addRibbonIcon("panel-right-close", "清空侧边栏里打开的笔记", () => this.closeFiles(["left", "right"]));
+        this.addSettingTab(new CloseSidebarSettings(this.app, this));
     }
 
     // 能打开文件的那些 view type（markdown / pdf / image / audio / video / canvas / base，
