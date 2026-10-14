@@ -2,7 +2,7 @@
 # 把「马自立」库里自己做的插件（manifest 作者以「马自立」开头）同步到这个仓库，然后提交推送。
 # 只复制代码文件；data.json 等运行数据（含设置、token、使用记录）不进仓库。
 # 提交前会跑 redact.py 打码（清单在 redact.txt，不进仓库）
-# 用法：./sync.sh [提交说明]   提交说明里写 MAT-xx 会关联到那张 Linear 卡（见 linear-sync.py）
+# 用法：./sync.sh [提交说明]   默认不同步 Linear；LINEAR=1 ./sync.sh 才同步，提交说明里写 MAT-xx 会关联到那张卡（见 linear-sync.py）
 set -e
 SRC="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/马自立/.obsidian/plugins"
 DST="${0:A:h}"
@@ -69,5 +69,6 @@ if git diff --cached --quiet; then echo "没有变化"; exit 0; fi
 git commit -q -m "${1:-同步插件}"
 git remote get-url origin >/dev/null 2>&1 && git push -q
 git log --oneline -1
-# 同步到 Linear（提交信息写 MAT-xx 就挂到那张卡上，没写就按插件各建一张；没配 key 会跳过）
-"$DST/linear-sync.py" HEAD || true
+# 同步到 Linear：默认不同步（免费卡数满了，需求和进度改记在当天日记里），要同步时 LINEAR=1 ./sync.sh ...
+# 提交信息写 MAT-xx 就挂到那张卡上，没写就按插件各建一张；没配 key 会跳过
+if [[ $LINEAR == 1 ]]; then "$DST/linear-sync.py" HEAD || true; fi

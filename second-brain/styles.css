@@ -105,3 +105,10 @@
     0 14px 0 -6px rgba(255, 255, 255, .55), 0 15px 1px -6px rgba(20, 20, 40, .05);
 }
 .sb-review .sb-card.sb-walk.is-exiting { pointer-events: none; }
+/* 换卡时往上翻走的那张：复制出来浮在原处，样式和聚焦卡一样，翻完就删 */
+.sb-review { position: relative; }
+.sb-review .sb-card.sb-flip-ghost {
+  position: absolute; z-index: 1; box-sizing: border-box; margin: 0; overflow: hidden; pointer-events: none;
+  padding: 14px 16px; font-size: 1.08em; will-change: transform, opacity;
+}
+.sb-review .sb-card.sb-flip-ghost .sb-md { max-height: 60vh; }

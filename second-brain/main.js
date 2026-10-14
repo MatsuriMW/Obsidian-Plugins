@@ -5,7 +5,7 @@
 //   · 库周报：每周第一次打开时生成 计划与总结/库周报.md（新笔记、长得最多的页、候选建页词、孤岛变化）
 // 相关度 = 语义向量（本机 Ollama 的 embedding 模型，按意思找）+ BM25（中文按字的二元组切，按字面找）混合；Ollama 没开就只用 BM25。
 // 向量按块内容的哈希缓存在 ~/.cache/second-brain/vectors/（不放进库里，免得 iCloud 同步），两个库共用。
-const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, requestUrl } = require("obsidian");
+const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, Scope, requestUrl } = require("obsidian");
 const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto = require("crypto");
 const { EditorView } = require("@codemirror/view");
 
@@ -743,9 +743,9 @@ function wikiSources(text) {
 }
 
 // ---------- 每日回顾 ----------
-// 聚焦：和 Bullet 的 focus in / out 同一套动效——那张卡用 transform 从原来的位置滑到可视区 35% 高处，260ms、同一条缓动曲线；
-// 聚焦时只留这一张（其余卡片和 Wiki 回看、孤岛都收起），答完下一张从下面滑上来；退出时滑回列表里的位置，其余的淡入
-const FOCUS_RATIO = 0.35, GLIDE_MS = 260, GLIDE_EASE = "cubic-bezier(.2,.8,.2,1)";
+// 聚焦：和 Bullet 的 focus in / out 同一套动效——那张卡用 transform 从原来的位置滑到可视区正中，260ms、同一条缓动曲线；
+// 聚焦时只留这一张（其余卡片和 Wiki 回看、孤岛都收起）；换一张时旧的往上翻走、新的从下面翻上来；退出时滑回列表里的位置，其余的淡入
+const GLIDE_MS = 260, GLIDE_EASE = "cubic-bezier(.2,.8,.2,1)";
 const LIVE_WALK = ".sb-walk:not(.is-leaving):not(.is-exiting)";
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
 // dy = 从多远滑过来（像素，正数 = 从下面）；from = 没有原来的位置时（新换上来的一张）从下面 / 上面多远淡入
@@ -753,6 +753,13 @@ function glide(el, dy, from = 28) {
     if (!el?.animate || reducedMotion()) return;
     if (dy == null) el.animate([{ transform: `translateY(${from}px)`, opacity: 0.2 }, { transform: "none", opacity: 1 }], { duration: GLIDE_MS, easing: GLIDE_EASE });
     else if (Math.abs(dy) >= 2) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: GLIDE_MS, easing: GLIDE_EASE });
+}
+// 翻页：dir = 1 往后翻（旧的绕上沿往上翻走、新的绕下沿从下面翻上来），-1 往前翻（倒过来）。两张同时动，翻的时候往后倒、变淡
+const flipPose = (dy, deg) => `perspective(900px) translateY(${dy}px) rotateX(${deg}deg) scale(${dy ? 0.97 : 1})`;
+function flipIn(el, dir = 1) {
+    if (!el?.animate || reducedMotion()) return;
+    el.animate([{ transform: flipPose(36 * dir, 26 * dir), transformOrigin: dir > 0 ? "50% 100%" : "50% 0%", opacity: 0 },
+        { transform: flipPose(0, 0), transformOrigin: dir > 0 ? "50% 100%" : "50% 0%", opacity: 1 }], { duration: GLIDE_MS, easing: GLIDE_EASE });
 }
 class ReviewView extends ItemView {
     constructor(leaf, plugin) { super(leaf); this.plugin = plugin; this.shift = 0; this.orphanShift = 0; }
@@ -763,26 +770,31 @@ class ReviewView extends ItemView {
     async onClose() { this.plugin.reviewClosed(); }
     async onOpen() {
         this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt));
-        // 聚焦键先接住（capture），免得被别的快捷键吃掉
+        // 聚焦时 Esc 退出（capture，先于别的 Esc 处理）
         this.registerDomEvent(document, "keydown", (evt) => this.onFocusKey(evt), true);
+        // ⌥⌘→ / ⌥⌘← 是 Bullet 命令的热键，Obsidian 的热键系统在 window 捕获阶段就接走了，DOM 监听收不到；
+        // 挂在视图自己的 scope 上：这个视图是当前标签页时（主区或侧边栏都算）它排在全局热键前面
+        this.scope = new Scope(this.app.scope);
+        // 聚焦着的卡片变高变矮（揭开答案、图片加载完）或面板改了大小（拖侧边栏）：重新居中
+        this.focusRO = new ResizeObserver(() => this.recenter());
+        this.register(() => this.focusRO.disconnect());
         await this.render();
     }
-    // 聚焦 / 退出聚焦：和 Bullet 的 zoom-in / zoom-out 用同一组键（默认 ⌥⌘→ / ⌥⌘←），聚焦时 Esc 也能退出
-    hotkeyIs(evt, id, fallback) {
+    // 聚焦 / 退出聚焦：和 Bullet 的 zoom-in / zoom-out 用同一组键（默认 ⌥⌘→ / ⌥⌘←），跟着热键设置走，每次渲染重新绑一遍
+    bindFocusKeys() {
+        for (const h of this.focusHandlers || []) this.scope.unregister(h);
         const hm = this.app.hotkeyManager;
-        const keys = hm?.getHotkeys?.(id) || hm?.getDefaultHotkeys?.(id) || fallback;
-        const mac = navigator.platform.includes("Mac");
-        return (keys || []).some((h) => {
-            const mods = new Set((h.modifiers || []).map((m) => (m === "Mod" ? (mac ? "Meta" : "Ctrl") : m)));
-            return String(h.key).toLowerCase() === evt.key.toLowerCase() && evt.metaKey === mods.has("Meta") && evt.ctrlKey === mods.has("Ctrl") && evt.altKey === mods.has("Alt") && evt.shiftKey === mods.has("Shift");
-        });
+        const keysOf = (id, fallback) => hm?.getHotkeys?.(id) || hm?.getDefaultHotkeys?.(id) || fallback;
+        const bind = (keys, fn) => (keys || []).map((h) => this.scope.register(h.modifiers || [], h.key, () => { fn(); return false; }));
+        this.focusHandlers = [
+            ...bind(keysOf("bullet:zoom-in", [{ modifiers: ["Alt", "Mod"], key: "ArrowRight" }]), () => this.focusIn()),
+            ...bind(keysOf("bullet:zoom-out", [{ modifiers: ["Alt", "Mod"], key: "ArrowLeft" }]), () => this.focusOut()),
+        ];
     }
     onFocusKey(evt) {
-        if (this.app.workspace.getActiveViewOfType(ReviewView) !== this || evt.isComposing) return;
-        const bare = !evt.metaKey && !evt.ctrlKey && !evt.altKey && !evt.shiftKey;
-        if (this.hotkeyIs(evt, "bullet:zoom-in", [{ modifiers: ["Alt", "Mod"], key: "ArrowRight" }])) this.focusIn();
-        else if (this.hotkeyIs(evt, "bullet:zoom-out", [{ modifiers: ["Alt", "Mod"], key: "ArrowLeft" }]) || (this.focused && bare && evt.key === "Escape")) this.focusOut();
-        else return;
+        if (!this.focused || evt.key !== "Escape" || evt.metaKey || evt.ctrlKey || evt.altKey || evt.shiftKey || evt.isComposing) return;
+        if (this.app.workspace.getActiveViewOfType(ReviewView) !== this) return;
+        this.focusOut();
         evt.preventDefault(); evt.stopPropagation();
     }
     focusIn() {
@@ -795,27 +807,56 @@ class ReviewView extends ItemView {
         this.contentEl.addClass("sb-focus-mode");
         this.focusOn(c, before);
     }
-    // 让 c 成为聚焦的那一张。before = 它原来在屏幕上的 top（滑过来）；null = 新换上来的，从 from 像素外淡入
-    focusOn(c, before, from) {
+    // 让 c 成为聚焦的那一张。before = 它原来在屏幕上的 top（滑过来）；null = 新换上来的，按 dir 翻上来（1 从下面，-1 从上面）
+    focusOn(c, before, dir = 1) {
         this.contentEl.querySelectorAll(".sb-walk.is-focus").forEach((x) => { if (x !== c) { x.removeClass("is-focus", "has-more"); x.style.marginTop = ""; } });
         c.addClass("is-focus");
         c.toggleClass("has-more", this.contentEl.querySelectorAll(LIVE_WALK).length > 1 || !!this.walkQueue?.length);
         this.select(c);
-        // 落点：卡片顶端在可视区 35% 高处；卡片太高就往上提，底下留一点空
+        this.contentEl.scrollTop = 0;
+        this.placeFocus(c);
+        if (before == null) flipIn(c, dir);
+        else glide(c, before - c.getBoundingClientRect().top);
+        this.focusRO.disconnect();
+        this.focusRO.observe(this.contentEl);
+        this.focusRO.observe(c);
+    }
+    // 落点：放得下就让卡片中线对齐可视区中线（不管卡片多大）；放不下就贴着标题下面，往下滚着看
+    placeFocus(c) {
         c.style.marginTop = "";
         const el = this.contentEl;
-        el.scrollTop = 0;
         const box = el.getBoundingClientRect(), r = c.getBoundingClientRect();
-        const want = Math.min(box.top + el.clientHeight * FOCUS_RATIO, box.bottom - r.height - 16);
+        const want = box.top + el.clientTop + (el.clientHeight - r.height) / 2;
         const push = Math.max(0, Math.round(want - r.top));
         if (push) c.style.marginTop = push + "px";
-        glide(c, before == null ? null : before - c.getBoundingClientRect().top, from);
+    }
+    recenter() {
+        const c = this.focused && this.contentEl.querySelector(".sb-walk.is-focus:not(.is-exiting)");
+        if (!c) return;
+        // 用 offsetTop 量（不含正在播的 transform）；正在翻 / 滑的时候只摆位置，不另起动画，免得两段动画抢
+        const before = c.offsetTop;
+        this.placeFocus(c);
+        if (!c.getAnimations?.().length) glide(c, before - c.offsetTop);
+    }
+    // 换一张时旧的那张：复制一份浮在原处往上（dir = -1 往下）翻走，原来那张马上让位，新的同时翻上来
+    flipOut(c, dir = 1) {
+        if (!c?.isConnected || !c.animate || reducedMotion()) return;
+        const el = this.contentEl, box = el.getBoundingClientRect(), r = c.getBoundingClientRect();
+        const ghost = c.cloneNode(true);
+        ghost.className = "sb-card sb-flip-ghost";
+        Object.assign(ghost.style, { top: `${r.top - box.top - el.clientTop + el.scrollTop}px`, left: `${r.left - box.left - el.clientLeft}px`, width: `${r.width}px`, height: `${r.height}px`, marginTop: "0" });
+        el.appendChild(ghost);
+        const origin = dir > 0 ? "50% 0%" : "50% 100%";
+        ghost.animate([{ transform: flipPose(0, 0), transformOrigin: origin, opacity: 1 },
+            { transform: flipPose(-32 * dir, -34 * dir), transformOrigin: origin, opacity: 0 }], { duration: GLIDE_MS, easing: GLIDE_EASE, fill: "forwards" })
+            .finished.catch(() => {}).then(() => ghost.remove());
     }
     focusOut() {
         if (!this.focused) return;
         const c = this.contentEl.querySelector(".sb-walk.is-focus");
         const before = c?.getBoundingClientRect().top;
         this.focused = false;
+        this.focusRO.disconnect();
         this.contentEl.removeClass("sb-focus-mode");
         if (!c) return;
         c.removeClass("is-focus", "has-more");
@@ -839,8 +880,8 @@ class ReviewView extends ItemView {
             evt.preventDefault();
             const i = c ? cards.indexOf(c) + (evt.key === "ArrowDown" ? 1 : -1) : 0;
             const to = cards[Math.max(0, Math.min(cards.length - 1, i))];
-            // 聚焦时换一张：新的一张从按的方向滑进来
-            if (this.focused) { if (to !== c) this.focusOn(to, null, evt.key === "ArrowDown" ? 28 : -28); }
+            // 聚焦时换一张：↓ 旧的往上翻走、下一张从下面翻上来；↑ 反过来
+            if (this.focused) { if (to !== c) { const dir = evt.key === "ArrowDown" ? 1 : -1; this.flipOut(c, dir); this.focusOn(to, null, dir); } }
             else this.select(to, true);
             return;
         }
@@ -862,6 +903,7 @@ class ReviewView extends ItemView {
         const stale = () => seq !== this.renderSeq;
         const el = this.contentEl; el.empty(); el.addClass("sb-view", "sb-review");
         this.selected = null;
+        this.bindFocusKeys();
         const today = M().format("YYYY-MM-DD");
         const head = el.createDiv({ cls: "sb-head" });
         head.createEl("b", { text: `🗓 每日回顾 · ${today}` });
@@ -932,19 +974,19 @@ class ReviewView extends ItemView {
         for (const it of order.slice(0, n)) this.walkCard(s, it);
     }
     // 这张处理完了：收起来，后面的往上顶，从队列里补一张
-    // 聚焦着的那一张不收高度：往上淡出（transform），下一张从下面滑上来
+    // 聚焦着的那一张不收高度：当场往上翻走，下一张同时从下面翻上来
     dismissWalk(c) {
         if (!c.matches(LIVE_WALK)) return;
         const inFocus = this.focused && c.hasClass("is-focus");
         if (inFocus) {
             c.addClass("is-exiting");
-            if (c.animate && !reducedMotion()) c.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-18px) scale(.98)" }], { duration: GLIDE_MS, easing: GLIDE_EASE, fill: "forwards" });
+            this.flipOut(c, 1);
         } else {
             c.style.height = c.offsetHeight + "px";
             c.addClass("is-leaving");
             requestAnimationFrame(() => { c.style.height = "0px"; });
         }
-        setTimeout(() => {
+        const finish = () => {
             const box = c.parentElement;
             const wasSel = this.selected === c, at = box ? [...box.querySelectorAll(".sb-walk")].indexOf(c) : -1;
             c.remove();
@@ -958,7 +1000,8 @@ class ReviewView extends ItemView {
                 if (inFocus && this.focused && to) this.focusOn(to, null);
                 else this.select(to, true);
             }
-        }, GLIDE_MS);
+        };
+        if (inFocus) finish(); else setTimeout(finish, GLIDE_MS);
     }
     walkCard(parent, it) {
         const p = this.plugin;
