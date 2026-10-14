@@ -60,7 +60,7 @@
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
 | **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察 | ★ | 螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型 |
-| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区（已经做成闪卡的块归 DONE 区）；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历、提醒事项，或者交给 AI 解释（讲讲这一块是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的 💡 子块，再发一次是换成新的）。发给 Claude CLI 时在这一行下面记下是哪个会话（🔗）；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑。发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午3点这类时刻。还可以让 Obsidian 自带的斜杠命令只留名字里带「块」的命令 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
+| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区（已经做成闪卡的块归 DONE 区），DOING / TODO 区里按优先级 [#A] → [#B] → [#C] 排，DONE 区里 SUSPENDED / FAILED / CANCELLED 各自聚在一起；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历、提醒事项，或者交给 AI 解释（讲讲这一块是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的 💡 子块，再发一次是换成新的）。发给 Claude CLI 时在这一行下面记下是哪个会话（🔗）；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑。发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午3点这类时刻。还可以让 Obsidian 自带的斜杠命令只留名字里带「块」的命令 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
 | **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
 | **看板直达**<br>[`board-jump`](board-jump) | 跳到常用看板：看板切换器（开在 Better Command Palette 里，书签和看板一起搜）、obsidian:// 链接、看板全宽显示 | ★★ | 看板笔记带 `type: 看板` 属性；切换器要配合 Better Command Palette 和 Palette Enhancements |
 | **看板聚焦**<br>[`board-zoom`](board-zoom) | 从 Dataview 看板点开某一条时，自动聚焦到那个列表块 | ★ | Dataview + Bullet |
@@ -84,7 +84,7 @@
 | **Flashcards**<br>[`flashcards-obsidian`](flashcards-obsidian) | 从笔记生成并同步 Anki 卡片。改动：卡片的上下文会带上包着它的各层母块，在 Anki 里也知道这张卡在讲什么 | ★★ | Anki + AnkiConnect |
 | **Expandomatic**<br>[`expandomatic`](expandomatic) | 选区按 词 → 句 → 段 → 节 → 全文 逐级扩大，和 VSCode 的扩选一样。改动：和「编辑体验 Logseq 化」的块选中配合调整过 | ★★★ | 无 |
 | **MDFlow（自用）**<br>[`mdflow-local`](mdflow-local) | 把 Markdown 排成公众号文章、X Articles 和小红书图片。本地版，不跟插件市场更新 | ★★ | 无 |
-| **TODOseq**<br>[`todoseq`](todoseq) | 用 Logseq 式关键词（TODO / DOING / DONE）做轻量任务跟踪。改动：切换状态的快捷键让给了「任务状态快切」；关键词上不再挂悬停说明；关键词按状态上色（低饱和的蓝、红、绿，停下来的、没成的用暖灰色）；行里写的 2/3 这种进度不再被当成日期 | ★★ | 无 |
+| **TODOseq**<br>[`todoseq`](todoseq) | 用 Logseq 式关键词（TODO / DOING / DONE）做轻量任务跟踪。改动：切换状态的快捷键让给了「任务状态快切」；关键词上不再挂悬停说明；关键词按状态上色（低饱和的蓝、红、绿，停下来的、没成的用暖灰色）；行里写的 2/3 这种进度不再被当成日期；优先级可以简写成 todoa、todo a、doing b，光标离开那一行就改成 TODO [#A]；⌃⇧I / ⌃⇧U 切换「重要」「紧急」（A 重要且紧急、B 紧急不重要、C 重要不紧急，从块去向搬过来的） | ★★ | 无 |
 
 ### 附：没改代码、只固定了版本的社区插件
 

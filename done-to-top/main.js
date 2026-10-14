@@ -25,6 +25,11 @@
 //     没写就看「明天 / 后天 / 大后天」，再没有就是这篇日记的那一天；时刻认 14:00、14:00-15:30、8pm、8:00pm、7am-9am、下午3点、晚上8点半、下午3点到5点，有时刻的就不是全天
 //   · 音效：发出去的那一下响一声，用的是螺旋日程那套任务状态的音（开关也跟它走，没装就不响）。
 //     页面顶部、今天 / 明天的日记、日历、提醒事项是 DONE 那一声；交给 Claude CLI、Claudian、MD Flow 去做的是 DOING 那一声
+//   · 优先级（Logseq 写法）：「TODO [#A] 核心任务」「TODO [#B] 重要任务」「TODO [#C] 次要任务」。
+//     简写「todoa」「todo a」「doing b」整理时改成标准写法（螺旋日程计时用的时刻排在前面：DOING 14:05 [#A] …）。
+//     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING 在 PAUSED 前、TODO 在 WAITING 前）；
+//     DONE 区不看优先级，只按关键字聚类：DONE → SUSPENDED → FAILED → CANCELLED。块内部用分割线分了栏的也照此排
+//     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
 
@@ -56,6 +61,34 @@ const LEADING_TIME_RE = /^\d{1,2}(?:[:：]\d{2}|点)/;
 const TIME_OR_RANGE_RE = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
 const SINGLE_TIME_RE = /^(\d{1,2}[:：]\d{2})(?!\s*[-–~～]\s*\d)\s*/;
 const LOWER_KW_RE = /^(todo|doing|done)(?=[\s:：]|$)[:：]?\s*/i;   // todo / Todo / todo： → TODO
+// 优先级：[#A] / [#B] / [#C]（Logseq 写法）
+const PRIO_RE = /\[#([ABC])\]/;
+const PRIO_HEAD_RE = /^\[#([ABC])\]\s*/;
+const PRIO_RANK = { A: 0, B: 1, C: 2 };          // 没写的排在 C 后面（3）
+const SHORT_KW_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE)/i;
+// 优先级的简写：关键字后面紧跟 a / b / c（todoa 写稿），或者隔空格（todo a 写稿、doing b）。
+// 隔空格的，a / b / c 后面要么没字了、要么紧跟中文、要么空格后面不是英文字母（todo a book 是英文句子，不算）
+function prioShort(s) {
+	const k = SHORT_KW_RE.exec(s);
+	if (!k) return null;
+	const r = s.slice(k[0].length);
+	const m = /^([abcABC])(?=$|[\s:：]|[^\x00-\x7f])/.exec(r) || /^[ \t]+([abcABC])(?=$|[^\x00-\x7f]|[ \t]+(?![ \tA-Za-z]))/.exec(r);
+	if (!m) return null;
+	return { kw: k[1].toUpperCase(), prio: m[1].toUpperCase(), rest: r.slice(m[0].length).replace(/^[\s:：]+/, "") };
+}
+function hasPrioShort(line) {
+	const m = line.match(ITEM_RE);
+	return !!(m && prioShort(m[2].replace(STAMP_RE, "")));
+}
+// 优先级标记放在关键字（和紧跟着的时刻）后面：TODO [#A] 写稿、DOING 14:05 [#A] 写稿。
+// 螺旋日程靠「关键字后面紧跟的时刻」计时，所以时刻在前
+function joinPrio(prio, rest) {
+	if (!prio) return rest;
+	const t = rest.match(TIME_OR_RANGE_RE);
+	if (!t) return `[#${prio}]${rest ? " " + rest : ""}`;
+	const after = rest.slice(t[0].length);
+	return `${t[0].trimEnd()} [#${prio}]${after ? " " + after : ""}`;
+}
 const ZONE = {
 	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE", SUSPENDED: "DONE",
 	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
@@ -120,16 +153,49 @@ function zoneOf(line) {
 	return k ? ZONE[k[1]] : null;
 }
 
-// todo / Doing / done： 这类写法统一成大写关键字；DOING 没写时间的话（withTime）补上开始时间
+// todo / Doing / done： 这类写法统一成大写关键字；优先级的简写（todoa / todo a / doing b）改成「TODO [#A]」；
+// DOING 没写时间的话（withTime）补上开始时间
 function normalizeKeyword(line, withTime) {
 	const m = line.match(ITEM_RE);
 	if (!m) return line;
-	const k = m[2].match(LOWER_KW_RE);
-	if (!k) return line;
-	const kw = k[1].toUpperCase();
-	let body = m[2].slice(k[0].length);
+	let rest = m[2], stamp = "";
+	const st = rest.match(STAMP_RE);
+	if (st) { stamp = st[0]; rest = rest.slice(st[0].length); }
+	let kw, prio = null, body;
+	const ps = prioShort(rest);
+	if (ps) { kw = ps.kw; prio = ps.prio; body = ps.rest; }
+	else {
+		const k = rest.match(LOWER_KW_RE);
+		if (!k) return line;
+		kw = k[1].toUpperCase();
+		body = rest.slice(k[0].length);
+	}
 	if (kw === "DOING" && withTime && !LEADING_TIME_RE.test(body)) body = body ? `${nowHM()} ${body}` : nowHM();
-	return `${m[1]}${kw}${body ? " " + body : ""}`;
+	body = joinPrio(prio, body);
+	return `${m[1]}${stamp}${kw}${body ? " " + body : ""}`;
+}
+
+// 这一块在本区里排第几类：DOING / TODO 区先按优先级（A → B → C → 没写），同一级里同一个关键字的挨在一起；
+// DONE 区不看优先级，只按关键字聚类（DONE 和手动放进来的、闪卡在前，然后 SUSPENDED → FAILED → CANCELLED）
+const KW_CLUSTER = {
+	DONE: { SUSPENDED: 1, FAILED: 2, CANCELLED: 3, CANCELED: 3 },
+	DOING: { PAUSED: 1 },
+	TODO: { WAITING: 1, WAIT: 1 },
+};
+function rankIn(zone, line) {
+	let rest = line.replace(/^[ \t]*(?:[-*+]|\d+[.)])\s+/, "").replace(STAMP_RE, "");
+	let kw = null;
+	const cb = rest.match(/^\[(.)\](\s+|$)/);
+	if (cb) kw = cb[1] === "-" ? "CANCELLED" : null;
+	else { const k = rest.match(KEYWORD_RE); kw = k ? k[1] : null; }
+	const cluster = (kw && KW_CLUSTER[zone] && KW_CLUSTER[zone][kw]) || 0;
+	if (zone === "DONE") return cluster;
+	const p = line.match(PRIO_RE);
+	return (p ? PRIO_RANK[p[1]] : 3) * 10 + cluster;
+}
+// 稳定排序：同一类里保持原来的先后
+function sortZone(zone, items) {
+	return items.map((ls, i) => ({ ls, i, k: rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
 }
 
 // 把正文切成顶格块：顶格非空行开一个新块，缩进行 / 空行 / 代码块里的行跟着上一块
@@ -263,7 +329,7 @@ function organizeInner(lines) {
 	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length);
 	let started = false;
 	const add = (ls) => { if (!ls.length) return; if (started || emptyDone) out.push(sep); out.push(...ls); started = true; };
-	for (const z of ["DONE", "DOING", "TODO"]) add(zones[z].flat());
+	for (const z of ["DONE", "DOING", "TODO"]) add(sortZone(z, zones[z]).flat());
 	add(rest.flat());
 	return out;
 }
@@ -287,8 +353,8 @@ function organize(text) {
 	// 一篇没分区的普通笔记不去动它，免得平白插进去几条分割线
 	const zoned = blocks.some((b) => b.zone || b.sep);
 	for (const b of blocks) {
-		if (!b.sep && !b.zone) {
-			// 小写关键字先规范，再重新判断
+		if (!b.sep && (!b.zone || hasPrioShort(b.lines[0]))) {
+			// 小写关键字、优先级简写（todo a / TODO a）先规范，再重新判断
 			const fixed = normalizeKeyword(b.lines[0], false);
 			if (fixed !== b.lines[0]) { b.lines[0] = fixed; b.zone = zoneOf(fixed); }
 		}
@@ -309,7 +375,7 @@ function organize(text) {
 	// DONE 栏空着、下面又有别的内容时，开头留一条分隔线占住 DONE 栏的位置（不然下面那段会被当成 DONE 栏）
 	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length || links.length);
 	const add = (ls) => { if (!ls.length) return; if (out.length || emptyDone) out.push(SEP); out.push(...ls); };
-	for (const z of ["DONE", "DOING", "TODO"]) add(zones[z].flat());
+	for (const z of ["DONE", "DOING", "TODO"]) add(sortZone(z, zones[z]).flat());
 	add(links.flat());                                        // 链接区：任务区（TODO）下面、其它内容上面
 	add(rest.flatMap((b) => b.lines));
 	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length, LINK: links.length, inner };
@@ -351,6 +417,7 @@ function place(text, blockLines, zone) {
 
 // 改这一行的状态
 function mark(line, zone) {
+	if (hasPrioShort(line)) line = normalizeKeyword(line, false);   // 简写（todo a）先改成「TODO [#A]」
 	const m = line.match(BULLET_RE);
 	let content = m[4];
 	let stamp = "";
@@ -362,12 +429,22 @@ function mark(line, zone) {
 	// SUSPENDED 整理时归 DONE 区，但手动标成 DONE 时要真的改成 DONE
 	if (kw && ZONE[old] === zone && old !== "SUSPENDED") {
 		// 已经是这个状态，只挪位置；DOING 没记开始时间的补上
-		const body = content.slice(kw[0].length);
+		const body0 = content.slice(kw[0].length);
+		const pb = body0.match(PRIO_HEAD_RE);
+		const body = pb ? body0.slice(pb[0].length) : body0;
 		if (old !== "DOING" || LEADING_TIME_RE.test(body)) return line;
-		return `${m[1]}${m[2]} ${stamp}DOING ${nowHM()}${body ? " " + body : ""}`;
+		return `${m[1]}${m[2]} ${stamp}DOING ${joinPrio(pb && pb[1], body ? `${nowHM()} ${body}` : nowHM())}`;
 	}
 	content = content.replace(CHECKBOX_RE, "");
 	content = low ? content.slice(low[0].length) : content.replace(KEYWORD_RE, "");
+	// 优先级先拿出来（在时刻前后都认），状态改完再按「时刻在前、优先级在后」放回去
+	let prio = null;
+	{
+		const t = content.match(TIME_OR_RANGE_RE);
+		const off = t ? t[0].length : 0;
+		const p = content.slice(off).match(PRIO_HEAD_RE);
+		if (p) { prio = p[1]; content = content.slice(0, off) + content.slice(off + p[0].length); }
+	}
 	const wasStamped = old === "DOING" || old === "NOW" || old === "IN-PROGRESS" || old === "DONE";
 	if (zone === "DONE") {
 		// 完成时间写在 DONE 后面，螺旋日程靠它定位；DOING 记过开始时间的写成「开始-现在」
@@ -381,24 +458,8 @@ function mark(line, zone) {
 		// 退回 TODO：DOING / DONE 留下的时间戳去掉，不然螺旋日程会当成钉了时间的任务
 		content = content.replace(TIME_OR_RANGE_RE, "");
 	}
+	if (prio) content = joinPrio(prio, content.trimEnd());
 	return `${m[1]}${m[2]} ${stamp}${zone}${content ? " " + content : ""}`;
-}
-
-// ---------- 四象限（任务管理看板的 #q1…#q4）----------
-const QUAD_RE = /(?<![A-Za-z0-9_/#&;])#q([1-4])(?![\p{L}\p{N}_/-])/giu;
-const QUAD = { 1: [1, 1], 2: [1, 0], 3: [0, 1], 4: [0, 0] };   // [重要, 紧急]
-
-function toggleQuadrant(line, axis) {
-	const found = [...line.matchAll(QUAD_RE)];
-	const cur = found.length ? QUAD[found[0][1]].slice() : [0, 0];
-	cur[axis] = cur[axis] ? 0 : 1;
-	const key = cur[0] && cur[1] ? 1 : cur[0] ? 2 : cur[1] ? 3 : 0;   // 都不是 = 不标
-	let out = line.replace(QUAD_RE, "").replace(/(\S)[ \t]{2,}/g, "$1 ").replace(/\s+$/, "");
-	if (key) {
-		const id = out.match(/\s+\^[A-Za-z0-9-]+$/);   // 块 ID 要留在行尾
-		out = id ? `${out.slice(0, id.index)} #q${key}${id[0]}` : `${out} #q${key}`;
-	}
-	return { line: out, key };
 }
 
 // ---------- 明天 / 后天 / 大后天：搬到那一天的日记 ----------
@@ -466,8 +527,6 @@ function addBlock(text, lines) {
 	if (zone) return place(text, lines, zone).text;
 	return text.replace(/\s*$/, "\n") + lines.join("\n") + "\n";
 }
-
-const QUAD_LABEL = ["已清除四象限标记", "#q1 重要且紧急", "#q2 重要不紧急", "#q3 紧急不重要"];
 
 // 算出只替换「前后不一样的那几行」的一次改动：一次 ⌘Z 撤销，折叠和滚动位置也不乱
 function diffChange(oldText, newText) {
@@ -550,7 +609,7 @@ function applyText(editor, newText, cursor) {
 	return true;
 }
 
-const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, toggleQuadrant, diffChange, diffChanges, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
+const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, prioShort, joinPrio, sortZone, diffChange, diffChanges, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
 
 // ---------- 发送去向 ----------
 const execFile = (cmd, args, timeout = 30000, env = undefined) => new Promise((ok) => {
@@ -913,18 +972,6 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			name: "一键整理：DONE / DOING / TODO / 其它 分区（块内也按分割线分区）",
 			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "f" }],
 			editorCallback: (editor, ctx) => this.organize(editor, ctx),
-		});
-		this.addCommand({
-			id: "toggle-important",
-			name: "切换「重要」（四象限 #q1…#q4）",
-			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "i" }],
-			editorCallback: (editor) => this.quadrant(editor, 0),
-		});
-		this.addCommand({
-			id: "toggle-urgent",
-			name: "切换「紧急」（四象限 #q1…#q4）",
-			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "u" }],
-			editorCallback: (editor) => this.quadrant(editor, 1),
 		});
 		// 命令名里带「明天」：编辑器里打 /明天 就能从斜杠命令里叫出来
 		this.addCommand({
@@ -1703,35 +1750,6 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const c = res.counts;
 		const days = moved.length ? `\n搬到以后的日记：${this.movedSummary(moved)}` : "";
 		new Notice(changed ? `已整理：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}${c.LINK ? ` · 链接 ${c.LINK}` : ""}${c.inner ? `\n块内归位 ${c.inner} 处` : ""}${days}` : "已经是整理好的样子");
-	}
-
-	quadrant(editor, axis) {
-		const lines = new Set();
-		for (const s of editor.listSelections()) {
-			const a = Math.min(s.anchor.line, s.head.line), z = Math.max(s.anchor.line, s.head.line);
-			if (a === z) {
-				// 光标在续行上时算到它所属的那一项
-				let n = a;
-				while (n >= 0 && !ITEM_RE.test(editor.getLine(n))) n--;
-				if (n >= 0) lines.add(n);
-			} else for (let n = a; n <= z; n++) if (ITEM_RE.test(editor.getLine(n))) lines.add(n);
-		}
-		const changes = [];
-		let last = null;
-		for (const n of lines) {
-			const old = editor.getLine(n);
-			if (SEP_RE.test(old.trim())) continue;
-			const res = toggleQuadrant(old, axis);
-			if (res.line === old) continue;
-			changes.push({ from: { line: n, ch: 0 }, to: { line: n, ch: old.length }, text: res.line });
-			last = res.key;
-		}
-		if (!changes.length) {
-			new Notice("光标不在列表项上");
-			return;
-		}
-		editor.transaction({ changes });
-		new Notice(QUAD_LABEL[last]);
 	}
 };
 module.exports.core = core;
