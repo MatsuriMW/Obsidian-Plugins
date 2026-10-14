@@ -7,6 +7,7 @@
  *
  * 1. 任务分区：顶格任务块（连同子块）按状态排成 DONE → DOING → TODO → 没状态的（原样在最下面），区之间用「- ---」隔开。
  *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
+ *    顶格只写「- [[信息增量]]」的那一块归 DOING 区，排在 DOING 区最后（问题汇总、摘录都不碰它）。
  *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
  *    聚成「链接」区，放在 TODO 区下面；有任务关键字的算任务，优先级更高。
  *    规则和 done-to-top 插件的「一键整理」（⌥1 / ⌃⇧F）是同一份（用它的 core，含「明天 / 后天 / 大后天」搬到那天日记）；那个插件没开时退回旧的「待办上移」。
@@ -64,6 +65,7 @@ const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|L
 const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
+const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 DOING 区最后
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 
@@ -172,12 +174,14 @@ function findQuestionCandidates(text, title) {
     const { fm } = splitFrontmatter(text);
     const sum = findSummaryBlock(lines, title);
     const out = [];
-    let inFence = false;
+    let inFence = false, inInfo = false;
     for (let i = fm.length; i < lines.length; i++) {
         const l = lines[i];
         if (/^[ \t]*(```|~~~)/.test(l)) { inFence = !inFence; continue; }
         if (inFence || isBlank(l)) continue;
         if (sum && i >= sum.start && i < sum.end) continue;
+        if (!/^[ \t]/.test(l)) inInfo = INFO_HEAD_RE.test(l);
+        if (inInfo) continue;                                                                   // 信息增量是记下来的结论，不是问题
         const bare = l.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "").replace(/`[^`]*`/g, "");
         if (!/[?？]/.test(bare)) continue;
         if (/#card(?:[-/][\w-]+)?\b/.test(l) || /\^[A-Za-z0-9-]+\s*$/.test(l)) continue;      // 闪卡、带块标识的
@@ -320,7 +324,7 @@ function findExcerptCandidates(text, tag, summaryTitle) {
     const out = [];
     for (const s of segment(splitFrontmatter(text).body)) {
         const first = s.lines[0];
-        if (!LIST_ITEM.test(first) || SEP_LINE.test(first) || TASK_TOP.test(first) || THEME_HEAD_RE.test(first)) continue;
+        if (!LIST_ITEM.test(first) || SEP_LINE.test(first) || TASK_TOP.test(first) || THEME_HEAD_RE.test(first) || INFO_HEAD_RE.test(first)) continue;
         if (hasTag(first, tag) || first.startsWith("- " + summaryTitle)) continue;
         const all = s.lines.join("\n");
         if (/#(?:card|toread|towatch)\b/.test(all) || /^[ \t]*(```|~~~)/m.test(all)) continue;
@@ -748,6 +752,7 @@ module.exports = class JournalTidy extends Plugin {
             return `- DONE ${moment(at).format("HH:mm")} 🤖 归档「${safeTitle(x.title)}」` + (x.min >= 1 ? ` ${fmtMin(x.min)}` : "");
         });
         const written = [];
+        const dtt = this.app.plugins.plugins["done-to-top"];
         await this.edit(file, (text) => {
             for (const l of lines) {
                 if (text.includes(l.slice(l.indexOf("🤖")).replace(/ \d+h?\d*m?$/, ""))) continue;   // 今天已经记过这个标题

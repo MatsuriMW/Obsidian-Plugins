@@ -30,6 +30,9 @@
 //     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING 在 PAUSED 前、TODO 在 WAITING 前）；
 //     DONE 区不看优先级，只按关键字聚类：DONE → SUSPENDED → FAILED → CANCELLED。块内部用分割线分了栏的也照此排
 //     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
+//   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，也归 DOING 区，排在 DOING 区最后；一篇里有好几块的并成一块。
+//     core.appendInfo(text, [文字…]) 往它下面追加子块，还没有就在 DOING 区最后建一个（AI 记信息增量用）
+//   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
 
@@ -95,6 +98,9 @@ const ZONE = {
 	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO",
 };
+// 常驻 DOING 区的母块：顶格只写「- [[信息增量]]」的那一块没有状态，也归 DOING 区，排在 DOING 区最后。
+// AI 往它下面追加子块，它在哪儿都一样追加；一篇里有好几块的，整理时并成一块
+const DOING_PIN_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;
 const TAB_WIDTH = 4;
 // 单独占一行的块 ID：闪卡插件（flashcards-obsidian）把卡片的标识符写在卡片最后一行的下一行、顶格，比如「^q-r7d4」。
 // 它没有缩进，但属于上面那一块，切块时不能把它当成新的一块
@@ -194,9 +200,9 @@ function rankIn(zone, line) {
 	const p = line.match(PRIO_RE);
 	return (p ? PRIO_RANK[p[1]] : 3) * 10 + cluster;
 }
-// 稳定排序：同一类里保持原来的先后
+// 稳定排序：同一类里保持原来的先后。「- [[信息增量]]」排在 DOING 区最后
 function sortZone(zone, items) {
-	return items.map((ls, i) => ({ ls, i, k: rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
+	return items.map((ls, i) => ({ ls, i, k: DOING_PIN_RE.test(ls[0]) ? 1e3 : rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
 }
 
 // 把正文切成顶格块：顶格非空行开一个新块，缩进行 / 空行 / 代码块里的行跟着上一块
@@ -212,8 +218,8 @@ function parse(text) {
 		const fence = /^\s*(```|~~~)/.test(line);
 		const startsNew = !inFence && !isBlank(line) && !/^\s/.test(line) && !ID_LINE_RE.test(line);   // 块 ID 那一行跟着上一块
 		if (startsNew || !blocks.length) {
-			const sep = SEP_RE.test(line);
-			blocks.push({ lines: [line], start: i, sep, zone: sep ? null : zoneOf(line) });
+			const sep = SEP_RE.test(line), pin = DOING_PIN_RE.test(line);
+			blocks.push({ lines: [line], start: i, sep, pin, zone: sep ? null : pin ? "DOING" : zoneOf(line) });
 		} else blocks[blocks.length - 1].lines.push(line);
 		if (fence) inFence = !inFence;
 	}
@@ -347,12 +353,14 @@ function organize(text) {
 	const { head, blocks, tail } = parse(text);
 	const zones = { DONE: [], DOING: [], TODO: [] };
 	const links = [], rest = [];
+	let pin = null;   // 「- [[信息增量]]」那一块（DOING 区里）
 	const keep = doneZoneEnd(blocks);
 	blocks.forEach((b, i) => { b.inDone = i < keep; });
 	let inner = 0;
 	// 链接区只在已经分区的文件（日记那种：有状态块或分割线）里排；
 	// 一篇没分区的普通笔记不去动它，免得平白插进去几条分割线
-	const zoned = blocks.some((b) => b.zone || b.sep);
+	const zoned = blocks.some((b) => (b.zone && !b.pin) || b.sep);
+	if (!zoned) for (const b of blocks) if (b.pin) { b.pin = false; b.zone = null; }   // 没分区的笔记：「- [[信息增量]]」也原样不动
 	for (const b of blocks) {
 		if (!b.sep && (!b.zone || hasPrioShort(b.lines[0]))) {
 			// 小写关键字、优先级简写（todo a / TODO a）先规范，再重新判断
@@ -365,7 +373,9 @@ function organize(text) {
 			if (fixedKids.join("\n") !== b.lines.join("\n")) { b.lines = fixedKids; inner++; }
 		}
 		if (!b.sep && isCardBlock(b.lines)) b.zone = "DONE";   // 做成了闪卡的块归 DONE 区，不管首行写的是什么状态
-		if (b.zone) zones[b.zone].push(trimBlock(b.lines));
+		if (b.pin && pin) pin.push(...trimBlock(b.lines).slice(1));   // 第二块「- [[信息增量]]」：子块并进第一块
+		else if (b.pin) zones.DOING.push((pin = trimBlock(b.lines)));
+		else if (b.zone) zones[b.zone].push(trimBlock(b.lines));
 		else if (b.inDone) zones.DONE.push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
 		else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
 		else if (zoned && isLinkBlock(b.lines)) links.push(trimBlock(b.lines));   // 链接类：归到链接区
@@ -379,7 +389,7 @@ function organize(text) {
 	for (const z of ["DONE", "DOING", "TODO"]) add(sortZone(z, zones[z]).flat());
 	add(links.flat());                                        // 链接区：任务区（TODO）下面、其它内容上面
 	add(rest.flatMap((b) => b.lines));
-	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length, LINK: links.length, inner };
+	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length - (pin ? 1 : 0), TODO: zones.TODO.length, LINK: links.length, inner };
 	return { text: head.concat(out, tail).join("\n"), counts };
 }
 
@@ -401,7 +411,8 @@ function place(text, blockLines, zone) {
 		while (headEnd < blocks.length && (blocks[headEnd].sep || blocks[headEnd].zone)) headEnd++;
 		idx = -1;
 		for (const z of zone === "DOING" ? ["DOING"] : ["TODO", "DOING"]) {
-			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z) { idx = i + 1; break; }
+			// 新的 DOING 放在「- [[信息增量]]」前面，它留在 DOING 区最后
+			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z && !(zone === "DOING" && blocks[i].pin)) { idx = i + 1; break; }
 			if (idx >= 0) break;
 		}
 		if (idx < 0) idx = hasZone ? doneEnd + 1 : 0;   // 紧跟 DONE 栏的分隔线
@@ -524,9 +535,22 @@ function dropBlocks(text, origs) {
 
 // 把一块写进日记：任务进分区，其余追加到末尾
 function addBlock(text, lines) {
-	const zone = zoneOf(lines[0]);
+	const zone = zoneOf(lines[0]) || (DOING_PIN_RE.test(lines[0]) ? "DOING" : null);
 	if (zone) return place(text, lines, zone).text;
 	return text.replace(/\s*$/, "\n") + lines.join("\n") + "\n";
+}
+
+// 往「- [[信息增量]]」下面追加子块（items 是一条条的文字，不带「- 」）：接在那一块最后一个子块后面，块在哪儿都一样；
+// 还没有这一块就在 DOING 区最后建一个。AI 记信息增量时用：app.plugins.plugins["done-to-top"].core.appendInfo
+function appendInfo(text, items) {
+	const kids = items.map((s) => String(s).replace(/[\r\n]+/g, " ").trim()).filter(Boolean).map((s) => "\t- " + s);
+	if (!kids.length) return text;
+	const { head, blocks, tail } = parse(text);
+	const b = blocks.find((x) => x.pin);
+	if (!b) return addBlock(text, ["- [[信息增量]]", ...kids]);
+	const ls = trimBlock(b.lines);
+	b.lines = [...ls, ...kids, ...b.lines.slice(ls.length)];
+	return head.concat(blocks.flatMap((x) => x.lines), tail).join("\n");
 }
 
 // 算出只替换「前后不一样的那几行」的一次改动：一次 ⌘Z 撤销，折叠和滚动位置也不乱
@@ -610,7 +634,7 @@ function applyText(editor, newText, cursor) {
 	return true;
 }
 
-const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, prioShort, joinPrio, sortZone, diffChange, diffChanges, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock };
+const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, organize, organizeInner, isLinkBlock, place, mark, zoneOf, normalizeKeyword, prioShort, joinPrio, sortZone, diffChange, diffChanges, SEP, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock, appendInfo };
 
 // ---------- 发送去向 ----------
 const execFile = (cmd, args, timeout = 30000, env = undefined) => new Promise((ok) => {
@@ -1003,6 +1027,13 @@ module.exports = class DoneToTopPlugin extends Plugin {
 				new Notice(this.settings.hideDone ? "日记的 DONE 区已隐藏" : "日记的 DONE 区已显示");
 			},
 		});
+		// 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（藏着的话先放出来）
+		for (const [id, key, name, where] of [
+			["jump-doing", "1", "跳到 DOING 区", "DOING"],
+			["jump-todo", "2", "跳到 TODO 区", "TODO"],
+			["jump-end", "3", "跳到结尾", "END"],
+			["jump-done", "0", "跳到 DONE 区（藏着的话先显示出来）", "DONE"],
+		]) this.addCommand({ id, name, hotkeys: [{ modifiers: ["Ctrl"], key }], editorCallback: (editor) => this.jumpTo(editor, where) });
 		this.addCommand({
 			id: "mark-done-and-move-to-top",
 			name: "标记 DONE 并移到页面顶部",
@@ -1748,6 +1779,37 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			const line = Math.min(after, editor.lineCount() - 1);
 			cm.dispatch({ effects: EditorView.scrollIntoView(editor.posToOffset({ line, ch: 0 }), { y: "start", yMargin: offset }) });
 		} catch (e) { /* 滚不了就留在 CodeMirror 自己定的位置 */ }
+	}
+
+	// 跳到某一区的第一块（光标放在那一行末尾，那一行滚到屏幕上方）。DOING / TODO 只在 DONE 栏后面找；
+	// DONE：DONE 栏藏着的话先把隐藏关掉（和命令「隐藏 / 显示日记的 DONE 区」是同一个开关），再跳到栏里第一块
+	async jumpTo(editor, where) {
+		let line;
+		if (where === "END") line = editor.lastLine();
+		else {
+			const { head, blocks } = parse(editor.getValue());
+			const end = doneZoneEnd(blocks);
+			if (where === "DONE") {
+				if (this.settings.hideDone) {
+					this.settings.hideDone = false;
+					await this.saveData(this.settings);
+					this.refreshHideDone();
+				}
+				if (end === 0) new Notice("DONE 栏是空的");
+				line = blocks.length ? blocks[0].start : head.length;
+			} else {
+				const b = blocks.slice(end >= 0 ? end + 1 : 0).find((x) => x.zone === where);
+				if (!b) return new Notice(`这篇里没有 ${where} 区`);
+				line = b.start;
+			}
+		}
+		line = Math.min(line, editor.lastLine());
+		editor.setCursor({ line, ch: editor.getLine(line).length });
+		try {
+			const { EditorView } = require("@codemirror/view");
+			editor.cm.dispatch({ effects: EditorView.scrollIntoView(editor.posToOffset({ line, ch: 0 }), { y: where === "END" ? "center" : "start", yMargin: 60 }) });
+		} catch (e) { editor.scrollIntoView({ from: { line, ch: 0 }, to: { line, ch: 0 } }, true); }
+		editor.focus();
 	}
 
 	// 开关变了：让每个打开着的编辑器重新算一遍要藏的范围
