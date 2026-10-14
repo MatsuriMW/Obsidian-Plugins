@@ -20,6 +20,7 @@ const DEFAULTS = {
     excludeFolders: "Templates, scripts, Bases, 选题/_采访, 计划与总结/库周报.md",
     privateLinks: "宝a",
     reviewCount: 5,
+    recentBoost: 3,           // 随机漫步：近一年的卡片 / 挖空 / Wiki 条目被抽到的权重是其余的几倍（1 = 不偏向）
     orphanCount: 3,
     autoOpenReview: true,
     autoWeeklyReport: true,
@@ -150,6 +151,10 @@ function shuffle(arr, rand) {
     const a = arr.slice();
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
+}
+// 加权打乱：权重大的更容易排到前面（每项取 rand^(1/w) 从大到小排，等于按权重不放回地抽）
+function weightedShuffle(arr, rand, weight) {
+    return arr.map((x) => [Math.pow(rand(), 1 / Math.max(weight(x), 1e-6)), x]).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
 }
 // 显示用：去掉列表前缀、任务关键字、块 ID、双链语法
 function plain(s) {
@@ -963,6 +968,9 @@ class ReviewView extends ItemView {
         if (mode !== "wiki" && p.settings.ankiReview) { try { dueN = await p.ankiDueNotes(); } catch (e) { /* Anki 没开：照常随机 */ } }
         if (stale()) return;
         const rand = rng(today + "#" + this.shift + "#" + mode);
+        // 近一年记的权重乘上 recentBoost，更容易抽到
+        const yearAgo = Date.now() - 365 * 864e5, boost = Math.max(1, Number(p.settings.recentBoost) || 1);
+        const shuffle = (arr, r) => weightedShuffle(arr, r, (it) => (it.at >= yearAgo ? boost : 1));
         const due = dueN.size ? shuffle([...src.card, ...src.cloze].filter((it) => dueN.has(p.nidOf(it))), rand) : [];
         const hint = mode === "wiki" ? `Wiki ${src.wiki.length}` : `卡片 ${src.card.length} · 挖空 ${src.cloze.length}` + (due.length ? ` · 今天到期 ${due.length}` : "");
         const s = this.section(el, "🎲 随机漫步", hint);
@@ -1780,6 +1788,8 @@ module.exports = class SecondBrain extends Plugin {
             if (isWiki && !/（wiki）$/.test(f.basename)) continue;
             if (isWiki && !items.length) continue;
             const L = (await this.app.vault.cachedRead(f)).split("\n");
+            // 这块是哪天记的：日记按日记的日期，别的笔记按文件建立的时间
+            const jd = journalDate(f.basename), born = jd ? jd.valueOf() : f.stat.ctime;
             const skip = new Set();
             for (const sec of c.sections || []) if (sec.type === "code" || sec.type === "yaml") for (let i = sec.position.start.line; i <= sec.position.end.line; i++) skip.add(i);
             // 第 k 行所在的列表项，连同它的子项；不在列表里就取那一段。先一遍算好每行属于谁、每项的子树到哪一行（大文件上逐行去找会卡死界面）
@@ -1834,7 +1844,7 @@ module.exports = class SecondBrain extends Plugin {
                 taken.push(b);
                 const text = L.slice(b.s, b.e + 1).join("\n");
                 if (plain(text).length < 6 || (priv && priv.test(text))) return;
-                pool[kind].push({ kind, file: f, line: b.s, end: b.e, text, lang: kind !== "wiki" && isLang(kind, b.s, b.e, text), ctx: ctxOf(b.s) });
+                pool[kind].push({ kind, file: f, line: b.s, end: b.e, text, lang: kind !== "wiki" && isLang(kind, b.s, b.e, text), ctx: ctxOf(b.s), at: born });
             };
             if (isWiki) {
                 for (const it of items) if (it.parent < 0 && !/^\s*[-*+]\s+范围：/.test(L[it.position.start.line] || "")) add("wiki", it.position.start.line);
@@ -2125,6 +2135,8 @@ class SBSettings extends PluginSettingTab {
         text("不参与的文件夹 / 文件", "逗号分隔", "excludeFolders");
         text("私密链接", "带这些双链的块不进回顾、不进相关笔记（逗号分隔）", "privateLinks");
         num("随机漫步条数", "reviewCount");
+        new Setting(c).setName("近一年的卡片更容易抽到").setDesc("近一年记的卡片 / 挖空 / Wiki 条目，被抽到的权重是更早那些的几倍；1 = 不偏向。日记里的按日记日期算，别的笔记按文件建立时间算")
+            .addText((t) => t.setValue(String(s.recentBoost)).onChange(async (v) => { const n = parseFloat(v); if (n >= 1) { s.recentBoost = n; await p.saveSettings(); } }));
         num("孤岛笔记条数", "orphanCount");
         tog("每天自动放一个每日回顾标签", "每天第一次打开 Obsidian 时，在右侧栏加一个标签（不抢焦点）", "autoOpenReview");
         tog("每周自动生成库周报", REPORT_NOTE, "autoWeeklyReport");

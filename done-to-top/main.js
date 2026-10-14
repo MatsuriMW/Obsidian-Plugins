@@ -48,6 +48,7 @@ const DEFAULTS = {
 	remindersList: "",              // 发到提醒事项的哪个列表；空 = 默认列表
 	mdflowNote: "MD Flow/块.md",    // 发到 MD Flow 时，这一块先写进这篇中转笔记（每次覆盖）
 	explainModel: "claude-haiku-5-5",   // 「AI 解释」用哪个模型（claude 命令行的 --model）。写全名，别名会跟着版本变
+	hideDone: true,                 // 日记里的 DONE 栏（连同下面那条「- ---」）在编辑器里整段藏起来
 };
 
 const BULLET_RE = /^(\s*)([-*+]|\d+[.)])(\s+|$)(.*)$/;   // 列表项：无序（- * +）和有序（1. 1)）一样对待
@@ -902,6 +903,34 @@ function openHotkeys(app, word) {
 	if (tab && typeof tab.setQuery === "function") tab.setQuery(word);
 }
 
+// ---------- 隐藏日记的 DONE 区 ----------
+// 开着时，日记（文件名 YYYY_MM_DD）里的 DONE 栏——正文第一条「- ---」之前那一段，连同这条分隔线——在编辑器里整段藏起来，
+// 光标也进不去（整段当一个原子跳过）。只管编辑模式（实时预览 / 源码），阅读视图照常显示。栏是空的、还没有分隔线的日记不动
+function hideDoneExtension(plugin) {
+	const { StateField, StateEffect } = require("@codemirror/state");
+	const { EditorView, Decoration } = require("@codemirror/view");
+	const { editorInfoField } = require("obsidian");
+	const refresh = StateEffect.define();
+	const build = (state) => {
+		if (!plugin.settings.hideDone) return Decoration.none;
+		const file = state.field(editorInfoField, false)?.file;
+		if (!file || !JOURNAL_NAME_RE.test(file.basename)) return Decoration.none;
+		const { blocks } = parse(state.doc.toString());
+		const end = doneZoneEnd(blocks);
+		if (end <= 0) return Decoration.none;
+		// 从栏里第一块的首行藏到那条分隔线（块之间的空行一起藏）
+		const doc = state.doc;
+		const from = doc.line(blocks[0].start + 1).from, to = doc.line(blocks[end].start + 1).to;
+		return Decoration.set([Decoration.replace({ block: true }).range(from, to)]);
+	};
+	const field = StateField.define({
+		create: build,
+		update: (deco, tr) => (tr.docChanged || tr.effects.some((e) => e.is(refresh)) ? build(tr.state) : deco),
+		provide: (f) => [EditorView.decorations.from(f), EditorView.atomicRanges.of((view) => view.state.field(f))],
+	});
+	return { extension: field, refresh };
+}
+
 class SendSettings extends PluginSettingTab {
 	constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
 	display() {
@@ -909,6 +938,9 @@ class SendSettings extends PluginSettingTab {
 		containerEl.empty();
 		const text = (name, desc, key, placeholder) => new Setting(containerEl).setName(name).setDesc(desc)
 			.addText((t) => t.setPlaceholder(placeholder || "").setValue(s[key] || "").onChange(async (v) => { s[key] = v.trim(); await this.plugin.saveData(s); }));
+		new Setting(containerEl).setName("日记").setHeading();
+		new Setting(containerEl).setName("隐藏 DONE 区").setDesc("日记里正文第一条「- ---」之前的 DONE 栏（连同这条分隔线）在编辑器里整段不显示。阅读视图照常显示。也可以用命令「隐藏 / 显示日记的 DONE 区」切换")
+			.addToggle((t) => t.setValue(!!s.hideDone).onChange(async (v) => { s.hideDone = v; await this.plugin.saveData(s); this.plugin.refreshHideDone(); }));
 		new Setting(containerEl).setName("快捷键").setHeading();
 		new Setting(containerEl).setName("叫出「发送这一块到…」面板").setDesc(`现在：${hotkeyText(this.app, "done-to-top:send-block") || "没有绑键"}。键位在 Obsidian 的「设置 → 快捷键」里改，改了就用你的，默认的那个自动让位。每个去向也各有一条命令，想给哪个单独绑键也在那里绑`)
 			.addButton((b) => b.setButtonText("去改").onClick(() => openHotkeys(this.app, "块去向")));
@@ -943,6 +975,18 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	async onload() {
 		this.core = core;
 		this.settings = Object.assign({}, DEFAULTS, await this.loadData());
+		this.hideDone = hideDoneExtension(this);
+		this.registerEditorExtension(this.hideDone.extension);
+		this.addCommand({
+			id: "toggle-hide-done",
+			name: "隐藏 / 显示日记的 DONE 区",
+			callback: async () => {
+				this.settings.hideDone = !this.settings.hideDone;
+				await this.saveData(this.settings);
+				this.refreshHideDone();
+				new Notice(this.settings.hideDone ? "日记的 DONE 区已隐藏" : "日记的 DONE 区已显示");
+			},
+		});
 		this.addCommand({
 			id: "mark-done-and-move-to-top",
 			name: "标记 DONE 并移到页面顶部",
@@ -1669,6 +1713,14 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			const line = Math.min(after, editor.lineCount() - 1);
 			cm.dispatch({ effects: EditorView.scrollIntoView(editor.posToOffset({ line, ch: 0 }), { y: "start", yMargin: offset }) });
 		} catch (e) { /* 滚不了就留在 CodeMirror 自己定的位置 */ }
+	}
+
+	// 开关变了：让每个打开着的编辑器重新算一遍要藏的范围
+	refreshHideDone() {
+		this.app.workspace.iterateAllLeaves((leaf) => {
+			const cm = leaf.view && leaf.view.editor && leaf.view.editor.cm;
+			if (cm && cm.dispatch) cm.dispatch({ effects: this.hideDone.refresh.of(null) });
+		});
 	}
 
 	moveTo(editor, zone) {
