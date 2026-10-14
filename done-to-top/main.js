@@ -3,6 +3,8 @@
 //   · 只看顶格条目的状态；子项的状态不参与分类，整块跟着母项走
 //   · 块内部也一样：块里自己用「- ---」分了栏的，子项按状态在块内排成 DONE → DOING → TODO → 没状态的，
 //     只在块内部排，不会跑到别的块里、也不会被提到文件级；块里没用分割线的不动
+//   · 闪卡：已经做成卡的块（首行打了 #card，或者首行有 ==挖空== 而且闪卡插件已经写了 ^q-xxxx 标识符）一律归 DONE 区，
+//     不管它首行写的是什么状态；块里用分割线分了栏的子块也一样
 //   · 链接区：孤零零的一个条目（没有母块、也没有子块）、不超过两行、里面又有这些平台的链接
 //     （小红书 / 知乎 / X / GitHub / B 站 b23 / 抖音）就算链接类，聚到一起放在 TODO 区下面、其它内容上面。
 //     有任务关键字的（TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…）一律算任务，优先级更高
@@ -15,7 +17,7 @@
 //     （带这个记号的不会再被搬；DONE 和 DONE 栏里的不搬）。⌥Space 快速记录（nautilus-cli.js）用同一份规则
 //   · 发送：光标所在块（连同子项）可以发到几个去向（命令「发送这一块到…」列出全部，每个去向也各有一条命令）：
 //     页面顶部、明天的日记、Claude CLI（开一个会话，这一块当第一句话；选中几块并列的就每块各开一个；
-//     「子块各开一个」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
+//     「Claude CLI 并发」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
 //     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项、AI 解释。后面这些只在桌面端有
 //     AI 解释：这一块（连同子块）交给 claude -p 讲讲是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的一个「💡」子块；
 //     再发一次是把那个子块换成新的（不会越攒越多）。等答案的时候先放一行「💡 解释中…」占位
@@ -163,6 +165,17 @@ function trimBlock(blockLines) {
 const LINK_HOSTS = ["xiaohongshu.com", "xhslink.com", "xhslink.cn", "zhihu.com", "github.com", "bilibili.com", "b23.tv", "douyin.com", "x.com", "twitter.com"];
 const LINK_URL_RE = new RegExp("(?:^|[\\s(（【「]|https?://)(?:www\\.)?(?:[\\w-]+\\.)*(" + LINK_HOSTS.map((h) => h.replace(/\./g, "\\.")).join("|") + ")(?=[\\s/)?#.,，。、\\]】」]|$)", "i");
 
+// 这一块是不是已经做成了闪卡：首行打了 #card（含 #card/子标签），或者首行有 ==挖空== 而且闪卡插件已经给它写了标识符（^q-xxxx）。
+// 只看这一块自己的首行：母块下面有几张子卡，母块本身不算卡
+const CARD_ANY_RE = /(?:^|\s)#card(?=$|[\s/])/;
+const CARD_ID_RE = /^[ \t]*\^q-[A-Za-z0-9]+[ \t]*$/;
+const CLOZE_RE = /==[^=\n]+==/;
+function isCardBlock(lines) {
+	const first = (lines && lines[0]) || "";
+	if (CARD_ANY_RE.test(first)) return true;
+	return CLOZE_RE.test(first) && lines.some((l) => CARD_ID_RE.test(l));
+}
+
 // 这一行是不是任务：开头有 TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…（大小写都算）或者复选框
 function isTaskLine(line) {
 	const bare = line.replace(/^[ \t]+/, "");
@@ -237,7 +250,7 @@ function organizeInner(lines) {
 		let ls = k.lines;
 		const fixed = normalizeKeyword(ls[0], false);
 		if (fixed !== ls[0]) { ls = ls.slice(); ls[0] = fixed; }
-		const z = itemZone(ls[0]);
+		const z = isCardBlock(ls) ? "DONE" : itemZone(ls[0]);   // 做成了闪卡的子块归 DONE 栏
 		if (z) zones[z].push(trimTail(ls));
 		else if (before) zones.DONE.push(trimTail(ls));   // 第一条分割线之前的普通子项留在最上面
 		else rest.push(trimTail(ls));
@@ -284,6 +297,7 @@ function organize(text) {
 			const fixedKids = organizeInner(b.lines);
 			if (fixedKids.join("\n") !== b.lines.join("\n")) { b.lines = fixedKids; inner++; }
 		}
+		if (!b.sep && isCardBlock(b.lines)) b.zone = "DONE";   // 做成了闪卡的块归 DONE 区，不管首行写的是什么状态
 		if (b.zone) zones[b.zone].push(trimBlock(b.lines));
 		else if (b.inDone) zones.DONE.push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
 		else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
@@ -783,12 +797,12 @@ class SendModal extends FuzzySuggestModal {
 	constructor(plugin, editor, file) {
 		super(plugin.app);
 		this.plugin = plugin; this.editor = editor; this.file = file;
-		// 选中了几块并列的：只有写了 many 的去向会几块一起发，其余的还是只发光标所在的那一块
+		// 选中了几块并列的：「Claude CLI 单发」每块各开一个会话，其余去向还是只发光标所在的那一块
 		this.many = (plugin.pickedStarts(editor) || []).length;
-		this.setPlaceholder(this.many > 1 ? `选中了 ${this.many} 块：发给 Claude CLI 是各开一个会话，其它去向只发光标所在的那一块` : "这一块发到哪儿…");
+		this.setPlaceholder(this.many > 1 ? `选中了 ${this.many} 块，发到哪儿…` : "这一块发到哪儿…");
 	}
 	getItems() { return this.plugin.directions().filter((d) => !d.desktop || (Platform && Platform.isDesktopApp)); }
-	getItemText(d) { return `${d.icon} ${d.name}　${this.many > 1 && d.many ? d.many(this.many) : d.desc}`; }
+	getItemText(d) { return `${d.icon} ${d.name}`; }
 	onChooseItem(d) { d.run(this.editor, this.file); }
 }
 
@@ -934,13 +948,13 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		// 发送：光标所在块（连同子项）发到别处。「发送这一块到…」列出全部去向；每个去向也各有一条命令，可以单独绑快捷键
 		this.addCommand({
 			id: "send-block",
-			name: "发送这一块到…（顶部 / 明天 / Claude CLI / 子块各开一个会话 / Claudian / MD Flow / 日历 / 提醒事项）",
+			name: "发送这一块到…",
 			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "S" }],   // 字母要大写：Mac 上按住 ⌥ 打出来的是 ß，Obsidian 改按键位 S 比对，区分大小写
 			editorCallback: (editor, ctx) => new SendModal(this, editor, ctx && ctx.file).open(),
 		});
 		for (const d of this.directions()) {
 			if (!d.command) continue;
-			this.addCommand({ id: d.command, name: `发送到 ${d.name}：${d.desc}`, editorCallback: (editor, ctx) => d.run(editor, ctx && ctx.file) });
+			this.addCommand({ id: d.command, name: `发送到 ${d.name}`, editorCallback: (editor, ctx) => d.run(editor, ctx && ctx.file) });
 		}
 		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
 		this.addSettingTab(new SendSettings(this.app, this));
@@ -1083,15 +1097,15 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	// 全部去向。command = 单独那条命令的 id（没有的是别处已经有命令了）；desktop = 只在桌面端有
 	directions() {
 		return [
-			{ icon: "⬆️", name: "页面顶部", desc: "整块移到这篇笔记最上面", run: (ed) => this.run(ed, false) },
-			{ icon: "➡️", name: "明天", desc: "整块移到明天的日记", run: (ed, f) => this.sendToTomorrow(ed, f) },
-			{ icon: "🤖", name: "Claude CLI", desc: "在终端里开一个会话，这一块当第一句话", command: "send-block-to-claude", desktop: true, many: (n) => `选中的 ${n} 块各开一个会话（并列 = 并发）`, run: (ed, f) => this.sendToClaude(ed, f) },
-			{ icon: "🧩", name: "Claude CLI · 子块各开一个", desc: "母块当共同背景，它的每个子块各开一个会话（纵深 = 子会话）", command: "send-kids-to-claude", desktop: true, run: (ed, f) => this.sendKidsToClaude(ed, f) },
-			{ icon: "✏️", name: "Claudian Inline edit", desc: "选中整块，叫出 Claudian 的行内编辑", command: "send-block-to-claudian", desktop: true, run: (ed) => this.sendToClaudian(ed) },
-			{ icon: "🖼", name: "MD Flow", desc: "写进中转笔记，选一个模板，打开排版面板", command: "send-block-to-mdflow", desktop: true, run: (ed, f) => this.sendToMdflow(ed, f) },
-			{ icon: "📅", name: "日历", desc: "在 macOS 日历里建一个事件", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
-			{ icon: "☑️", name: "提醒事项", desc: "在 macOS 提醒事项里建一条", command: "send-block-to-reminders", desktop: true, run: (ed, f) => this.sendToReminders(ed, f) },
-			{ icon: "💡", name: "AI 解释", desc: "讲讲这一块是什么意思（连同里面的英文词、术语），答案记在它下面", command: "send-block-to-explain", desktop: true, run: (ed, f) => this.sendToExplain(ed, f) },
+			{ icon: "⬆️", name: "页面顶部", run: (ed) => this.run(ed, false) },
+			{ icon: "➡️", name: "明天", run: (ed, f) => this.sendToTomorrow(ed, f) },
+			{ icon: "🤖", name: "Claude CLI 单发", command: "send-block-to-claude", desktop: true, run: (ed, f) => this.sendToClaude(ed, f) },
+			{ icon: "🧩", name: "Claude CLI 并发", command: "send-kids-to-claude", desktop: true, run: (ed, f) => this.sendKidsToClaude(ed, f) },
+			{ icon: "✏️", name: "Claudian Inline edit", command: "send-block-to-claudian", desktop: true, run: (ed) => this.sendToClaudian(ed) },
+			{ icon: "🖼", name: "MD Flow", command: "send-block-to-mdflow", desktop: true, run: (ed, f) => this.sendToMdflow(ed, f) },
+			{ icon: "📅", name: "日历", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
+			{ icon: "☑️", name: "提醒事项", command: "send-block-to-reminders", desktop: true, run: (ed, f) => this.sendToReminders(ed, f) },
+			{ icon: "💡", name: "AI 解释", command: "send-block-to-explain", desktop: true, run: (ed, f) => this.sendToExplain(ed, f) },
 		];
 	}
 
@@ -1191,7 +1205,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		if (!top.title) return new Notice("这一块是空的");
 		const inner = [];
 		for (let i = top.start + 1; i <= top.end; i++) if (BULLET_RE.test(lines[i]) && !ANY_SEP_RE.test(lines[i]) && !MARK_LINE_RE.test(lines[i])) inner.push(i);
-		if (!inner.length) return new Notice("这一块下面没有子块。只发这一块，用「Claude CLI」那个去向");
+		if (!inner.length) return new Notice("这一块下面没有子块。只发这一块，用「Claude CLI 单发」");
 		const w = Math.min(...inner.map((i) => indentWidth(lines[i])));
 		const all = inner.filter((i) => indentWidth(lines[i]) === w).map((i) => this.grabAt(lines, i)).filter((g) => g && g.title);
 		const gs = all.filter((g) => itemZone(g.raw) !== "DONE");
