@@ -21,6 +21,8 @@ const DEFAULTS = {
     privateLinks: "宝a",
     reviewCount: 5,
     recentBoost: 3,           // 随机漫步：近一年的卡片 / 挖空 / Wiki 条目被抽到的权重是其余的几倍（1 = 不偏向）
+    boostLinks: "AI, LLM, ChatGPT, Agent, Transformer, prompt, 提示词, 机器学习, 神经网络, Claude, Claude Code, Codex, DeepSeek, Gemini, OpenAI, Anthropic, AGI, embedding, vibe coding, Cursor, MCP, skill, rule, memory, context engineering, Andrej Karpathy, Karpathy",   // 随机漫步：卡片本身或它上层的母块链到这些页的，权重再乘 linkBoost（不分大小写，逗号分隔）
+    linkBoost: 3,
     orphanCount: 3,
     autoOpenReview: true,
     autoWeeklyReport: true,
@@ -968,9 +970,11 @@ class ReviewView extends ItemView {
         if (mode !== "wiki" && p.settings.ankiReview) { try { dueN = await p.ankiDueNotes(); } catch (e) { /* Anki 没开：照常随机 */ } }
         if (stale()) return;
         const rand = rng(today + "#" + this.shift + "#" + mode);
-        // 近一年记的权重乘上 recentBoost，更容易抽到
+        // 近一年记的权重乘上 recentBoost；链到 boostLinks 里那些页的（AI 相关）再乘 linkBoost。两样都占就相乘
         const yearAgo = Date.now() - 365 * 864e5, boost = Math.max(1, Number(p.settings.recentBoost) || 1);
-        const shuffle = (arr, r) => weightedShuffle(arr, r, (it) => (it.at >= yearAgo ? boost : 1));
+        const hot = new Set(String(p.settings.boostLinks || "").split(/[,，\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean));
+        const lboost = Math.max(1, Number(p.settings.linkBoost) || 1);
+        const shuffle = (arr, r) => weightedShuffle(arr, r, (it) => (it.at >= yearAgo ? boost : 1) * (it.links?.some((n) => hot.has(n)) ? lboost : 1));
         const due = dueN.size ? shuffle([...src.card, ...src.cloze].filter((it) => dueN.has(p.nidOf(it))), rand) : [];
         const hint = mode === "wiki" ? `Wiki ${src.wiki.length}` : `卡片 ${src.card.length} · 挖空 ${src.cloze.length}` + (due.length ? ` · 今天到期 ${due.length}` : "");
         const s = this.section(el, "🎲 随机漫步", hint);
@@ -1844,7 +1848,11 @@ module.exports = class SecondBrain extends Plugin {
                 taken.push(b);
                 const text = L.slice(b.s, b.e + 1).join("\n");
                 if (plain(text).length < 6 || (priv && priv.test(text))) return;
-                pool[kind].push({ kind, file: f, line: b.s, end: b.e, text, lang: kind !== "wiki" && isLang(kind, b.s, b.e, text), ctx: ctxOf(b.s), at: born });
+                // 这块连同上层母块链到的页（小写，给随机漫步按关键词加权用）
+                const links = [...chain(b.s)];
+                for (let k = b.s + 1; k <= b.e; k++) links.push(k);
+                pool[kind].push({ kind, file: f, line: b.s, end: b.e, text, lang: kind !== "wiki" && isLang(kind, b.s, b.e, text), ctx: ctxOf(b.s), at: born,
+                    links: [...new Set(links.flatMap((k) => linksAt.get(k) || []).map((n) => n.split("/").pop().toLowerCase()))] });
             };
             if (isWiki) {
                 for (const it of items) if (it.parent < 0 && !/^\s*[-*+]\s+范围：/.test(L[it.position.start.line] || "")) add("wiki", it.position.start.line);
@@ -2137,6 +2145,10 @@ class SBSettings extends PluginSettingTab {
         num("随机漫步条数", "reviewCount");
         new Setting(c).setName("近一年的卡片更容易抽到").setDesc("近一年记的卡片 / 挖空 / Wiki 条目，被抽到的权重是更早那些的几倍；1 = 不偏向。日记里的按日记日期算，别的笔记按文件建立时间算")
             .addText((t) => t.setValue(String(s.recentBoost)).onChange(async (v) => { const n = parseFloat(v); if (n >= 1) { s.recentBoost = n; await p.saveSettings(); } }));
+        new Setting(c).setName("这些双链的卡片更容易抽到").setDesc("卡片本身或它上层的母块链到这些页（逗号分隔，不分大小写），被抽到的权重乘下面的倍数；和「近一年」那条同时占就相乘")
+            .addTextArea((t) => t.setValue(String(s.boostLinks)).onChange(async (v) => { s.boostLinks = v; await p.saveSettings(); }));
+        new Setting(c).setName("上面这些双链的倍数").setDesc("1 = 不偏向")
+            .addText((t) => t.setValue(String(s.linkBoost)).onChange(async (v) => { const n = parseFloat(v); if (n >= 1) { s.linkBoost = n; await p.saveSettings(); } }));
         num("孤岛笔记条数", "orphanCount");
         tog("每天自动放一个每日回顾标签", "每天第一次打开 Obsidian 时，在右侧栏加一个标签（不抢焦点）", "autoOpenReview");
         tog("每周自动生成库周报", REPORT_NOTE, "autoWeeklyReport");
