@@ -17,9 +17,9 @@
  * 3. SuperTag 字段：列表项里写了 [[标签名]]（比如「- [[菜谱]]毛血旺」），而 SuperTags 插件给这个标签定义了字段，
  *    就把还没有的字段作为子项「键:: 默认值」插在这一项下面（比如「学会:: 否」），留给你填。已经有的字段不重复插。
  *
- * 4. 机器行按主题归类：全篇机器写的行（🤖 开头的任务行）超过门槛（默认 10 条）时，把顶格的、已经 DONE 的机器行
+ * 4. 机器行按主题归类：全篇机器写的行（🤖 开头的任务行）超过门槛（默认 10 条）时，把顶格的、已经结束的机器行（DONE / SUSPENDED / FAILED / CANCELLED，和任务分区里归 DONE 区的是同一批）
  *    连同下面的 ⏱ 子项收到各自主题的母块下面（「- 🤖 Obsidian 改造 · 6 条 · 共 2h13m」），母块留在 DONE 栏里，整理完折起来。
- *    主题先用螺旋日程自动记日记时归好的大方向，对不上的才问 Claude。DOING / SUSPENDED / TODO 的机器行还在动，留在原处。
+ *    主题先用螺旋日程自动记日记时归好的大方向，对不上的才问 Claude。DOING / TODO 的机器行还在动，留在原处。
  *
  * 5. 摘录记号：从别处原样搬来的别人的话，顶格那一行末尾挂「#quote」。进阶整理时由 Claude 判断哪些块是摘录（拿不准不标），
  *    也可以用命令「把光标所在的块标成摘录 / 取消」手动标。
@@ -266,12 +266,15 @@ const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m
 const machineKey = (s) => s.replace(/🤖/g, "").replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").replace(/\s+/g, "");
 const cleanTheme = (s) => String(s || "").replace(/[\r\n\[\]#·`*=~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 12);
 
-// 全篇的机器行。top = 顶格；done = 已经 DONE（顶格又 DONE 的才会被收进主题）
+// 归 DONE 区的状态词（和 done-to-top 的分区一致）
+const ENDED = new Set(["DONE", "SUSPENDED", "FAILED", "CANCELLED", "CANCELED"]);
+
+// 全篇的机器行。top = 顶格；done = 已经结束（顶格又结束了的才会被收进主题）
 function machineLines(text) {
     const out = [];
     for (const l of splitFrontmatter(text).body) {
         const m = l.match(MACHINE_RE);
-        if (m) out.push({ line: l, top: m[1] === "", done: m[2] === "DONE", label: m[3].replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").trim() });
+        if (m) out.push({ line: l, top: m[1] === "", done: ENDED.has(m[2]), label: m[3].replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").trim() });
     }
     return out;
 }
@@ -287,7 +290,7 @@ function groupMachine(text, themes) {
     let grouped = 0;
     for (const s of segs) {
         const m = s.lines[0].match(MACHINE_RE);
-        const theme = m && m[1] === "" && m[2] === "DONE" ? cleanTheme(themes.get(s.lines[0])) : "";
+        const theme = m && m[1] === "" && ENDED.has(m[2]) ? cleanTheme(themes.get(s.lines[0])) : "";
         if (!theme) { out.push(s); continue; }
         let head = heads.get(theme);
         if (!head) { head = { todo: false, lines: [`- 🤖 ${theme}`] }; heads.set(theme, head); out.push(head); }

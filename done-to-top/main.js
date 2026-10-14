@@ -7,7 +7,7 @@
 //     （小红书 / 知乎 / X / GitHub / B 站 b23 / 抖音）就算链接类，聚到一起放在 TODO 区下面、其它内容上面。
 //     有任务关键字的（TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…）一律算任务，优先级更高
 //   · DONE 栏 = 正文第一条「- ---」之前的那一段；手动放进去的普通条目留在栏里不动
-//   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED 归 DONE 区，PAUSED（停一下）归 DOING 区，WAITING/SUSPENDED 归 TODO 区
+//   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED/SUSPENDED 归 DONE 区，PAUSED（停一下）归 DOING 区，WAITING 归 TODO 区
 //   · core 挂在插件实例上，Telegram Inbox（自用版）收消息时也用它归位
 //   · 单独占一行的块 ID（闪卡插件写在卡片下面一行、顶格的「^q-r7d4」这类）算在它上面那一块里：
 //     移到顶部、归位、一键整理、发送到今天 / 明天时都跟着块一起走，不会落在原地
@@ -16,7 +16,9 @@
 //   · 发送：光标所在块（连同子项）可以发到几个去向（命令「发送这一块到…」列出全部，每个去向也各有一条命令）：
 //     页面顶部、明天的日记、Claude CLI（开一个会话，这一块当第一句话；选中几块并列的就每块各开一个；
 //     「子块各开一个」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
-//     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项。后面五个只在桌面端有
+//     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项、AI 解释。后面这些只在桌面端有
+//     AI 解释：这一块（连同子块）交给 claude -p 讲讲是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的一个「💡」子块；
+//     再发一次是把那个子块换成新的（不会越攒越多）。等答案的时候先放一行「💡 解释中…」占位
 //     日历 / 提醒事项的时间：任务下面一行的「SCHEDULED: <2026-10-14 Wed 19:30>」「DEADLINE: <…>」和行里的「⏳ / 📅 2026-10-14」定哪天，
 //     没写就看「明天 / 后天 / 大后天」，再没有就是这篇日记的那一天；时刻认 14:00、14:00-15:30、8pm、8:00pm、7am-9am、下午3点、晚上8点半、下午3点到5点，有时刻的就不是全天
 //   · 音效：发出去的那一下响一声，用的是螺旋日程那套任务状态的音（开关也跟它走，没装就不响）。
@@ -38,6 +40,7 @@ const DEFAULTS = {
 	calendar: "",                   // 发到哪个日历；空 = 第一个能写的日历
 	remindersList: "",              // 发到提醒事项的哪个列表；空 = 默认列表
 	mdflowNote: "MD Flow/块.md",    // 发到 MD Flow 时，这一块先写进这篇中转笔记（每次覆盖）
+	explainModel: "claude-haiku-5-5",   // 「AI 解释」用哪个模型（claude 命令行的 --model）。写全名，别名会跟着版本变
 };
 
 const BULLET_RE = /^(\s*)([-*+]|\d+[.)])(\s+|$)(.*)$/;   // 列表项：无序（- * +）和有序（1. 1)）一样对待
@@ -52,9 +55,9 @@ const TIME_OR_RANGE_RE = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{
 const SINGLE_TIME_RE = /^(\d{1,2}[:：]\d{2})(?!\s*[-–~～]\s*\d)\s*/;
 const LOWER_KW_RE = /^(todo|doing|done)(?=[\s:：]|$)[:：]?\s*/i;   // todo / Todo / todo： → TODO
 const ZONE = {
-	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE",
+	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE", SUSPENDED: "DONE",
 	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
-	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO", SUSPENDED: "TODO",
+	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO",
 };
 const TAB_WIDTH = 4;
 // 单独占一行的块 ID：闪卡插件（flashcards-obsidian）把卡片的标识符写在卡片最后一行的下一行、顶格，比如「^q-r7d4」。
@@ -342,7 +345,8 @@ function mark(line, zone) {
 	const kw = content.match(KEYWORD_RE);
 	const low = kw ? null : content.match(LOWER_KW_RE);   // todo / Doing 这类小写写法
 	const old = kw ? kw[1] : low ? low[1].toUpperCase() : null;
-	if (kw && ZONE[old] === zone) {
+	// SUSPENDED 整理时归 DONE 区，但手动标成 DONE 时要真的改成 DONE
+	if (kw && ZONE[old] === zone && old !== "SUSPENDED") {
 		// 已经是这个状态，只挪位置；DOING 没记开始时间的补上
 		const body = content.slice(kw[0].length);
 		if (old !== "DOING" || LEADING_TIME_RE.test(body)) return line;
@@ -544,6 +548,56 @@ const asStr = (x) => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"').r
 
 // 一块里要发给 Agent 的子项：记号行（🔗 / ⏱ / 💬）不发过去
 const contentOf = (g) => g.kids.filter((l) => !MARK_LINE_RE.test(l));
+// AI 解释写回来的那个子块：以 💡 开头。它是内容（会跟着块走、也会带进发给 Claude 的话里），只是再解释一次时不把上一次的答案发回去
+const EXPLAIN_RE = /^\s*[-*+]\s+💡/;
+const EXPLAIN_WAIT = "💡 解释中…";
+const EXPLAIN_TIMEOUT = 120;
+const EXPLAIN_SYSTEM = "你是一个讲解助手：把别人笔记里的一段话讲明白。只输出讲解本身，不寒暄，不反问，不用 Markdown 标题和代码块。";
+const explainPrompt = (text) => `下面是我笔记里的一块（第一行是这一块，后面的是它的子块）。请用中文讲清楚它是什么意思。
+
+输出格式（只输出下面这些行）：
+第 1 行：用一两句大白话直接说出它的意思和作者想下的判断。不要用「这一块」「这段话」「作者」开头。
+之后每行一条，一条只占一行，不要再分层：
+· 里面出现的每个英文词、缩写、专业术语各占一行，写成「**原词**（中文叫法）：它本来是什么意思；在这句话里指什么」。
+· 有没说出口的前提、推理的链条或者言下之意，再用一两行补上，以「背景：」「言下之意：」开头。
+没有术语就只写第 1 行和必要的补充。总共不超过 8 行。拿不准的词直接说拿不准，不要编。
+
+这一块：
+<<<
+${text}
+>>>`;
+// 模型的答案 → 一个 💡 子块：第一行是这一块的意思，后面每行一个子项。indent = 💡 那一行的缩进
+function explainLines(result, indent) {
+	const ls = String(result || "").replace(/\r/g, "").split("\n").map((l) => l.trim()).filter((l) => l && !/^(```|~~~|<<<|>>>)/.test(l))
+		.map((l) => l.replace(/^#{1,6}\s+/, "").replace(/^(?:[-*+]\s+|[·•]\s*|\d+[.)、]\s+)/, "").replace(/^💡\s*/, "").trim()).filter(Boolean);
+	if (!ls.length) return [];
+	return [`${indent}- 💡 ${ls[0]}`, ...ls.slice(1).map((l) => `${indent}\t- ${l}`)];
+}
+// 一块下面那个 💡 子块（直接子项，连同它的子项）占哪几行：[第一行, 最后一行]；没有返回 null。b = blockAt 的结果
+function explainSpan(lines, b) {
+	let w = Infinity;
+	for (let i = b.start + 1; i <= b.end; i++) if (BULLET_RE.test(lines[i])) w = Math.min(w, indentWidth(lines[i]));
+	for (let i = b.start + 1; i <= b.end; i++) {
+		if (!EXPLAIN_RE.test(lines[i]) || indentWidth(lines[i]) !== w) continue;
+		let end = i;
+		while (end < b.end && !ID_LINE_RE.test(lines[end + 1]) && (isBlank(lines[end + 1]) || indentWidth(lines[end + 1]) > w)) end++;
+		while (end > i && isBlank(lines[end])) end--;
+		return [i, end];
+	}
+	return null;
+}
+// 子块该用什么缩进：照已有的子块来；还没有子块就是这一行的缩进再加一个 Tab
+function kidIndent(lines, b) {
+	let best = null;
+	for (let i = b.start + 1; i <= b.end; i++) if (BULLET_RE.test(lines[i]) && (best === null || indentWidth(lines[i]) < indentWidth(best))) best = lines[i];
+	return best !== null ? best.match(/^[ \t]*/)[0] : lines[b.start].match(/^[ \t]*/)[0] + "\t";
+}
+// 新子块插在哪一行前面：块的最后；块尾有单独占一行的块 ID 的话插在它前面（ID 要留在卡片的最后）
+function kidInsertAt(lines, b) {
+	let at = b.end + 1;
+	while (at - 1 > b.start && ID_LINE_RE.test(lines[at - 1])) at--;
+	return at;
+}
 // 从访达启动的 Obsidian 拿不到终端里的 PATH：先看几个常见的安装位置
 const findBin = (name) => {
 	const fs = require("fs"), home = require("os").homedir();
@@ -802,6 +856,8 @@ class SendSettings extends PluginSettingTab {
 				.onChange(async (v) => { s.claudeRun = v; await this.plugin.saveData(s); }));
 		text("tmux 会话的名字", "跑在 tmux 后台时，会话都开在这个 tmux 会话里（没有就建），一个 Agent 会话一个窗口。进去看：tmux attach -t 这个名字", "claudeTmuxSession", DEFAULTS.claudeTmuxSession);
 		text("无头跑时多带的参数", "无头的时候没人能替它点「允许」：不给权限它只能读、不能改文件也不能跑命令。要它动手就写在这里，比如 --permission-mode acceptEdits", "claudeHeadlessArgs", "留空 = 只读");
+		new Setting(containerEl).setName("AI 解释").setHeading();
+		text("用哪个模型", "交给 claude 命令行（用它自己的登录）讲这一块是什么意思，答案记成这一块下面的「💡」子块。解释一句话不用强模型，默认 Haiku", "explainModel", DEFAULTS.explainModel);
 		new Setting(containerEl).setName("发到日历和提醒事项").setHeading();
 		text("日历", "macOS「日历」里那个日历的名字。留空 = 第一个能写的日历", "calendar", "留空用第一个能写的");
 		text("提醒事项的列表", "macOS「提醒事项」里那个列表的名字。留空 = 默认列表", "remindersList", "留空用默认列表");
@@ -1035,6 +1091,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			{ icon: "🖼", name: "MD Flow", desc: "写进中转笔记，选一个模板，打开排版面板", command: "send-block-to-mdflow", desktop: true, run: (ed, f) => this.sendToMdflow(ed, f) },
 			{ icon: "📅", name: "日历", desc: "在 macOS 日历里建一个事件", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
 			{ icon: "☑️", name: "提醒事项", desc: "在 macOS 提醒事项里建一条", command: "send-block-to-reminders", desktop: true, run: (ed, f) => this.sendToReminders(ed, f) },
+			{ icon: "💡", name: "AI 解释", desc: "讲讲这一块是什么意思（连同里面的英文词、术语），答案记在它下面", command: "send-block-to-explain", desktop: true, run: (ed, f) => this.sendToExplain(ed, f) },
 		];
 	}
 
@@ -1256,6 +1313,103 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const list = [...(this.running || new Map())].map(([sid, v]) => ({ sid, ...v }));
 		if (!list.length) return new Notice("现在没有在后台跑着的无头会话");
 		new StopModal(this.app, list, (x) => { try { x.child.kill(); } catch (e) { new Notice(`没停掉：${e.message}`); } }).open();
+	}
+
+	// AI 解释：这一块（连同子块，不带上一次的 💡 答案和记号行）交给 claude -p，答案记成这一块下面的 💡 子块。
+	// 等的时候放一行「💡 解释中…」占位；以前解释过的，旧答案先留着，新的回来了再整个换掉
+	async sendToExplain(editor, file) {
+		if (!this.desktopOnly()) return;
+		file = file || this.app.workspace.getActiveFile();
+		if (!file) return new Notice("没找到这一块在哪篇笔记里");
+		const lines = editor.getValue().split("\n");
+		const starts = this.pickedStarts(editor);
+		if (starts && starts.length > 1) return new Notice("一次解释一块：把光标放在那一块上，不要选中好几块");
+		const g = starts ? this.grabAt(lines, starts[0]) : this.grab(editor);
+		if (!g) return;
+		if (!g.title) return new Notice("这一块是空的");
+		if (EXPLAIN_RE.test(g.raw)) return new Notice("这一块就是解释。把光标放在它上面那一块再发");
+		// 发过去的字：这一行 + 子项，去掉记号行和上一次的 💡 子块
+		const kids = [];
+		for (let i = 0, skip = false; i < g.kids.length; i++) {
+			const l = g.kids[i], top = !isBlank(l) && indentWidth(l) === 0;
+			if (top) skip = EXPLAIN_RE.test(l);
+			if (!skip && !MARK_LINE_RE.test(l)) kids.push(l);
+		}
+		const prompt = explainPrompt([g.title, ...kids].join("\n").trim());
+		this.cue("DOING");
+		// 占位：还没解释过的才放（解释过的旧答案就是占位）
+		if (!explainSpan(lines, g)) {
+			const at = kidInsertAt(lines, g), wait = `${kidIndent(lines, g)}- ${EXPLAIN_WAIT}`;
+			editor.replaceRange(at >= lines.length ? `\n${wait}` : `${wait}\n`, at >= lines.length ? { line: lines.length - 1, ch: lines[lines.length - 1].length } : { line: at, ch: 0 });
+		}
+		new Notice(`💡 在问 AI：${g.title.slice(0, 24)}`);
+		const r = await this.askClaude(prompt, (this.settings.explainModel || DEFAULTS.explainModel).trim());
+		const put = await this.putExplain(file, g, r.ok ? r.text : null);
+		if (!r.ok) return new Notice(`💡 没解释成：${r.err.slice(0, 160)}`, 10000);
+		if (put) return new Notice(`💡 解释好了：${g.title.slice(0, 24)}`);
+		try { await navigator.clipboard.writeText(explainLines(r.text, "").join("\n")); } catch (e) { /* 剪贴板用不了 */ }
+		new Notice("💡 解释好了，但那一块已经找不到了（被改过或者挪走了）。答案放进了剪贴板", 10000);
+	}
+	// 问 claude -p 一句，只要它的回答：不存会话、不带工具、不读用户的设置和钩子（在临时目录里跑），所以又快又不留痕迹
+	askClaude(prompt, model) {
+		return new Promise((done) => {
+			const os = require("os"), path = require("path");
+			const env = { ...process.env, PATH: [path.join(os.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", process.env.PATH || ""].join(":") };
+			const args = ["-p", "--model", model, "--output-format", "json", "--no-session-persistence", "--strict-mcp-config", "--setting-sources", "project", "--tools", "", "--system-prompt", EXPLAIN_SYSTEM];
+			let child, out = "", err = "", over = false;
+			const end = (x) => { if (!over) { over = true; clearTimeout(timer); done(x); } };
+			const timer = setTimeout(() => { try { child && child.kill(); } catch (e) { /* 已经退出了 */ } end({ ok: false, err: `等了 ${EXPLAIN_TIMEOUT} 秒没有结果` }); }, EXPLAIN_TIMEOUT * 1000);
+			try { child = require("child_process").spawn(findBin("claude"), args, { cwd: os.tmpdir(), env }); }
+			catch (e) { return end({ ok: false, err: `claude 没跑起来：${e.message}` }); }
+			child.stdout.on("data", (d) => (out += d));
+			child.stderr.on("data", (d) => (err += d));
+			child.on("error", (e) => end({ ok: false, err: `claude 没跑起来：${e.message}` }));
+			child.on("close", (code) => {
+				let d;
+				try { d = JSON.parse(out); } catch (e) { return end({ ok: false, err: (err || out || `claude 退出码 ${code}`).trim() }); }
+				if (d.is_error || !String(d.result || "").trim()) return end({ ok: false, err: String(d.result || "claude 没有回答") });
+				end({ ok: true, text: String(d.result) });
+			});
+			child.stdin.end(prompt);
+		});
+	}
+	// 把答案写回那一块下面（text = null：没解释成，只把占位行拿掉）。那篇笔记还开着就改编辑器（⌘Z 能撤回），没开着就直接改文件。
+	// 等答案这段时间笔记可能被改过：按那一行原来的字重新找这一块，找不到返回 false
+	async putExplain(file, g, text) {
+		const edit = (lines) => {
+			let at = -1;
+			lines.forEach((l, i) => { if (l === g.raw && (at < 0 || Math.abs(i - g.start) < Math.abs(at - g.start))) at = i; });
+			const b = at < 0 ? null : this.blockAt(lines, at);
+			if (!b || b.start !== at) return null;
+			const span = explainSpan(lines, b);
+			const waiting = span && span[0] === span[1] && lines[span[0]].trim().replace(/^[-*+]\s+/, "") === EXPLAIN_WAIT;
+			if (text === null) return waiting ? { from: span[0], to: span[1], put: [] } : { from: 0, to: -1, put: [] };
+			const indent = span ? lines[span[0]].match(/^[ \t]*/)[0] : kidIndent(lines, b);
+			const put = explainLines(text, indent);
+			if (!put.length) return waiting ? { from: span[0], to: span[1], put: [] } : null;
+			if (span) return { from: span[0], to: span[1], put };
+			const ins = kidInsertAt(lines, b);
+			return { from: ins, to: ins - 1, put };
+		};
+		let leaf = null;
+		this.app.workspace.iterateAllLeaves((l) => { if (!leaf && l.view && l.view.file && l.view.file.path === file.path && l.view.editor) leaf = l; });
+		if (leaf) {
+			const ed = leaf.view.editor, lines = ed.getValue().split("\n"), c = edit(lines);
+			if (!c) return false;
+			if (c.to < c.from && !c.put.length) return true;
+			const next = [...lines.slice(0, c.from), ...c.put, ...lines.slice(c.to + 1)].join("\n");
+			const ch = diffChange(lines.join("\n"), next);
+			if (ch) ed.transaction({ changes: [ch] });
+			return true;
+		}
+		let ok = false;
+		await this.app.vault.process(file, (data) => {
+			const lines = data.split("\n"), c = edit(lines);
+			if (!c) return data;
+			ok = true;
+			return [...lines.slice(0, c.from), ...c.put, ...lines.slice(c.to + 1)].join("\n");
+		});
+		return ok;
 	}
 
 	// 触发 Claudian 的 Inline edit：把整块（连同子项）选中，再叫它的命令

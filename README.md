@@ -2,6 +2,8 @@
 
 马自立（[@MatsuriMW](https://github.com/MatsuriMW)）自己写的、以及改过的 Obsidian 插件，一共 30 多个。它们为一件事服务：**把 Obsidian 变成一个以块为单位写东西、能自己整理知识、还能帮你排时间的个人系统。**
 
+背后的想法是「文件系统 + Agent」：主库是 Markdown 加 Git，Claude、Pi、Codex、WorkBuddy 读写同一个库；工作记录一半由人主动写、一半由 AI 自动记；同一份日记既是陪伴 Agent 的上下文，也是个人任务管理。
+
 这些插件解决的是我自己每天碰到的问题，分成四块：
 
 - **编辑与大纲**：Obsidian 原生的列表编辑和反链比 Logseq / Roam 弱一截，这一组把「块」的体验补回来：整块选中和移动、Roam 式反链面板、块引用显示内容、列表与段落互转。
@@ -58,7 +60,7 @@
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
 | **任务提醒**<br>[`nautilus-notify`](nautilus-notify) | 螺旋日程的提醒搭档：事件快开始、待办过了点、做得太久、今天排不下时，用 macOS 通知提醒你；按健身计划提醒开练、追练、断档、称重；人不在电脑前时转发到 Telegram，并定时推送螺旋日程、健身早报、拖延任务（带按钮）、闪卡到期、经期预测、周日周洞察 | ★ | 螺旋日程；macOS；Telegram 推送要 [Telegram Companion](https://github.com/MatsuriMW/telegram-companion)；周洞察用 Telegram Companion 里选的模型 |
-| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历或提醒事项。发给 Claude CLI 时在这一行下面记下是哪个会话（🔗）；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑。发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午3点这类时刻。还可以让 Obsidian 自带的斜杠命令只留名字里带「块」的命令 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
+| **块去向**<br>[`done-to-top`](done-to-top) | 决定一个块去哪儿：日记里的任务按 DONE / DOING / TODO 自动分区；⌥⌘S 把光标所在块连同子项发到页面顶部、明天的日记、Claude CLI、Claudian 的 Inline edit、MD Flow、macOS 日历、提醒事项，或者交给 AI 解释（讲讲这一块是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的 💡 子块，再发一次是换成新的）。发给 Claude CLI 时在这一行下面记下是哪个会话（🔗）；选中几块并列的，每块各开一个会话；也可以让母块当共同背景、每个子块各开一个。会话可以开在终端窗口里、放在后台的 tmux 里，或者用 claude -p 无头跑。发到日历 / 提醒事项时认 SCHEDULED、DEADLINE 和行里的 14:00、8pm、下午3点这类时刻。还可以让 Obsidian 自带的斜杠命令只留名字里带「块」的命令 | ★★ | Logseq 式任务关键词；Claude CLI 之后的几个去向只在 macOS 上有，各自要装对应的工具（放后台要装 tmux） |
 | **日记翻页 + 刷新**<br>[`diary-nav`](diary-nav) | 在日记里前进 / 后退就是翻到后一天 / 前一天；⌘R 刷新当前页面 | ★★★ | 无 |
 | **看板直达**<br>[`board-jump`](board-jump) | 跳到常用看板：看板切换器（开在 Better Command Palette 里，书签和看板一起搜）、obsidian:// 链接、看板全宽显示 | ★★ | 看板笔记带 `type: 看板` 属性；切换器要配合 Better Command Palette 和 Palette Enhancements |
 | **看板聚焦**<br>[`board-zoom`](board-zoom) | 从 Dataview 看板点开某一条时，自动聚焦到那个列表块 | ★ | Dataview + Bullet |
@@ -70,7 +72,7 @@
 | **Chrome Tab Groups**<br>[`chrome-tab-groups`](chrome-tab-groups) | Chrome 式标签页分组：命名、配色、折叠、整组拖动、移到新窗口，右键菜单也和 Chrome 一样 | ★★★ | 仅桌面端 |
 | **新标签页选项**<br>[`newtab-home`](newtab-home) | ⌘T 新标签页换成一个搜索条和一列快捷按钮，按钮可以设成打开某篇笔记、某个插件页面或执行某条命令；背景图可以自己上传 | ★★★ | 仅桌面端 |
 | **快捷键总览**<br>[`hotkey-atlas`](hotkey-atlas) | 快捷键设置页按插件分组，显示每个插件改过几个键、哪里有冲突；只在特定场景生效的按键也一并列出 | ★★★ | 无 |
-| **书签图标**<br>[`bookmark-icons`](bookmark-icons) | 书签面板里每篇笔记显示各自的彩色图标，不再是一排一样的文件图标 | ★★★ | 无 |
+| **书签图标**<br>[`bookmark-icons`](bookmark-icons) | 书签面板里每篇笔记显示各自的彩色图标，不再是一排一样的文件图标。看板背后的数据笔记更新了、你还没打开看过时，图标上亮一个小红点（放在图形留空的那个角），打开那篇看板就灭；盯哪份数据用笔记属性 badge-watch 指定 | ★★★ | 无 |
 | **Close Sidebar Files**<br>[`close-sidebar-files`](close-sidebar-files) | 一键关掉两侧边栏里打开的笔记（⌥⌘W），插件面板保持不动；也可以只关右侧栏的。设置页里看得到现在绑的键，点一下去改 | ★★★ | 无 |
 
 ### 改过的社区插件

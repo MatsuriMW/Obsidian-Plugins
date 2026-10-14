@@ -743,6 +743,17 @@ function wikiSources(text) {
 }
 
 // ---------- 每日回顾 ----------
+// 聚焦：和 Bullet 的 focus in / out 同一套动效——那张卡用 transform 从原来的位置滑到可视区 35% 高处，260ms、同一条缓动曲线；
+// 聚焦时只留这一张（其余卡片和 Wiki 回看、孤岛都收起），答完下一张从下面滑上来；退出时滑回列表里的位置，其余的淡入
+const FOCUS_RATIO = 0.35, GLIDE_MS = 260, GLIDE_EASE = "cubic-bezier(.2,.8,.2,1)";
+const LIVE_WALK = ".sb-walk:not(.is-leaving):not(.is-exiting)";
+const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+// dy = 从多远滑过来（像素，正数 = 从下面）；from = 没有原来的位置时（新换上来的一张）从下面 / 上面多远淡入
+function glide(el, dy, from = 28) {
+    if (!el?.animate || reducedMotion()) return;
+    if (dy == null) el.animate([{ transform: `translateY(${from}px)`, opacity: 0.2 }, { transform: "none", opacity: 1 }], { duration: GLIDE_MS, easing: GLIDE_EASE });
+    else if (Math.abs(dy) >= 2) el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: GLIDE_MS, easing: GLIDE_EASE });
+}
 class ReviewView extends ItemView {
     constructor(leaf, plugin) { super(leaf); this.plugin = plugin; this.shift = 0; this.orphanShift = 0; }
     getViewType() { return VIEW_REVIEW; }
@@ -752,20 +763,85 @@ class ReviewView extends ItemView {
     async onClose() { this.plugin.reviewClosed(); }
     async onOpen() {
         this.registerDomEvent(document, "keydown", (evt) => this.onKey(evt));
+        // 聚焦键先接住（capture），免得被别的快捷键吃掉
+        this.registerDomEvent(document, "keydown", (evt) => this.onFocusKey(evt), true);
         await this.render();
+    }
+    // 聚焦 / 退出聚焦：和 Bullet 的 zoom-in / zoom-out 用同一组键（默认 ⌥⌘→ / ⌥⌘←），聚焦时 Esc 也能退出
+    hotkeyIs(evt, id, fallback) {
+        const hm = this.app.hotkeyManager;
+        const keys = hm?.getHotkeys?.(id) || hm?.getDefaultHotkeys?.(id) || fallback;
+        const mac = navigator.platform.includes("Mac");
+        return (keys || []).some((h) => {
+            const mods = new Set((h.modifiers || []).map((m) => (m === "Mod" ? (mac ? "Meta" : "Ctrl") : m)));
+            return String(h.key).toLowerCase() === evt.key.toLowerCase() && evt.metaKey === mods.has("Meta") && evt.ctrlKey === mods.has("Ctrl") && evt.altKey === mods.has("Alt") && evt.shiftKey === mods.has("Shift");
+        });
+    }
+    onFocusKey(evt) {
+        if (this.app.workspace.getActiveViewOfType(ReviewView) !== this || evt.isComposing) return;
+        const bare = !evt.metaKey && !evt.ctrlKey && !evt.altKey && !evt.shiftKey;
+        if (this.hotkeyIs(evt, "bullet:zoom-in", [{ modifiers: ["Alt", "Mod"], key: "ArrowRight" }])) this.focusIn();
+        else if (this.hotkeyIs(evt, "bullet:zoom-out", [{ modifiers: ["Alt", "Mod"], key: "ArrowLeft" }]) || (this.focused && bare && evt.key === "Escape")) this.focusOut();
+        else return;
+        evt.preventDefault(); evt.stopPropagation();
+    }
+    focusIn() {
+        const sel = this.selected?.isConnected && this.selected.matches(LIVE_WALK) ? this.selected : null;
+        const c = sel || this.contentEl.querySelector(LIVE_WALK);
+        if (!c) { new Notice("没有可以聚焦的卡片"); return; }
+        if (this.focused && c.hasClass("is-focus")) return;
+        const before = c.getBoundingClientRect().top;
+        this.focused = true;
+        this.contentEl.addClass("sb-focus-mode");
+        this.focusOn(c, before);
+    }
+    // 让 c 成为聚焦的那一张。before = 它原来在屏幕上的 top（滑过来）；null = 新换上来的，从 from 像素外淡入
+    focusOn(c, before, from) {
+        this.contentEl.querySelectorAll(".sb-walk.is-focus").forEach((x) => { if (x !== c) { x.removeClass("is-focus", "has-more"); x.style.marginTop = ""; } });
+        c.addClass("is-focus");
+        c.toggleClass("has-more", this.contentEl.querySelectorAll(LIVE_WALK).length > 1 || !!this.walkQueue?.length);
+        this.select(c);
+        // 落点：卡片顶端在可视区 35% 高处；卡片太高就往上提，底下留一点空
+        c.style.marginTop = "";
+        const el = this.contentEl;
+        el.scrollTop = 0;
+        const box = el.getBoundingClientRect(), r = c.getBoundingClientRect();
+        const want = Math.min(box.top + el.clientHeight * FOCUS_RATIO, box.bottom - r.height - 16);
+        const push = Math.max(0, Math.round(want - r.top));
+        if (push) c.style.marginTop = push + "px";
+        glide(c, before == null ? null : before - c.getBoundingClientRect().top, from);
+    }
+    focusOut() {
+        if (!this.focused) return;
+        const c = this.contentEl.querySelector(".sb-walk.is-focus");
+        const before = c?.getBoundingClientRect().top;
+        this.focused = false;
+        this.contentEl.removeClass("sb-focus-mode");
+        if (!c) return;
+        c.removeClass("is-focus", "has-more");
+        c.style.marginTop = "";
+        c.scrollIntoView({ block: "nearest" });
+        glide(c, before - c.getBoundingClientRect().top);
+        // 其余的淡入，和 Bullet 退出聚焦时上下文变回来一样
+        if (!reducedMotion()) for (const x of this.contentEl.querySelectorAll(".sb-sec, .sb-walk")) {
+            if (x !== c && x !== c.parentElement) x.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: GLIDE_MS, easing: "ease" });
+        }
     }
     // 键盘作答：点一下卡片选中它，Space 揭开，1 / 2 / 3 / 4 = 重来 / 困难 / 良好 / 简单；↑↓ 换一张。只在这个面板是当前焦点时生效
     onKey(evt) {
         if (this.app.workspace.getActiveViewOfType(ReviewView) !== this) return;
         if (evt.metaKey || evt.ctrlKey || evt.altKey || evt.isComposing) return;
         if (evt.target instanceof HTMLElement && evt.target.closest("input, textarea, select, [contenteditable='true']")) return;
-        const cards = [...this.contentEl.querySelectorAll(".sb-walk:not(.is-leaving)")];
-        const c = this.selected?.isConnected && !this.selected.hasClass("is-leaving") ? this.selected : null;
+        const cards = [...this.contentEl.querySelectorAll(LIVE_WALK)];
+        const c = this.selected?.isConnected && this.selected.matches(LIVE_WALK) ? this.selected : null;
         if (evt.key === "ArrowDown" || evt.key === "ArrowUp") {
             if (!cards.length) return;
             evt.preventDefault();
             const i = c ? cards.indexOf(c) + (evt.key === "ArrowDown" ? 1 : -1) : 0;
-            this.select(cards[Math.max(0, Math.min(cards.length - 1, i))], true);
+            const to = cards[Math.max(0, Math.min(cards.length - 1, i))];
+            // 聚焦时换一张：新的一张从按的方向滑进来
+            if (this.focused) { if (to !== c) this.focusOn(to, null, evt.key === "ArrowDown" ? 28 : -28); }
+            else this.select(to, true);
             return;
         }
         if (!c) return;
@@ -789,11 +865,16 @@ class ReviewView extends ItemView {
         const today = M().format("YYYY-MM-DD");
         const head = el.createDiv({ cls: "sb-head" });
         head.createEl("b", { text: `🗓 每日回顾 · ${today}` });
-        const again = head.createEl("button", { text: "↻", attr: { "aria-label": "重新抽" } });
+        const btns = head.createSpan({ cls: "sb-head-btns" });
+        const fz = btns.createEl("button", { text: "◎", cls: "sb-focus-btn", attr: { "aria-label": "聚焦：只看一张（⌥⌘→ 进，⌥⌘← 或 Esc 出）" } });
+        fz.onclick = () => (this.focused ? this.focusOut() : this.focusIn());
+        const again = btns.createEl("button", { text: "↻", attr: { "aria-label": "重新抽" } });
         again.onclick = () => { this.shift++; this.orphanShift++; this.render(); };
 
         await this.renderWalk(el, today, stale);
         if (stale()) return;
+        // 聚焦着重新抽 / 换类别：直接聚焦到新的第一张
+        if (this.focused) { const f = el.querySelector(LIVE_WALK); if (f) this.focusOn(f, null); }
         await this.renderWiki(el, today, stale);
         if (stale()) return;
         await this.renderOrphans(el, today);
@@ -835,6 +916,7 @@ class ReviewView extends ItemView {
         const due = dueN.size ? shuffle([...src.card, ...src.cloze].filter((it) => dueN.has(p.nidOf(it))), rand) : [];
         const hint = mode === "wiki" ? `Wiki ${src.wiki.length}` : `卡片 ${src.card.length} · 挖空 ${src.cloze.length}` + (due.length ? ` · 今天到期 ${due.length}` : "");
         const s = this.section(el, "🎲 随机漫步", hint);
+        s.addClass("sb-walk-sec");
         const tabs = s.querySelector(".sb-sec-h > span").createSpan({ cls: "sb-walk-tabs" });
         for (const [m, label] of [["main", "知识"], ["lang", "语言"], ["wiki", "Wiki"]]) {
             const b = tabs.createEl("button", { text: label, cls: m === mode ? "is-active" : "" });
@@ -850,11 +932,18 @@ class ReviewView extends ItemView {
         for (const it of order.slice(0, n)) this.walkCard(s, it);
     }
     // 这张处理完了：收起来，后面的往上顶，从队列里补一张
+    // 聚焦着的那一张不收高度：往上淡出（transform），下一张从下面滑上来
     dismissWalk(c) {
-        if (c.hasClass("is-leaving")) return;
-        c.style.height = c.offsetHeight + "px";
-        c.addClass("is-leaving");
-        requestAnimationFrame(() => { c.style.height = "0px"; });
+        if (!c.matches(LIVE_WALK)) return;
+        const inFocus = this.focused && c.hasClass("is-focus");
+        if (inFocus) {
+            c.addClass("is-exiting");
+            if (c.animate && !reducedMotion()) c.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-18px) scale(.98)" }], { duration: GLIDE_MS, easing: GLIDE_EASE, fill: "forwards" });
+        } else {
+            c.style.height = c.offsetHeight + "px";
+            c.addClass("is-leaving");
+            requestAnimationFrame(() => { c.style.height = "0px"; });
+        }
         setTimeout(() => {
             const box = c.parentElement;
             const wasSel = this.selected === c, at = box ? [...box.querySelectorAll(".sb-walk")].indexOf(c) : -1;
@@ -863,11 +952,13 @@ class ReviewView extends ItemView {
             if (next) this.walkCard(box, next);
             else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "做完了，↻ 再来一批", cls: "sb-hint" });
             // 用键盘作答时：选中顶上来的那张，接着按 Space / 1-4
-            if (wasSel) {
-                const rest = box ? [...box.querySelectorAll(".sb-walk:not(.is-leaving)")] : [];
-                this.select(rest[Math.min(at, rest.length - 1)], true);
+            if (wasSel || inFocus) {
+                const rest = box ? [...box.querySelectorAll(LIVE_WALK)] : [];
+                const to = rest[Math.min(at, rest.length - 1)];
+                if (inFocus && this.focused && to) this.focusOn(to, null);
+                else this.select(to, true);
             }
-        }, 260);
+        }, GLIDE_MS);
     }
     walkCard(parent, it) {
         const p = this.plugin;

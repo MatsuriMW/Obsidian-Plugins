@@ -63,3 +63,45 @@
 .sb-review .sb-card { cursor: auto; user-select: text; }
 .sb-review .sb-card button { cursor: pointer; }
 .sb-card.sb-walk.is-selected { border-color: var(--interactive-accent); box-shadow: 0 0 0 1px var(--interactive-accent); }
+
+/* 每日回顾：磨砂玻璃卡片。面板底下铺几团很淡的彩色光晕（不跟着滚动），卡片是从左上往右下渐渐变透的白，
+   背后模糊 + 一圈亮边 + 很软的投影，看起来像浮在光晕上面的一片玻璃 */
+.sb-review {
+  background:
+    radial-gradient(110% 55% at 100% 0%, rgba(255, 200, 212, .30), transparent 62%),
+    radial-gradient(90% 50% at 0% 100%, rgba(196, 212, 255, .32), transparent 62%),
+    linear-gradient(180deg, #f5f5f7, #eeeef2);
+}
+.sb-review .sb-sec-h { border-bottom-color: rgba(20, 20, 40, .07); }
+.sb-review .sb-card {
+  background: linear-gradient(145deg, rgba(255, 255, 255, .88) 0%, rgba(255, 255, 255, .64) 55%, rgba(255, 255, 255, .44) 100%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, .78);
+  border-radius: 14px;
+  padding: 9px 12px;
+  margin: 8px 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 1px 2px rgba(20, 20, 40, .04), 0 8px 24px -8px rgba(20, 20, 40, .12);
+}
+.sb-review .sb-card:hover { border-color: rgba(255, 255, 255, .98); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 1px 2px rgba(20, 20, 40, .05), 0 12px 30px -10px rgba(20, 20, 40, .16); }
+.sb-review .sb-card.sb-walk.is-selected { border-color: rgba(122, 128, 186, .42); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 0 0 3px rgba(122, 128, 186, .12), 0 12px 30px -10px rgba(20, 20, 40, .16); }
+.sb-review .sb-meta { color: rgba(40, 40, 60, .5); }
+.sb-review .sb-actions button, .sb-review .sb-anki button { background: rgba(255, 255, 255, .6); box-shadow: 0 0 0 1px rgba(20, 20, 40, .08); border-radius: 8px; }
+.sb-review .sb-actions button:hover { background: rgba(255, 255, 255, .9); }
+
+/* 每日回顾：聚焦（◎ / ⌥⌘→ 进，⌥⌘← / Esc 出）。只留随机漫步里这一张，其余都收起；
+   滑动由 main.js 用 transform 播，这里关掉卡片自己的过渡，免得落点的 margin 也跟着慢慢动 */
+.sb-head-btns { display: inline-flex; gap: 4px; }
+.sb-review.sb-focus-mode .sb-focus-btn { background: var(--interactive-accent); color: var(--text-on-accent); }
+.sb-review.sb-focus-mode .sb-sec:not(.sb-walk-sec),
+.sb-review.sb-focus-mode .sb-walk:not(.is-focus) { display: none; }
+.sb-review.sb-focus-mode .sb-walk-sec > .sb-sec-h { border-bottom-color: transparent; }
+.sb-review .sb-card.sb-walk.is-focus { transition: none; padding: 14px 16px; font-size: 1.08em; will-change: transform; }
+.sb-review .sb-card.sb-walk.is-focus .sb-md { max-height: 60vh; }
+/* 后面还有卡：底下露出两层叠着的卡边，像一摞卡片 */
+.sb-review .sb-card.sb-walk.is-focus.has-more {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 12px 30px -10px rgba(20, 20, 40, .16),
+    0 7px 0 -3px rgba(255, 255, 255, .78), 0 8px 1px -3px rgba(20, 20, 40, .07),
+    0 14px 0 -6px rgba(255, 255, 255, .55), 0 15px 1px -6px rgba(20, 20, 40, .05);
+}
+.sb-review .sb-card.sb-walk.is-exiting { pointer-events: none; }

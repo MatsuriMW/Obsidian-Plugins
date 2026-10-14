@@ -2,6 +2,8 @@
 
 马自立（[@MatsuriMW](https://github.com/MatsuriMW)）自己写的、以及改过的 Obsidian 插件，一共 30 多个。它们为一件事服务：**把 Obsidian 变成一个以块为单位写东西、能自己整理知识、还能帮你排时间的个人系统。**
 
+背后的想法是「文件系统 + Agent」：主库是 Markdown 加 Git，Claude、Pi、Codex、WorkBuddy 读写同一个库；工作记录一半由人主动写、一半由 AI 自动记；同一份日记既是陪伴 Agent 的上下文，也是个人任务管理。
+
 这些插件解决的是我自己每天碰到的问题，分成四块：
 
 - **编辑与大纲**：Obsidian 原生的列表编辑和反链比 Logseq / Roam 弱一截，这一组把「块」的体验补回来：整块选中和移动、Roam 式反链面板、块引用显示内容、列表与段落互转。

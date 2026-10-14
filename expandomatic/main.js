@@ -147,11 +147,22 @@ var Expandomatic = class extends import_obsidian.Plugin {
   }
   onunload() {
   }
+  // 本地改动：装着 esc-select-block（编辑体验 Logseq 化）、并且它带对接用的方法时返回它
+  escPlugin(editor) {
+    const p = this.app.plugins.plugins["esc-select-block"];
+    return p && p.expandBlock && p.shrinkBlock && p.restoreBlock && editor.cm ? p : null;
+  }
   rangeEq(a, b) {
     return posEq(posMin(a.anchor, a.head), posMin(b.anchor, b.head)) && posEq(posMax(a.anchor, a.head), posMax(b.anchor, b.head));
   }
   expand(editor) {
     var _a;
+    // 本地改动：Esc 选中整块（esc-select-block）的状态下先交给它接着扩，保持整块选中；它接不了（已经到顶层）再走下面的逻辑
+    const esc = this.escPlugin(editor);
+    if (esc && esc.expandBlock(editor.cm))
+      return;
+    // 到顶层了，这一步会退出整块选中：记下这时的状态，缩小选区退回来时交还给 esc-select-block
+    const block = esc ? esc.active(editor.cm) : null;
     const sels = editor.listSelections();
     if (!sels.length)
       return;
@@ -162,7 +173,14 @@ var Expandomatic = class extends import_obsidian.Plugin {
       this.lastSet = null;
     }
     const from = posMin(cur.anchor, cur.head);
-    const to = posMax(cur.anchor, cur.head);
+    let to = posMax(cur.anchor, cur.head);
+    // 本地改动：整行选区的末尾落在下一行开头（Esc 选中的整块带着换行）时按上一行行尾算，
+    // 不然认不出「这一块已经整块选中」，会直接跳到母块 / 全文
+    if (to.ch === 0 && to.line > from.line) {
+      const end = mk(to.line - 1, editor.getLine(to.line - 1).length);
+      if (posLt(from, end))
+        to = end;
+    }
     if (posEq(from, to)) {
       // 本地改动：光标在列表块里但没贴着字（行尾空格、缩进、列表符号上），直接选中这一块的内容
       const target = (_a = this.cursorInBulletBlank(editor, from) || this.nearestWord(editor, from)) != null ? _a : this.nearestSection(editor, from);
@@ -177,7 +195,7 @@ var Expandomatic = class extends import_obsidian.Plugin {
     const candidates = this.expansions(editor, ctx, from, to);
     for (const candidate of candidates) {
       if (candidate != null && strictlyContains(candidate, from, to)) {
-        this.selStack.push(cur);
+        this.selStack.push(block ? { anchor: cur.anchor, head: cur.head, block } : cur);
         editor.setSelection(candidate.anchor, candidate.head);
         this.lastSet = { anchor: candidate.anchor, head: candidate.head };
         return;
@@ -185,6 +203,10 @@ var Expandomatic = class extends import_obsidian.Plugin {
     }
   }
   shrink(editor) {
+    // 本地改动：Esc 整块选中状态下扩大过的，交给 esc-select-block 一步步退回
+    const esc = this.escPlugin(editor);
+    if (esc && esc.shrinkBlock(editor.cm))
+      return;
     const sels = editor.listSelections();
     if (!sels.length)
       return;
@@ -196,7 +218,9 @@ var Expandomatic = class extends import_obsidian.Plugin {
       return;
     }
     const prev = this.selStack.pop();
-    editor.setSelection(prev.anchor, prev.head);
+    // 本地改动：退回到的是 Esc 整块选中 → 让 esc-select-block 重新选上，整块选中状态接着用（↑↓ 换块、再缩小）
+    if (!(prev.block && esc && esc.restoreBlock(editor.cm, prev.block)))
+      editor.setSelection(prev.anchor, prev.head);
     this.lastSet = prev;
   }
   // ── Context detection ───────────────────────────────────────────────────

@@ -20,7 +20,11 @@
 //   · 已有选区时按 Esc：选中选区跨过的所有块
 //   · 光标在续行 / 子段落上时，归到它所属的列表项；在空行上不接管
 //   · 不接管：光标不在列表里、有弹出菜单或建议框（todoseq 等）、多光标、Vim 模式
-//   扩大 / 缩小选区交给 Expandomatic
+//   · 选中状态下按 Expandomatic 的扩大选区（⌘⇧B）：和它自己的顺序连着走，仍然是整块选中——
+//     先把下面紧挨着的列表块（连同子项）加进来，再按再往下；下面没有列表块了就选母块，一层层往上；
+//     到顶层之后交回给 Expandomatic（段落 / 章节 / 全文），这时才退出整块选中
+//   · 缩小选区：一步步退回扩大之前的范围，还在整块选中状态里（从段落 / 章节 / 全文退回来时也重新进入整块选中）
+//   没有整块选中时，扩大 / 缩小选区全交给 Expandomatic
 //
 // 二、选中文字后输入成对符号：包起来，不替换（不管中文还是英文输入法）
 //   · 选中「文字」后输入 [ → 「[文字]」，选区仍在「文字」上，再按一次 [ → 「[[文字]]」，就是双链
@@ -373,9 +377,10 @@ function rangeOf(doc, start, end) {
 // 选中整块用反向选区：光标（head）在块首行开头
 const blockSelection = (doc, start, end) => { const r = rangeOf(doc, start, end); return EditorSelection.single(r.to, r.from); };
 
-// 「Esc 选中整块」的状态放在编辑器状态里：{ start, end, key, multi, anchor, head, moved }
+// 「Esc 选中整块」的状态放在编辑器状态里：{ start, end, key, multi, anchor, head, moved, stack }
 //   start / end：块的首行和末行；key：首行内容；multi：⇧↑↓ 扩选过（不止一棵子树）
 //   anchor / head：按 Esc 之前原来的光标；moved：选中后有没有用方向键移动过
+//   stack：扩大选区（Expandomatic）之前的各个范围 [{ start, end }]，缩小选区时一步步退回；移动、改了文档就清掉
 const setBlock = StateEffect.define();
 const blockField = StateField.define({
 	create: () => null,
@@ -511,7 +516,7 @@ module.exports = class LogseqEditing extends Plugin {
 			const lastPos = Math.max(0, Math.min(doc.length, tr.changes.mapPos(old.to, -1) - 1));
 			end = Math.max(end, doc.lineAt(lastPos).number - 1);
 		}
-		return [tr, { selection: blockSelection(doc, start, end), effects: setBlock.of({ ...val, start, end }), sequential: true }];
+		return [tr, { selection: blockSelection(doc, start, end), effects: setBlock.of({ ...val, start, end, stack: null }), sequential: true }];
 	}
 
 	// 整块删掉之后：原来位置上现在是列表项（下一块补上来了）就选它，否则选上面最近的一块，再没有就往下找；都没有才退出
@@ -524,7 +529,7 @@ module.exports = class LogseqEditing extends Plugin {
 		const end = subtreeEnd(getLine, doc.lines, it);
 		return [tr, {
 			selection: blockSelection(doc, it, end),
-			effects: setBlock.of({ ...val, start: it, end, multi: false, key: keyOf(getLine(it)), moved: true }),
+			effects: setBlock.of({ ...val, start: it, end, multi: false, key: keyOf(getLine(it)), moved: true, stack: null }),
 			sequential: true, scrollIntoView: true,
 		}];
 	}
@@ -592,6 +597,44 @@ module.exports = class LogseqEditing extends Plugin {
 		const s = this.active(view);
 		if (!s) return this.confirmWrap(view);
 		view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(s.start + 1).to), effects: setBlock.of(null) });
+		return true;
+	}
+
+	// Expandomatic 的扩大选区在整块选中状态下先问这里，顺序和它自己的一样：
+	// 先把下面紧挨着的列表块加进来，下面没有了就选母块；到顶层返回 false，交回给它（段落 / 章节 / 全文，退出整块选中）
+	expandBlock(view) {
+		const s = this.active(view);
+		if (!s) return false;
+		const doc = view.state.doc, getLine = (i) => doc.line(i + 1).text;
+		let start = s.start, end = s.end, n = s.end + 1;
+		while (n < doc.lines && isBlank(getLine(n))) n++;
+		if (n < doc.lines && isItem(getLine(n))) end = subtreeEnd(getLine, doc.lines, n);
+		else {
+			// 往上找第一个能把整个选区包住的母块（⇧↑↓ 扩选过的选区可能跨了几层）
+			let p = parentItem(getLine, s.start);
+			while (p >= 0 && subtreeEnd(getLine, doc.lines, p) < s.end) p = parentItem(getLine, p);
+			if (p < 0) return false;
+			start = p;
+			end = subtreeEnd(getLine, doc.lines, p);
+		}
+		const stack = [...(s.stack || []), { start: s.start, end: s.end }];
+		this.selectLines(view, start, end, { anchor: s.anchor, head: s.head, moved: s.moved, stack });
+		return true;
+	}
+
+	// Expandomatic 的缩小选区：退回上一次扩大之前的范围；没有可退的返回 false
+	shrinkBlock(view) {
+		const s = this.active(view);
+		if (!s || !s.stack?.length) return false;
+		const prev = s.stack[s.stack.length - 1];
+		this.selectLines(view, prev.start, prev.end, { anchor: s.anchor, head: s.head, moved: s.moved, stack: s.stack.slice(0, -1) });
+		return true;
+	}
+
+	// Expandomatic 扩到段落 / 章节 / 全文（退出了整块选中）之后又缩小回来：按当时记下的状态重新整块选上
+	restoreBlock(view, s) {
+		if (s.end >= view.state.doc.lines) return false;
+		this.selectLines(view, s.start, s.end, { anchor: s.anchor, head: s.head, moved: s.moved, stack: s.stack });
 		return true;
 	}
 
@@ -789,7 +832,7 @@ module.exports = class LogseqEditing extends Plugin {
 			if (start >= 0) {
 				const end = Math.max(subtreeEnd(nl, newDoc.lines, start), endLine);
 				spec.selection = blockSelection(newDoc, start, end);
-				spec.effects = setBlock.of({ ...s, start, end, multi: end > subtreeEnd(nl, newDoc.lines, start), key: keyOf(nl(start)), moved: true });
+				spec.effects = setBlock.of({ ...s, start, end, multi: end > subtreeEnd(nl, newDoc.lines, start), key: keyOf(nl(start)), moved: true, stack: null });
 			}
 		} else if (s) {
 			spec.selection = EditorSelection.cursor(newDoc.line(newDoc.lineAt(cs.mapPos(rangeOf(doc, s.start, s.end).from, 1)).number).to);
