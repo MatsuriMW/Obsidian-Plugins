@@ -822,13 +822,21 @@ class ReviewView extends ItemView {
         this.focusRO.observe(c);
     }
     // 落点：放得下就让卡片中线对齐可视区中线（不管卡片多大）；放不下就贴着标题下面，往下滚着看
+    // 用布局位置量（offsetTop / offsetHeight），不用 getBoundingClientRect：翻页、滑动动画正在播时后者带着 transform，落点会偏
     placeFocus(c) {
         c.style.marginTop = "";
         const el = this.contentEl;
-        const box = el.getBoundingClientRect(), r = c.getBoundingClientRect();
-        const want = box.top + el.clientTop + (el.clientHeight - r.height) / 2;
-        const push = Math.max(0, Math.round(want - r.top));
-        if (push) c.style.marginTop = push + "px";
+        const topOf = () => { let y = 0, n = c; for (; n && n !== el; n = n.offsetParent) y += n.offsetTop; return n === el ? y : null; };
+        const y = topOf();
+        if (y == null) return;   // 量不出来（还没挂进面板）就不动
+        const want = el.scrollTop + (el.clientHeight - c.offsetHeight) / 2;
+        if (want <= y) return;   // 放不下：留在原位（标题下面），往下滚着看
+        // marginTop 换掉的是卡片自带的外边距，要加回来；再复量一次，把外边距合并之类的误差补掉
+        const base = parseFloat(getComputedStyle(c).marginTop) || 0;
+        let push = base + want - y;
+        c.style.marginTop = Math.round(push) + "px";
+        push += want - topOf();
+        c.style.marginTop = Math.round(Math.max(0, push)) + "px";
     }
     recenter() {
         const c = this.focused && this.contentEl.querySelector(".sb-walk.is-focus:not(.is-exiting)");
