@@ -853,6 +853,22 @@ function mdflowText(lines) {
 	return `# ${title}\n${body.join("\n")}\n`.replace(/\n{3,}/g, "\n\n");
 }
 
+// 发到 X 的文字：这一块自己一行，子项各一行（去掉列表符号、缩进、任务关键字和时刻、块 ID）；
+// 双链只留显示的字，==高亮== / **加粗** 去掉记号；⏱ 时段、🔗 绑定这类机器写的子行不带
+function tweetText(lines) {
+	const out = [];
+	for (const l of lines) {
+		if (isBlank(l) || ID_LINE_RE.test(l)) continue;
+		const t = plainText(l)
+			.replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2")
+			.replace(/==([^=\n]+)==/g, "$1").replace(/\*\*([^*\n]+)\*\*/g, "$1")
+			.trim();
+		if (!t || /^(⏱|🔗)/.test(t)) continue;
+		out.push(t);
+	}
+	return out.join("\n");
+}
+
 class SendModal extends FuzzySuggestModal {
 	constructor(plugin, editor, file) {
 		super(plugin.app);
@@ -1197,6 +1213,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			{ icon: "📅", name: "日历", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
 			{ icon: "☑️", name: "提醒事项", command: "send-block-to-reminders", desktop: true, run: (ed, f) => this.sendToReminders(ed, f) },
 			{ icon: "💡", name: "AI 解释", command: "send-block-to-explain", desktop: true, run: (ed, f) => this.sendToExplain(ed, f) },
+			{ icon: "🐦", name: "X（Twitter）", command: "send-block-to-twitter", run: (ed) => this.sendToTwitter(ed) },
 		];
 	}
 
@@ -1621,6 +1638,24 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		this.cue("DONE");
 		const label = orig[0].replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").slice(0, 24);
 		new Notice(`➡️ 已发送到明天（${to.name}）：${label}${orig.length > 1 ? `（含 ${orig.length - 1} 行子项）` : ""}`);
+	}
+
+	// 发到 X：交给 NoteTweet 插件的发推编辑框，预填这一块（连同子项，见 tweetText）；超过一条的长度 NoteTweet 会自动拆成线程。
+	// 这里不直接发，发不发、发哪个账号在编辑框里定。NoteTweet 的编辑框只认「当前选中的文字」当预填，借它一下 currentSelection
+	async sendToTwitter(editor) {
+		const nt = this.app.plugins.plugins["notetweet"];
+		if (!nt || typeof nt.composeAndPost !== "function") return new Notice("要先装好并启用 NoteTweet 插件");
+		const lines = editor.getValue().split("\n");
+		const b = this.blockAt(lines, editor.getCursor().line);
+		if (!b) return new Notice("光标不在列表项里");
+		const text = tweetText(lines.slice(b.start, b.end + 1));
+		if (!text) return new Notice("这一块是空的");
+		const own = Object.prototype.hasOwnProperty.call(nt, "currentSelection"), orig = nt.currentSelection;
+		nt.currentSelection = () => text;
+		let shown;
+		try { shown = nt.composeAndPost(); } finally { if (own) nt.currentSelection = orig; else delete nt.currentSelection; }
+		this.cue("DOING");
+		await shown;
 	}
 
 	// 光标所在的列表项（光标在续行/空行时向上找）连同子项。
