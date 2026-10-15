@@ -1,5 +1,6 @@
 // 任务归位：按状态把顶格任务块放进各自的分区
-//   分区顺序：DONE（最上面）→ DOING（中间）→ TODO（DOING 下面）→ 没状态的（最下面，原样不动），分区之间用「- ---」隔开
+//   分区顺序：DONE（最上面）→ DOING（中间）→ TODO（DOING 下面）→ 没状态的（最下面，原样不动），分区之间用「- ---」隔开；
+//     日记是固定三区：后面还有内容时，空着的区也留着它的分隔线，TODO 区永远在第二条「- ---」下面（新日记的模板就是两条分隔线）
 //   · 只看顶格条目的状态；子项的状态不参与分类，整块跟着母项走
 //   · 块内部也一样：块里自己用「- ---」分了栏的，子项按状态在块内排成 DONE → DOING → TODO → 没状态的，
 //     只在块内部排，不会跑到别的块里、也不会被提到文件级；块里没用分割线的不动
@@ -30,8 +31,8 @@
 //     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING 在 PAUSED 前、TODO 在 WAITING 前）；
 //     DONE 区不看优先级，只按关键字聚类：DONE → SUSPENDED → FAILED → CANCELLED。块内部用分割线分了栏的也照此排
 //     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
-//   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，也归 DOING 区，排在 DOING 区最后；一篇里有好几块的并成一块。
-//     core.appendInfo(text, [文字…]) 往它下面追加子块，还没有就在 DOING 区最后建一个（AI 记信息增量用）
+//   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后；一篇里有好几块的并成一块。
+//     core.appendInfo(text, [文字…]) 往它下面追加子块，还没有就在 TODO 区最后建一个（AI 记信息增量用）
 //   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
@@ -98,9 +99,9 @@ const ZONE = {
 	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO",
 };
-// 常驻 DOING 区的母块：顶格只写「- [[信息增量]]」的那一块没有状态，也归 DOING 区，排在 DOING 区最后。
+// 常驻 TODO 区的母块：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后。
 // AI 往它下面追加子块，它在哪儿都一样追加；一篇里有好几块的，整理时并成一块
-const DOING_PIN_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;
+const INFO_PIN_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;
 const TAB_WIDTH = 4;
 // 单独占一行的块 ID：闪卡插件（flashcards-obsidian）把卡片的标识符写在卡片最后一行的下一行、顶格，比如「^q-r7d4」。
 // 它没有缩进，但属于上面那一块，切块时不能把它当成新的一块
@@ -200,9 +201,9 @@ function rankIn(zone, line) {
 	const p = line.match(PRIO_RE);
 	return (p ? PRIO_RANK[p[1]] : 3) * 10 + cluster;
 }
-// 稳定排序：同一类里保持原来的先后。「- [[信息增量]]」排在 DOING 区最后
+// 稳定排序：同一类里保持原来的先后。「- [[信息增量]]」排在 TODO 区最后
 function sortZone(zone, items) {
-	return items.map((ls, i) => ({ ls, i, k: DOING_PIN_RE.test(ls[0]) ? 1e3 : rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
+	return items.map((ls, i) => ({ ls, i, k: INFO_PIN_RE.test(ls[0]) ? 1e3 : rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
 }
 
 // 把正文切成顶格块：顶格非空行开一个新块，缩进行 / 空行 / 代码块里的行跟着上一块
@@ -218,8 +219,8 @@ function parse(text) {
 		const fence = /^\s*(```|~~~)/.test(line);
 		const startsNew = !inFence && !isBlank(line) && !/^\s/.test(line) && !ID_LINE_RE.test(line);   // 块 ID 那一行跟着上一块
 		if (startsNew || !blocks.length) {
-			const sep = SEP_RE.test(line), pin = DOING_PIN_RE.test(line);
-			blocks.push({ lines: [line], start: i, sep, pin, zone: sep ? null : pin ? "DOING" : zoneOf(line) });
+			const sep = SEP_RE.test(line), pin = INFO_PIN_RE.test(line);
+			blocks.push({ lines: [line], start: i, sep, pin, zone: sep ? null : pin ? "TODO" : zoneOf(line) });
 		} else blocks[blocks.length - 1].lines.push(line);
 		if (fence) inFence = !inFence;
 	}
@@ -353,7 +354,7 @@ function organize(text) {
 	const { head, blocks, tail } = parse(text);
 	const zones = { DONE: [], DOING: [], TODO: [] };
 	const links = [], rest = [];
-	let pin = null;   // 「- [[信息增量]]」那一块（DOING 区里）
+	let pin = null;   // 「- [[信息增量]]」那一块（TODO 区里）
 	const keep = doneZoneEnd(blocks);
 	blocks.forEach((b, i) => { b.inDone = i < keep; });
 	let inner = 0;
@@ -374,7 +375,7 @@ function organize(text) {
 		}
 		if (!b.sep && isCardBlock(b.lines)) b.zone = "DONE";   // 做成了闪卡的块归 DONE 区，不管首行写的是什么状态
 		if (b.pin && pin) pin.push(...trimBlock(b.lines).slice(1));   // 第二块「- [[信息增量]]」：子块并进第一块
-		else if (b.pin) zones.DOING.push((pin = trimBlock(b.lines)));
+		else if (b.pin) zones.TODO.push((pin = trimBlock(b.lines)));
 		else if (b.zone) zones[b.zone].push(trimBlock(b.lines));
 		else if (b.inDone) zones.DONE.push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
 		else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
@@ -383,13 +384,18 @@ function organize(text) {
 	}
 	if (rest.length && rest[rest.length - 1].sep) rest.pop();
 	const out = [];
-	// DONE 栏空着、下面又有别的内容时，开头留一条分隔线占住 DONE 栏的位置（不然下面那段会被当成 DONE 栏）
-	const emptyDone = !zones.DONE.length && (zones.DOING.length || zones.TODO.length || links.length);
-	const add = (ls) => { if (!ls.length) return; if (out.length || emptyDone) out.push(SEP); out.push(...ls); };
-	for (const z of ["DONE", "DOING", "TODO"]) add(sortZone(z, zones[z]).flat());
-	add(links.flat());                                        // 链接区：任务区（TODO）下面、其它内容上面
-	add(rest.flatMap((b) => b.lines));
-	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length - (pin ? 1 : 0), TODO: zones.TODO.length, LINK: links.length, inner };
+	const extra = [links.flat(), rest.flatMap((b) => b.lines)].filter((ls) => ls.length);   // 链接区：任务区（TODO）下面、其它内容上面
+	if (zoned) {
+		// 日记的固定三区：DONE 栏 | DOING 区 | TODO 区（信息增量在它最后），后面还有内容的话，空着的区也留着它那条分隔线，
+		// 所以 TODO 区永远在第二条「- ---」下面（模板 Templates/日记.md 就是这两条分隔线）
+		const slots = ["DONE", "DOING", "TODO"].map((z) => sortZone(z, zones[z]).flat());
+		slots.forEach((ls, k) => {
+			out.push(...ls);
+			if (slots.slice(k + 1).some((x) => x.length) || extra.length) out.push(SEP);
+		});
+	}
+	extra.forEach((ls, i) => { if (i) out.push(SEP); out.push(...ls); });
+	const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, inner };
 	return { text: head.concat(out, tail).join("\n"), counts };
 }
 
@@ -410,14 +416,19 @@ function place(text, blockLines, zone) {
 		let headEnd = from;
 		while (headEnd < blocks.length && (blocks[headEnd].sep || blocks[headEnd].zone)) headEnd++;
 		idx = -1;
+		// 新的 TODO 放在「- [[信息增量]]」前面，它留在 TODO 区最后；TODO 区里只有它的话就插在它前面
+		const pinAt = blocks.findIndex((x, i) => i >= from && i < headEnd && x.pin);
+		let inTodo = false;   // 找到的位置已经在 TODO 区里（挨着别的 TODO 或信息增量）
 		for (const z of zone === "DOING" ? ["DOING"] : ["TODO", "DOING"]) {
-			// 新的 DOING 放在「- [[信息增量]]」前面，它留在 DOING 区最后
-			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z && !(zone === "DOING" && blocks[i].pin)) { idx = i + 1; break; }
-			if (idx >= 0) break;
+			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z && !blocks[i].pin) { idx = i + 1; break; }
+			if (idx < 0 && z === "TODO" && pinAt >= 0) idx = pinAt;
+			if (idx >= 0) { inTodo = z === "TODO"; break; }
 		}
 		if (idx < 0) idx = hasZone ? doneEnd + 1 : 0;   // 紧跟 DONE 栏的分隔线
+		// TODO 区里还没东西：越过 DOING 区后面那条分隔线（DOING 区空着时就是紧挨着的第二条），落进 TODO 区
+		if (zone === "TODO" && !inTodo && blocks[idx] && blocks[idx].sep) idx++;
 		const prev = blocks[idx - 1], next = blocks[idx];
-		if (!hasZone && idx === 0) ins.unshift(SEP);   // 还没有栏：先留出空的 DONE 栏
+		if (!hasZone && idx === 0) ins.unshift(...(zone === "TODO" ? [SEP, SEP] : [SEP]));   // 还没有栏：先留出空的 DONE 栏（TODO 连空的 DOING 区也留出来）
 		else if (prev && !prev.sep && prev.zone !== zone) ins.unshift(SEP);
 		if (next && !next.sep && next.zone !== zone) ins.push(SEP);
 	}
@@ -535,13 +546,13 @@ function dropBlocks(text, origs) {
 
 // 把一块写进日记：任务进分区，其余追加到末尾
 function addBlock(text, lines) {
-	const zone = zoneOf(lines[0]) || (DOING_PIN_RE.test(lines[0]) ? "DOING" : null);
+	const zone = zoneOf(lines[0]) || (INFO_PIN_RE.test(lines[0]) ? "TODO" : null);
 	if (zone) return place(text, lines, zone).text;
 	return text.replace(/\s*$/, "\n") + lines.join("\n") + "\n";
 }
 
 // 往「- [[信息增量]]」下面追加子块（items 是一条条的文字，不带「- 」）：接在那一块最后一个子块后面，块在哪儿都一样；
-// 还没有这一块就在 DOING 区最后建一个。AI 记信息增量时用：app.plugins.plugins["done-to-top"].core.appendInfo
+// 还没有这一块就在 TODO 区最后建一个。AI 记信息增量时用：app.plugins.plugins["done-to-top"].core.appendInfo
 function appendInfo(text, items) {
 	const kids = items.map((s) => String(s).replace(/[\r\n]+/g, " ").trim()).filter(Boolean).map((s) => "\t- " + s);
 	if (!kids.length) return text;

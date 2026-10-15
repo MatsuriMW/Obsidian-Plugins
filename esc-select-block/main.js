@@ -568,7 +568,7 @@ module.exports = class LogseqEditing extends Plugin {
 		return true;
 	}
 
-	// ↑ / ↓ 换到上一块 / 下一块；extend 为真时（⇧）把那一块加进选区
+	// ↑ / ↓ 换到上一块 / 下一块；extend 为真时：⇧↓ 把下面一块加进选区，⇧↑ 把最下面那一块退出选区（只剩一块就不动）
 	move(view, dir, extend) {
 		const s = this.active(view);
 		if (!s) return false;
@@ -576,11 +576,22 @@ module.exports = class LogseqEditing extends Plugin {
 		const getLine = (i) => doc.line(i + 1).text;
 		let start = s.start, end = s.end;
 
-		if (dir < 0) {
+		if (dir < 0 && extend) {
+			// 按 ⇧↓ 加块的同一套办法把选区拆回一块块，去掉最后一块
+			let e = subtreeEnd(getLine, doc.lines, s.start), prevEnd = -1;
+			while (e < s.end) {
+				const n = nextItemAfter(getLine, doc.lines, e);
+				if (n < 0 || n > s.end) break;
+				prevEnd = e;
+				e = Math.max(e, subtreeEnd(getLine, doc.lines, n));
+			}
+			if (prevEnd < 0) return true;                  // 只有一块：保持不变
+			end = prevEnd;
+		} else if (dir < 0) {
 			const p = prevItem(getLine, s.start);
 			if (p < 0) return true;                        // 已经是第一块：保持选中，不回到编辑
 			start = p;
-			if (!extend) end = subtreeEnd(getLine, doc.lines, p);
+			end = subtreeEnd(getLine, doc.lines, p);
 		} else {
 			// 不扩选时，↓ 从当前块的首行往下找（先进它的第一个子项）；扩选时从选区末尾往下找
 			const n = nextItemAfter(getLine, doc.lines, extend ? s.end : s.start);

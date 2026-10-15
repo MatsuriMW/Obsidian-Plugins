@@ -7,7 +7,7 @@
  *
  * 1. 任务分区：顶格任务块（连同子块）按状态排成 DONE → DOING → TODO → 没状态的（原样在最下面），区之间用「- ---」隔开。
  *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
- *    顶格只写「- [[信息增量]]」的那一块归 DOING 区，排在 DOING 区最后（问题汇总、摘录都不碰它）。
+ *    顶格只写「- [[信息增量]]」的那一块归 TODO 区，排在 TODO 区最后（问题汇总、摘录都不碰它）。
  *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
  *    聚成「链接」区，放在 TODO 区下面；有任务关键字的算任务，优先级更高。
  *    规则和 done-to-top 插件的「一键整理」（⌥1 / ⌃⇧F）是同一份（用它的 core，含「明天 / 后天 / 大后天」搬到那天日记）；那个插件没开时退回旧的「待办上移」。
@@ -65,7 +65,7 @@ const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|L
 const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
-const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 DOING 区最后
+const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 TODO 区最后
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 
