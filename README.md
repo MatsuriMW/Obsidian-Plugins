@@ -53,7 +53,7 @@
 | **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效） | ★★ | Better Command Palette |
 | **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
 | **追问成稿（QWS / grill-me）**<br>[`qws-bridge`](qws-bridge) | 把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚 | ★ | Claudian 插件 + QWS / grill-me skill |
-| **日记整理**<br>[`journal-tidy`](journal-tidy) | 整理日记，分两种方式：基础整理在本地把任务分区、聚拢链接、给带标签的条目补上字段、折起做完的；进阶整理再请 Claude 联网回答日记里的问题，把 AI 助手自动记下的任务行按主题收拢，给摘录挂上记号。另外在 Claude 桌面 app 里归档一个会话，日记里自动记一笔。「今天是哪一篇日记」跟着螺旋日程的「日记日期分界」走（装了螺旋日程的话），两边不会差一天 | ★ | 本机 Claude Code；Logseq 式任务 |
+| **日记整理**<br>[`journal-tidy`](journal-tidy) | 整理日记，分两种方式：基础整理在本地把手打的编号（- 1.）改成有序列表、任务分区、聚拢链接、给带标签的条目补上字段、折起做完的；进阶整理再请 Claude 联网回答日记里的问题，把 AI 助手自动记下的任务行按主题收拢，给摘录挂上记号。另外在 Claude 桌面 app 里归档一个会话，日记里自动记一笔。「今天是哪一篇日记」跟着螺旋日程的「日记日期分界」走（装了螺旋日程的话），两边不会差一天 | ★ | 本机 Claude Code；Logseq 式任务 |
 
 ### 日程与任务
 

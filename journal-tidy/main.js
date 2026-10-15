@@ -1,6 +1,6 @@
 /* 日记整理：整理由你手动触发（快捷键 / 命令 / 左侧按钮），分两种方式。
  *
- * 基础整理（纯本地，马上完成）：下面的 1 和 3，整理完把 DONE 区折起来。
+ * 基础整理（纯本地，马上完成）：下面的 0、1 和 3，整理完把 DONE 区折起来。
  * 进阶整理（要问本机的 Claude，一两分钟）：先做一遍基础整理，再做 2、4、5、6。
  *
  * 另有一件自己在后台做的事：你在 Claude 桌面 app 里归档一个会话，今天的日记里记一笔（见文件后面「归档记一笔」）。
@@ -14,6 +14,9 @@
  * 2. 问题汇总：找出日记里的问句，交给本机的 Claude（claude -p，可联网）判断哪些是真在问、并写回答；
  *    真问题整行从原处挪走（不是复制），集中到文件末尾的「问题汇总」块，回答写在各自下面。
  *    自言自语 / 感叹、游戏相关、提醒式、摘抄里的反问、一行里还有别的内容的，都不动。
+ *
+ * 0. 编号改成有序列表：「- 1. 内容」「- 1.内容」「- 1、内容」「- 1）内容」这种在无序列表里手打编号的，改成标准的「1. 内容」，
+ *    缩进和编号原样保留；「- 5.25 平安里」「- 10.a」这种后面紧贴数字、字母的（小数、时刻、小节号）不动，代码块里的不动。基础整理第一步就做。
  *
  * 3. SuperTag 字段：列表项里写了 [[标签名]]（比如「- [[菜谱]]毛血旺」），而 SuperTags 插件给这个标签定义了字段，
  *    就把还没有的字段作为子项「键:: 默认值」插在这一项下面（比如「学会:: 否」），留给你填。已经有的字段不重复插。
@@ -42,6 +45,7 @@ const DEFAULTS = {
     timeoutSec: 600,
     questionBlockTitle: "问题汇总｜[[等待尝试]]",
     moveTodos: true,
+    fixNumbered: true,
     answerQuestions: true,
     fillFields: true,
     groupMachine: true,
@@ -118,6 +122,23 @@ function moveTodos(text) {
     let result = out.join("\n").replace(/\n{3,}/g, "\n\n");
     if (text.endsWith("\n") && !result.endsWith("\n")) result += "\n";
     return { text: result, moved: todos.length };
+}
+
+// 「- 1. 内容」→「1. 内容」：无序列表里手打的编号改成标准有序列表。后面紧贴数字或英文字母的（5.25、6.10、10.a）不算编号
+const NUMBERED_BULLET = /^([ \t]*)[-*+][ \t]+(\d{1,3})[.．)）、](?![\dA-Za-z])[ \t]*(.*)$/;
+function fixNumberedBullets(text) {
+    const { fm, body } = splitFrontmatter(text);
+    let fence = null, count = 0;
+    const out = body.map((l) => {
+        const f = l.match(/^[ \t]*(?:[-*+][ \t]+)?(`{3,}|~{3,})/);
+        if (f) { if (!fence) fence = f[1]; else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null; return l; }
+        if (fence) return l;
+        const m = l.match(NUMBERED_BULLET);
+        if (!m) return l;
+        count++;
+        return `${m[1]}${m[2]}.${m[3] ? " " + m[3] : ""}`;
+    });
+    return { text: [...fm, ...out].join("\n"), count };
 }
 
 // SuperTag 字段：defsOf(名字) 返回 [{ key, def }]（来自 SuperTags 插件），没有就是空数组
@@ -478,7 +499,7 @@ module.exports = class JournalTidy extends Plugin {
     // 这种方式做哪几步：基础整理只做本地的；进阶整理再加上要问 Claude 的（各自还受设置里的开关管）
     optFor(mode) {
         const s = this.settings, deep = mode === "deep";
-        return { mode, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
+        return { mode, fixNumbered: s.fixNumbered, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
     }
 
     toggleExcerpt(editor) {
@@ -554,6 +575,12 @@ module.exports = class JournalTidy extends Plugin {
         await this.backup(file, original);
         const report = [];
         try {
+            // 编号改成有序列表（纯本地）：「- 1. 内容」→「1. 内容」，放在分区前面，改完的「1. TODO」分区也认得
+            if (opt.fixNumbered) {
+                let n = 0;
+                await this.app.vault.process(file, (data) => { const r = fixNumberedBullets(data); n = r.count; return r.text; });
+                if (n) report.push(`${n} 处「- 1.」改成了有序列表「1.」`);
+            }
             // 0. SuperTag 字段（纯本地）：[[菜谱]] 之类的项下面补上字段，让你填
             if (opt.fillFields) {
                 const st = this.app.plugins.plugins["supertags-local"];
@@ -841,11 +868,13 @@ class TidyModal extends Modal {
             });
         });
         let mode = s.lastMode === "deep" ? "deep" : "basic";
-        const opt = { moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
+        const opt = { fixNumbered: s.fixNumbered !== false, moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
         const deepRows = [];
         const show = () => deepRows.forEach(r => r.settingEl.toggle(mode === "deep"));
         new Setting(this.contentEl).setName("方式").setDesc("基础整理只在本地排，马上完成；进阶整理先做一遍基础整理，再请本机的 Claude 做下面几件，要一两分钟")
             .addDropdown(d => d.addOption("basic", "基础整理").addOption("deep", "进阶整理").setValue(mode).onChange(v => { mode = v; show(); }));
+        new Setting(this.contentEl).setName("编号改成有序列表").setDesc("「- 1. 内容」「- 1、内容」这种在无序列表里手打编号的，改成标准的「1. 内容」；缩进和编号不变，「- 5.25」这种小数不动")
+            .addToggle(t => t.setValue(opt.fixNumbered).onChange(v => { opt.fixNumbered = v; }));
         new Setting(this.contentEl).setName("补 SuperTag 字段").setDesc("写了 [[菜谱]] 这类 SuperTag 的项，下面插上还没有的字段（如「学会:: 否」），留给你填")
             .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
         new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开，整理完把 DONE 区折起来；块内用「- ---」分了栏的，子项也在块内按状态排")
@@ -897,4 +926,4 @@ class TidySettings extends PluginSettingTab {
     }
 }
 
-module.exports.__test = { moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
+module.exports.__test = { fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
