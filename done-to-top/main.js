@@ -107,8 +107,8 @@ const TAB_WIDTH = 4;
 // 它没有缩进，但属于上面那一块，切块时不能把它当成新的一块
 const ID_LINE_RE = /^[ \t]*\^[A-Za-z0-9-]+[ \t]*$/;
 const CARD_TAG_RE = /(?:^|\s)#card(?![\w/-])/;           // 多行卡片：这一项连同子项是一张卡，ID 写在整块后面
-// 机器记在任务下面的记号行：🔗 绑定的会话、⏱ 实际时段、💬 会话最后说的话（螺旋日程写的）。它们不是内容：不当成一块发出去，也不带进发给 Agent 的话里
-const MARK_LINE_RE = /^\s*[-*+]\s+(?:🔗|⏱|💬)/;
+// 机器记在任务下面的记号行：🔗 绑定的会话、⏱ 实际时段、💬 会话最后说的话、🤖 子代理 / side chat（螺旋日程写的）。它们不是内容：不当成一块发出去，也不带进发给 Agent 的话里
+const MARK_LINE_RE = /^\s*[-*+]\s+(?:🔗|⏱|💬|🤖\s*(?:子代理|side chat))/;
 
 const pad = (n) => String(n).padStart(2, "0");
 const nowHM = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
