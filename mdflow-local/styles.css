@@ -560,11 +560,6 @@
   list-style: none;
 }
 
-.mdflow-rednote-section-body .red-list-continuation::before {
-  content: "续：";
-  color: rgba(142, 111, 103, 0.78);
-  font-weight: 700;
-}
 
 .mdflow-rednote-section-body .red-table-fragment,
 .mdflow-rednote-section-body .red-pre-fragment {
@@ -1686,3 +1681,72 @@
   display: none !important;
 }
 /* ===== mdflow-debrand end ===== */
+
+/* 本地补丁：小红书里的列表按「块」分页。一个顶层列表项连同它的子项是一块，一张图里尽量只放完整的块；
+   一块放不进一页才拆，拆开时先换页，按行翻页，一行太长才按句子切，接下去的那段不画圆点、和正文对齐，不加任何字。 */
+.red-image-preview .red-li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  margin: 0.25em 0 0;
+  padding-left: calc(var(--red-li-depth, 0) * 1.3em);
+}
+
+.red-image-preview .red-li[data-depth="0"] {
+  margin-top: 0.55em;
+}
+
+.red-image-preview .mdflow-rednote-section-body > .red-li:first-child,
+.red-image-preview .mdflow-rednote-flow-body > .red-li:first-child,
+.red-image-preview .mdflow-rednote-section-body > .red-li-group:first-child > .red-li:first-child,
+.red-image-preview .mdflow-rednote-flow-body > .red-li-group:first-child > .red-li:first-child,
+.red-image-preview .red-li.red-li-cont {
+  margin-top: 0;
+}
+
+.red-image-preview .red-li + :not(.red-li),
+.red-image-preview .red-li-group + :not(.red-li-group):not(.red-li) {
+  margin-top: 0.7em;
+}
+
+.red-image-preview .red-li-marker {
+  flex: 0 0 auto;
+  min-width: 0.9em;
+  color: var(--rn-body-color);
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.red-image-preview .red-li-ol > .red-li-marker {
+  min-width: 1.2em;
+  opacity: 0.65;
+  font-weight: 600;
+}
+
+.red-image-preview .red-li-task > .red-li-marker {
+  min-width: 0;
+}
+
+.red-image-preview .red-li-cont > .red-li-marker {
+  visibility: hidden;
+}
+
+.red-image-preview .red-li-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.red-image-preview .red-li-body img {
+  display: block;
+  margin: 0.4em 0;
+}
+
+.red-image-preview[data-template-id="pure-blue"] .red-li-marker {
+  color: #2563eb;
+  opacity: 1;
+}
+
+.red-image-preview[data-template-id="aesop-amber"] .red-li-marker {
+  color: #1c1815;
+}
