@@ -1239,6 +1239,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			{ icon: "➡️", name: "明天", run: (ed, f) => this.sendToTomorrow(ed, f) },
 			{ icon: "🤖", name: "Claude CLI 单发", command: "send-block-to-claude", desktop: true, run: (ed, f) => this.sendToClaude(ed, f) },
 			{ icon: "🧩", name: "Claude CLI 并发", command: "send-kids-to-claude", desktop: true, run: (ed, f) => this.sendKidsToClaude(ed, f) },
+			{ icon: "🪺", name: "Claude CLI subagent", command: "send-kids-to-subagents", desktop: true, run: (ed, f) => this.sendKidsToSubagents(ed, f) },
 			{ icon: "✏️", name: "Claudian Inline edit", command: "send-block-to-claudian", desktop: true, run: (ed) => this.sendToClaudian(ed) },
 			{ icon: "🖼", name: "MD Flow", command: "send-block-to-mdflow", desktop: true, run: (ed, f) => this.sendToMdflow(ed, f) },
 			{ icon: "📅", name: "日历", command: "send-block-to-calendar", desktop: true, run: (ed, f) => this.sendToCalendar(ed, f) },
@@ -1335,25 +1336,50 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	// 纵深 = 子会话：光标所在的母块不整块发，它的每个直接子块各开一个会话；母块的字是每个会话开头都带的共同背景。
 	// 🔗 记在各个子块下面，所以进度条、会话最后说的话（💬）也都回到各自的子块下面。做完的子块、记号行、分隔线跳过
 	async sendKidsToClaude(editor, file) {
-		if (!this.desktopOnly()) return;
-		const lines = editor.getValue().split("\n");
-		const starts = this.pickedStarts(editor);
-		if (starts && starts.length > 1) return new Notice("母块一次发一个：把光标放在母块上，不要选中好几块");
-		const top = starts ? this.grabAt(lines, starts[0]) : this.grab(editor);
-		if (!top) return;
-		if (!top.title) return new Notice("这一块是空的");
-		const inner = [];
-		for (let i = top.start + 1; i <= top.end; i++) if (BULLET_RE.test(lines[i]) && !ANY_SEP_RE.test(lines[i]) && !MARK_LINE_RE.test(lines[i])) inner.push(i);
-		if (!inner.length) return new Notice("这一块下面没有子块。只发这一块，用「Claude CLI 单发」");
-		const w = Math.min(...inner.map((i) => indentWidth(lines[i])));
-		const all = inner.filter((i) => indentWidth(lines[i]) === w).map((i) => this.grabAt(lines, i)).filter((g) => g && g.title);
-		const gs = all.filter((g) => itemZone(g.raw) !== "DONE");
-		if (!gs.length) return new Notice("子块都是做完了的，没有发");
+		const k = this.kidsOf(editor);
+		if (!k) return;
+		const { top, gs, all } = k;
 		const jobs = gs.map((g) => ({ g, prompt: [
 			`背景：这是「${top.title}」里的一项。`,
 			...(gs.length > 1 ? [`同一件事里别的几项另有会话在做，不用你管：${gs.filter((o) => o !== g).map((o) => o.title).join("；")}`] : []),
 			"", "你要做的这一项：", g.title, ...contentOf(g)].join("\n") }));
 		return this.dispatchClaude(editor, jobs, { skipped: all.length - gs.length, parent: top });
+	}
+
+	// 母块 = 一个会话，子块 = 它派出去的 subagent：只开一个会话，让它用 Agent 工具把每个直接子块各交给一个 subagent 并行做，
+	// 回来的只有结论，最后在这个会话里汇总，还能接着聊。subagent 没有自己的会话号，所以 🔗 只记在母块下面
+	async sendKidsToSubagents(editor, file) {
+		const k = this.kidsOf(editor);
+		if (!k) return;
+		const { top, gs, all } = k;
+		const max = Math.max(1, parseInt(this.settings.claudeMaxParallel, 10) || DEFAULTS.claudeMaxParallel);
+		if (gs.length > max) return new Notice(`一共 ${gs.length} 个子块，一次最多派 ${max} 个（设置里可以改），这次没有发`);
+		const items = gs.map((g, n) => [`${n + 1}. ${g.title}`, ...contentOf(g).map((l) => (isBlank(l) ? l : `   ${l}`))].join("\n"));
+		const prompt = [top.title, "",
+			"下面每一项交给一个 subagent 去做：用 Agent 工具在同一条消息里一次全派出去，让它们并行跑；description 写那一项的头二十个字。你自己不要动手做这几项。",
+			"每个 subagent 做完只回结论：要点、改了哪些文件、还剩什么没做，不要贴原文和长日志。",
+			"全部回来以后，按项汇总给我，再说说合起来看的结论和下一步。", "",
+			...items].join("\n");
+		return this.dispatchClaude(editor, [{ g: top, prompt }], { skipped: all.length - gs.length });
+	}
+
+	// 光标所在的母块和它没做完的直接子块（记号行、分隔线不算）。不成立时弹提示、返回 null
+	kidsOf(editor) {
+		if (!this.desktopOnly()) return null;
+		const lines = editor.getValue().split("\n");
+		const starts = this.pickedStarts(editor);
+		if (starts && starts.length > 1) { new Notice("母块一次发一个：把光标放在母块上，不要选中好几块"); return null; }
+		const top = starts ? this.grabAt(lines, starts[0]) : this.grab(editor);
+		if (!top) return null;
+		if (!top.title) { new Notice("这一块是空的"); return null; }
+		const inner = [];
+		for (let i = top.start + 1; i <= top.end; i++) if (BULLET_RE.test(lines[i]) && !ANY_SEP_RE.test(lines[i]) && !MARK_LINE_RE.test(lines[i])) inner.push(i);
+		if (!inner.length) { new Notice("这一块下面没有子块。只发这一块，用「Claude CLI 单发」"); return null; }
+		const w = Math.min(...inner.map((i) => indentWidth(lines[i])));
+		const all = inner.filter((i) => indentWidth(lines[i]) === w).map((i) => this.grabAt(lines, i)).filter((g) => g && g.title);
+		const gs = all.filter((g) => itemZone(g.raw) !== "DONE");
+		if (!gs.length) { new Notice("子块都是做完了的，没有发"); return null; }
+		return { top, gs, all };
 	}
 
 	// 把几块各开成一个会话。jobs = [{ g: 那一块, prompt: 第一句话 }]；parent = 它们共同的母块（按子会话发的时候）。
