@@ -34,7 +34,7 @@ const DEFAULTS = {
     embedDims: 768,
     hybridWeight: 0.15,
     minTopCos: 0.58,          // 拒答门槛：返回的块里最相近那块的余弦相似度低于它，就当库里没有，什么都不列（0 = 不设）。0.58 是 EmbeddingGemma 在评测集上定的，换模型要重定
-    ctxPrefix: "nested",      // 切块带上下文：false 不加；"nested" 只给从长块里拆出来的子块加「页名 › 小标题 › 各层母块首行」；true 每块都加。只影响算向量和字面检索，显示的原文不变；改了要重算向量
+    ctxPrefix: "notes",       // 切块带上下文：false 不加；"notes" 日记以外的笔记每块都加「页名 › 小标题」、日记只给从长块里拆出来的子块加（再带各层母块首行）；"nested" 只给拆出来的子块加；true 每块都加（日记块前面加日期会冲淡语义，评测里变差）。只影响算向量和字面检索，显示的原文不变；改了要重算向量
     aliasExpand: false,       // 别名扩展：查询里出现某页的页名或别名时，把这页的其他名字也加进字面检索（RAG ⇄ 检索增强生成）
     shellPenalty: 3,          // 空壳块降权：去掉格式后不到 shellMinChars 个字的块（只有标题的列表项、只有页名的标题块），混合分减去这个数（0 = 不降）
     shellMinChars: 12,
@@ -538,13 +538,13 @@ class BlockIndex {
         };
         const isJournal = !!journalDate(file.basename);
         // 切块带上下文（设置 ctxPrefix）：页名（日记是日期）› 所在小标题 › 子项单独成块时各层母块的第一行
-        // "nested" 只给拆出来的子块加：评测里给每块都加日期 / 页名会冲淡普通块的语义
+        // 评测里给日记的每块都加日期会冲淡语义；概念笔记的单行列表项加上页名和小标题则能找回来，所以默认 "notes"
         const ctxMode = this.plugin.settings.ctxPrefix, ctxOn = !!ctxMode;
         const page = isJournal ? journalDate(file.basename).format("YYYY-MM-DD") : file.basename;
         const heads = (cache.headings || []).map((h) => ({ line: h.position.start.line, text: h.heading }));
         const itemAt = new Map((cache.listItems || []).map((it) => [it.position.start.line, it]));
         const ctxOf = (line, nested) => {
-            if (!ctxOn || (ctxMode === "nested" && !nested)) return "";
+            if (!ctxOn || (ctxMode === "nested" && !nested) || (ctxMode === "notes" && !nested && isJournal)) return "";
             const parts = [page];
             let h = ""; for (const x of heads) { if (x.line < line) h = x.text; else break; }
             if (h) parts.push(h);
@@ -2239,9 +2239,9 @@ class SBSettings extends PluginSettingTab {
         text("字面命中的加分权重", "0 = 纯语义；默认 0.15", "hybridWeight");
         text("拒答门槛（余弦）", "列出来的块里最相近的那块，余弦相似度低于它就当库里没有，什么都不列。默认 0.58（按 EmbeddingGemma 定的，换模型要重定）；0 = 不设", "minTopCos");
         new Setting(c).setName("切块带上下文").setDesc("算向量和字面检索时，在块前面加上「页名（日记是日期）› 小标题 › 各层母块的第一行」，显示的原文不变。改了要重算受影响的向量，Ollama 后台跑几分钟")
-            .addDropdown((d) => d.addOptions({ off: "不加", nested: "只给拆出来的子块加", all: "每块都加" })
-                .setValue(s.ctxPrefix === "nested" ? "nested" : s.ctxPrefix ? "all" : "off")
-                .onChange(async (v) => { s.ctxPrefix = v === "off" ? false : v === "nested" ? "nested" : true; await p.saveSettings(); p.rebuildIndex(); }));
+            .addDropdown((d) => d.addOptions({ off: "不加", notes: "日记以外每块都加，日记只给拆出来的子块加", nested: "只给拆出来的子块加", all: "每块都加" })
+                .setValue(s.ctxPrefix === "notes" || s.ctxPrefix === "nested" ? s.ctxPrefix : s.ctxPrefix ? "all" : "off")
+                .onChange(async (v) => { s.ctxPrefix = v === "off" ? false : v === "all" ? true : v; await p.saveSettings(); p.rebuildIndex(); }));
         tog("别名扩展", "查询里出现某页的页名或别名（3 个字以上）时，把这页的其他名字也加进字面检索，比如 RAG ⇄ 检索增强生成", "aliasExpand");
         text("空壳块降权", "去掉格式后不到「空壳字数」的块（只有标题的列表项、只有页名的标题块），混合分减去这个数。默认 3；0 = 不降", "shellPenalty");
         text("空壳字数", "", "shellMinChars");
