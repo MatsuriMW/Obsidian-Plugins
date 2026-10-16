@@ -35,6 +35,8 @@
 //     ↵ 打开选题页，或跳到日记里那一块（命中的是子块就跳到那一行）；⇧↵、⌘⌥↵ 照面板原来的。只读，不改看板和原文
 //     条目的口径照 scripts/topic-board.js（两个看板共用的脚本），那边改了口径这里要跟着改
 //   · 输入框前面有范围标签，点 × 或在空输入框里按 ⌫ 回到普通文件搜索
+// 空输入框（⌘O 刚打开）：最上面一段 Recently Created（最近创建的 5 篇笔记 / 白板 / Base，右边是创建时间），再是 Recently Used，
+//   其余文件前隔一条线；篇数在 Better Command Palette 设置里的 Recently Created Count 改，0 = 不要这一段
 const { Plugin, Modal, MarkdownView, Notice, Setting, setIcon, getAllTags } = require("obsidian");
 
 const PALETTE_CLS = "better-command-palette";
@@ -75,7 +77,12 @@ const CHROME_SEARCH = "chrome-bookmarks:search";
 const CHROME_LIMIT = 100;
 const TOPIC_LIMIT = 60;   // 每个看板最多列多少条
 // 存在 Better Command Palette 自己的设置里的两项（它的设置页里由这个插件加出来）
-const BCP_DEFAULTS = { bookmarkSearchPrefix: "、", bookmarkSearchHotkey: "b", scopeTriggers: {} };
+const BCP_DEFAULTS = { bookmarkSearchPrefix: "、", bookmarkSearchHotkey: "b", scopeTriggers: {}, recentlyCreatedCount: 5 };
+// 空输入框的分段标题；other（最近使用后面的其余文件）不写字，只隔一条线
+const SECTION_LABELS = { created: "Recently Created", used: "Recently Used", other: "" };
+const CREATED_EXT = new Set(["md", "canvas", "base"]);
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtCreated = (t) => { const d = new Date(t); return `${d.getMonth() + 1}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
 const CARD_LIMIT = 50;
 const CARD_TAG_RE = /(?:^|\s)#card(-reminder|-reverse|\/reverse)?(?![\w\-\/])/;
 const CARD_TAG_ALL_RE = /(?:^|\s)#card(?:-reminder|-reverse|\/reverse)?(?![\w\-\/])/g;
@@ -231,6 +238,7 @@ module.exports = class PaletteSplitOpen extends Plugin {
 			if (this.modalEl?.hasClass(PALETTE_CLS)) {
 				plugin.patchBcpSettings();
 				if (!this.__splitOpen) plugin.enhance(this);
+				this.__created = null;   // 最近创建每次打开重新算
 				plugin.setScope(this, plugin.pendingScope, false);   // 每次打开面板都从只搜文件名开始（除非是范围搜索命令打开的）
 				plugin.pendingScope = null;
 			}
@@ -275,6 +283,7 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		const plain = (key) => (v) => { bcp.settings[key] = v; };
 		add("Tag Search Prefix", "Bookmark Search Prefix", "The prefix used to tell the palette you want to search bookmarks and boards. Leave empty to disable. (Added by Palette Enhancements)", this.bcpSetting("bookmarkSearchPrefix"), plain("bookmarkSearchPrefix"));
 		add("Tag Search Hotkey", "Bookmark Search Hotkey", "The hotkey used to switch to bookmark and board search while using the command palette. Press again to go back to file search. (Added by Palette Enhancements)", this.bcpSetting("bookmarkSearchHotkey"), plain("bookmarkSearchHotkey"));
+		add("Recently used text", "Recently Created Count", "How many recently created files to list above the recently used ones when the file search input is empty. 0 turns it off. (Added by Palette Enhancements)", String(this.bcpSetting("recentlyCreatedCount")), plain("recentlyCreatedCount"));
 		// 每个范围一行触发符号，接在 Bookmark Search Prefix 后面
 		let anchor = "Bookmark Search Prefix";
 		for (const [key, sc] of Object.entries(SCOPES)) {
@@ -420,6 +429,89 @@ module.exports = class PaletteSplitOpen extends Plugin {
 
 		palette.updateInstructions();
 		this.hookContentSearch(palette, isFiles);
+		this.hookRecentSections(palette, isFiles);
+	}
+
+	// ---------- 空输入框：最近创建 → 最近使用 ----------
+	// 面板列表本身重排（不是只改显示），⌘⌥↵ 这些按下标取条目的地方才对得上
+	hookRecentSections(palette, isFiles) {
+		const plugin = this;
+		const origGet = palette.getSuggestions;
+		palette.getSuggestions = function (...args) {
+			this.updateActionType();   // 先切好模式，isFiles 才准；它自己里面再调一次不会重复切
+			const on = isFiles() && !palette.__scope && !plugin.queryOf(palette);
+			palette.__sections = on ? plugin.arrangeRecent(palette) : null;
+			return origGet.apply(this, args);
+		};
+
+		const chooser = palette.chooser;
+		const origSet = chooser.setSuggestions;
+		chooser.setSuggestions = function (...args) {
+			const r = origSet.apply(this, args);
+			try { plugin.drawSections(palette, args[0] || []); } catch (e) { console.error("[palette-split-open]", e); }
+			return r;
+		};
+
+		const adapter = palette.fileAdapter;
+		const origRender = adapter.renderSuggestion;
+		adapter.renderSuggestion = function (item, content, aux) {
+			const r = origRender.call(this, item, content, aux);
+			const sec = palette.__sections;
+			if (!item || item.__cs || !sec) return r;
+			// 有分段小标题了，面板每行最前面加的 (recently used) 就多余了
+			content.removeClass("recent");
+			const note = content.firstElementChild;
+			if (note && note.hasClass("suggestion-note")) note.remove();
+			// 「最近创建」这一段右边是创建时间
+			const t = sec.created.has(item.id) && sec.ctime.get(item.id);
+			if (t) aux.createSpan({ cls: "suggestion-note pso-created-at", text: fmtCreated(t) });
+			return r;
+		};
+	}
+
+	// 最近创建的几篇（按文件创建时间），不含别名条目和隐藏的文件；只算笔记、白板和 Base，截图这类附件不算
+	recentCreated(palette) {
+		const n = parseInt(this.bcpSetting("recentlyCreatedCount"), 10);
+		const limit = Number.isNaN(n) ? BCP_DEFAULTS.recentlyCreatedCount : Math.max(0, n);
+		if (!limit) return [];
+		const adapter = palette.fileAdapter;
+		const hidden = new Set(adapter.hiddenIds || []);
+		const rows = [];
+		for (const it of adapter.getItems()) {
+			if (!it || it.id.includes(":") || hidden.has(it.id)) continue;
+			const f = this.app.vault.getAbstractFileByPath(it.id);
+			if (f && f.stat && CREATED_EXT.has(f.extension)) rows.push([f.stat.ctime, it]);
+		}
+		rows.sort((a, b) => b[0] - a[0]);
+		return rows.slice(0, limit);
+	}
+
+	arrangeRecent(palette) {
+		if (!palette.__created) palette.__created = this.recentCreated(palette);
+		if (!palette.__created.length) return null;
+		const created = palette.__created.map(([, it]) => it);
+		const ids = new Set(created.map((it) => it.id));
+		const rest = (palette.currentSuggestions || []).filter((it) => !it.__cs && !ids.has(it.id));
+		palette.currentSuggestions = created.concat(rest).slice(0, palette.suggestionLimit + created.length);
+		return { created: ids, ctime: new Map(palette.__created.map(([t, it]) => [it.id, t])) };
+	}
+
+	// 每段第一条前面插一个小标题；最近使用后面的其余文件只隔一条线
+	drawSections(palette, values) {
+		const sec = palette.__sections;
+		const els = palette.chooser.suggestions || [];
+		if (!sec || !els.length) return;
+		const prev = palette.fileAdapter.getPrevItems();
+		let last = null;
+		values.forEach((it, i) => {
+			const kind = sec.created.has(it.id) ? "created" : prev.has(it) ? "used" : "other";
+			if (kind === last || !els[i]) return;
+			const head = createDiv({ cls: `pso-section pso-section-${kind}` });
+			if (i === 0) head.addClass("is-first");
+			if (SECTION_LABELS[kind]) head.setText(SECTION_LABELS[kind]);
+			els[i].parentElement.insertBefore(head, els[i]);
+			last = kind;
+		});
 	}
 
 	// ---------- 限定范围 ----------

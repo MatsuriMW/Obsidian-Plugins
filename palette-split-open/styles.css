@@ -99,3 +99,31 @@
 .better-command-palette .pso-topic-status.is-dead {
 	opacity: 0.55;
 }
+
+/* 空输入框的分段：Recently Created / Recently Used 小标题，段与段之间一条细线 */
+.better-command-palette .pso-section {
+	margin: 6px var(--size-4-3) 0;
+	padding: 8px var(--size-4-2) 4px;
+	border-top: 1px solid var(--background-modifier-border);
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	pointer-events: none;
+	user-select: none;
+}
+.better-command-palette .pso-section.is-first {
+	margin-top: 0;
+	padding-top: 4px;
+	border-top: none;
+}
+.better-command-palette .pso-section-other {
+	padding: 0;
+	margin-bottom: 6px;
+}
+.better-command-palette .pso-created-at {
+	flex: none;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
