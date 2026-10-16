@@ -31,6 +31,8 @@
  * 6. 念头记号：挂着 TODO 的条目里，口述的想法、疑问、还没想清楚做不做的事不是任务，行尾挂「#thoughts」（TODO 留着不动）。
  *    进阶整理时由 Claude 判断（拿不准算任务），也可以用命令「把光标所在的行标成念头 / 取消」手动标。
  *
+ * 7. 藏起搬迁记号：挪过来的条目行尾「← [[2026_10_15]]」改成注释「%%← 2026_10_15%%」，看不见、不算反链，别的插件照样认得。基础整理就做。
+ *
  * 每次改动前会备份原文，「撤销上一次日记整理」可以恢复。
  */
 const { Plugin, Modal, Notice, Setting, TFile, FuzzySuggestModal, PluginSettingTab, moment } = require("obsidian");
@@ -46,6 +48,7 @@ const DEFAULTS = {
     questionBlockTitle: "问题汇总｜[[等待尝试]]",
     moveTodos: true,
     fixNumbered: true,
+    hideFrom: true,
     answerQuestions: true,
     fillFields: true,
     groupMachine: true,
@@ -65,8 +68,8 @@ const MAX_BACKUPS = 5;
 const RECENT_LIMIT = 15;
 
 const LIST_ITEM = /^(?:[-*+]|\d+[.)])[ \t]/;
-const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED)\b|\[ \][ \t]+)|^(?:[-*+]|\d+[.)])[ \t].*(?:#待办(?![\w一-鿿])|\[\[待办(?:\|[^\]]*)?\]\])/;
-const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
+const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|SUSPENDED)\b|\[ \][ \t]+)|^(?:[-*+]|\d+[.)])[ \t].*(?:#待办(?![\w一-鿿])|\[\[待办(?:\|[^\]]*)?\]\])/;
+const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
 const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 TODO 区最后
@@ -123,6 +126,20 @@ function moveTodos(text) {
     if (text.endsWith("\n") && !result.endsWith("\n")) result += "\n";
     return { text: result, moved: todos.length };
 }
+
+// 「← [[2026_10_15]]」→「%%← 2026_10_15%%」：挪过来的条目行尾记的来源日记改成注释，编辑、阅读时都不显示，也不算反链。
+// 块去向（防重搬）、螺旋日程（⏱ 算哪天）、🐢 拖延提醒（拖了几天）都认这种写法。代码块里的不动
+const FROM_MARK_RE = /[ \t]*←[ \t]*\[\[(\d{4}_\d{2}_\d{2})\]\]/g;
+function hideFromMarks(text) {
+    let count = 0, inFence = false;
+    const lines = text.split("\n").map((l) => {
+        if (/^[ \t]*(```|~~~)/.test(l)) { inFence = !inFence; return l; }
+        return inFence ? l : l.replace(FROM_MARK_RE, (m, d) => { count++; return ` %%← ${d}%%`; });
+    });
+    return { text: lines.join("\n"), count };
+}
+// 行尾的来源记号（明的、藏起来的都算，可能有好几个）
+const FROM_TAIL_RE = /(?:\s*(?:%%\s*)?←\s*(?:\[\[[^\]]*\]\]|\d{4}_\d{2}_\d{2})(?:\s*%%)?)+\s*$/;
 
 // 「- 1. 内容」→「1. 内容」：无序列表里手打的编号改成标准有序列表。后面紧贴数字或英文字母的（5.25、6.10、10.a）不算编号
 const NUMBERED_BULLET = /^([ \t]*)[-*+][ \t]+(\d{1,3})[.．)）、](?![\dA-Za-z])[ \t]*(.*)$/;
@@ -283,12 +300,12 @@ function applyAnswers(text, kept, title) {
 // ---------------- 机器行按主题归类 ----------------
 // 机器行 = 螺旋日程自动记日记、下面「归档记一笔」写的任务行：状态词（和时间）后面以 🤖 开头，
 // 比如「- DONE 09:17-09:50 🤖 让 done-to-top 移动时带上块标识符」。主题母块没有状态词：「- 🤖 Obsidian 改造 · 6 条 · 共 2h13m」。
-const MACHINE_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(?:\[.\][ \t]+)?(TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)[ \t]+(?:\d{1,2}[:：]\d{2}(?:[ \t]*[-–~～][ \t]*\d{1,2}[:：]\d{2})?[ \t]+)?🤖[ \t]*(.*)$/;
+const MACHINE_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(?:\[.\][ \t]+)?(TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)[ \t]+(?:\d{1,2}[:：]\d{2}(?:[ \t]*[-–~～][ \t]*\d{1,2}[:：]\d{2})?[ \t]+)?🤖[ \t]*(.*)$/;
 const THEME_HEAD_RE = /^- 🤖 (.+?)(?: · \d+ 条(?: · 共 [\dhm]+)?)?[ \t]*$/;
 const CLOCK_TOTAL_RE = /^[ \t]*[-*+][ \t]+⏱.*共[ \t]*(?:(\d+)h)?(?:(\d+)m)?/;
 const NO_THEME = "杂事";
 const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m" : ""}` : `${m}m`);
-const machineKey = (s) => s.replace(/🤖/g, "").replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").replace(/\s+/g, "");
+const machineKey = (s) => s.replace(/🤖/g, "").replace(FROM_TAIL_RE, "").replace(/\s+/g, "");
 const cleanTheme = (s) => String(s || "").replace(/[\r\n\[\]#·`*=~]/g, " ").replace(/\s+/g, " ").trim().slice(0, 12);
 
 // 归 DONE 区的状态词（和 done-to-top 的分区一致）
@@ -299,7 +316,7 @@ function machineLines(text) {
     const out = [];
     for (const l of splitFrontmatter(text).body) {
         const m = l.match(MACHINE_RE);
-        if (m) out.push({ line: l, top: m[1] === "", done: ENDED.has(m[2]), label: m[3].replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "").trim() });
+        if (m) out.push({ line: l, top: m[1] === "", done: ENDED.has(m[2]), label: m[3].replace(FROM_TAIL_RE, "").trim() });
     }
     return out;
 }
@@ -336,7 +353,7 @@ function groupMachine(text, themes) {
 
 // ---------------- 摘录记号 ----------------
 const SEP_LINE = /^[-*+][ \t]+-{3,}[ \t]*$/;
-const TASK_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[.\][ \t]+|(?:TODO|DOING|NOW|LATER|PAUSED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)\b)/;
+const TASK_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[.\][ \t]+|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)\b)/;
 const hasTag = (line, tag) => line.split(/\s+/).includes(tag);
 const bareText = (s) => s.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "").replace(/[\s\-*+>#=|]/g, "");
 
@@ -499,7 +516,7 @@ module.exports = class JournalTidy extends Plugin {
     // 这种方式做哪几步：基础整理只做本地的；进阶整理再加上要问 Claude 的（各自还受设置里的开关管）
     optFor(mode) {
         const s = this.settings, deep = mode === "deep";
-        return { mode, fixNumbered: s.fixNumbered, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
+        return { mode, fixNumbered: s.fixNumbered, hideFrom: s.hideFrom, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
     }
 
     toggleExcerpt(editor) {
@@ -606,6 +623,12 @@ module.exports = class JournalTidy extends Plugin {
                     await this.app.vault.process(file, (data) => { const r = moveTodos(data); moved = r.moved; return r.text; });
                     report.push(moved ? `${moved} 个待办块移到了元信息下方（done-to-top 插件没开，用的旧规则）` : "没有需要移动的待办");
                 }
+            }
+            // 藏起搬迁记号（纯本地）：放在分区之后，当场搬到别的日记的条目也是这时候才记上
+            if (opt.hideFrom) {
+                let n = 0;
+                await this.app.vault.process(file, (data) => { const r = hideFromMarks(data); n = r.count; return r.text; });
+                if (n) report.push(`${n} 处「← [[日期]]」藏成了注释`);
             }
             // 2. 进阶整理：问题回答、机器行按主题归类、摘录记号。两次问 Claude（联网查问题 / 归类判断）同时发出去，回来再依次写
             if (opt.answerQuestions || opt.groupMachine || opt.markExcerpts || opt.markThoughts) {
@@ -868,7 +891,7 @@ class TidyModal extends Modal {
             });
         });
         let mode = s.lastMode === "deep" ? "deep" : "basic";
-        const opt = { fixNumbered: s.fixNumbered !== false, moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
+        const opt = { fixNumbered: s.fixNumbered !== false, hideFrom: s.hideFrom !== false, moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
         const deepRows = [];
         const show = () => deepRows.forEach(r => r.settingEl.toggle(mode === "deep"));
         new Setting(this.contentEl).setName("方式").setDesc("基础整理只在本地排，马上完成；进阶整理先做一遍基础整理，再请本机的 Claude 做下面几件，要一两分钟")
@@ -879,6 +902,8 @@ class TidyModal extends Modal {
             .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
         new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开，整理完把 DONE 区折起来；块内用「- ---」分了栏的，子项也在块内按状态排")
             .addToggle(t => t.setValue(opt.moveTodos).onChange(v => { opt.moveTodos = v; }));
+        new Setting(this.contentEl).setName("藏起搬迁记号").setDesc("挪过来的条目行尾的「← [[2026_10_15]]」改成注释「%%← 2026_10_15%%」，编辑、阅读时都看不见，也不算反链；拖延提醒、螺旋日程、防重搬照样认得")
+            .addToggle(t => t.setValue(opt.hideFrom).onChange(v => { opt.hideFrom = v; }));
         deepRows.push(new Setting(this.contentEl).setName("汇总问题并用 AI 回答").setDesc("问句挪到文末「问题汇总」，Claude 联网查证后写回答；自言自语、游戏相关的不动")
             .addToggle(t => t.setValue(opt.answerQuestions).onChange(v => { opt.answerQuestions = v; })));
         deepRows.push(new Setting(this.contentEl).setName("机器行按主题归类").setDesc(`🤖 开头的机器行超过 ${s.machineThreshold} 条时，把做完的按主题收到各自的母块下面（留在 DONE 区，折起来）；还在做、搁置的留在原处`)
@@ -926,4 +951,4 @@ class TidySettings extends PluginSettingTab {
     }
 }
 
-module.exports.__test = { fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
+module.exports.__test = { hideFromMarks, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };

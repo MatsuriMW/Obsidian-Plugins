@@ -3,11 +3,12 @@
 //   · DOING 记下开始时间，DONE 自动写成「开始-现在」的时间段 —— 长期项目看板、螺旋日程都能按这个算真实用时
 //   · 复选框条目：[ ] ↔ [x]
 //   · 标题、表格、代码块、分隔线、frontmatter 里不动；选中多行 = 每行各切一次
+//   · Agent 会话停在半路的 TOREVIEW（等你看）/ HITLIMIT（撞限额）：按一下回 DOING，开始时刻沿用原来的
 // ⌘⇧/ 搁置类状态：PAUSED → SUSPENDED → CANCELLED → FAILED → PAUSED；不管原来是什么状态（TODO / DOING / DONE / 没有）都先切到 PAUSED
 //   · DOING / DONE 留下的时间戳去掉（不然螺旋日程会当成钉了时间的任务）；复选框换成关键字
 const { Plugin } = require("obsidian");
 
-const KW = /^(TODO|DOING|DONE|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|CANCELED|CANCELLED|FAILED|SUSPENDED)(?=\s|$)\s*/;
+const KW = /^(TODO|DOING|DONE|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|CANCELED|CANCELLED|FAILED|SUSPENDED)(?=\s|$)\s*/;
 const HM = "(\\d{1,2}[:：]\\d{2})";
 const pad = (n) => String(n).padStart(2, "0");
 const now = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
@@ -25,6 +26,7 @@ function nextLine(line) {
   if (!k) return prefix + "TODO " + rest;
   const kw = k[1], body = rest.slice(k[0].length);
   if (kw === "TODO" || kw === "LATER" || kw === "PAUSED") return prefix + `DOING ${now()} ` + body;   // PAUSED = 停一下，再按一次接着做
+  if (kw === "TOREVIEW" || kw === "HITLIMIT") return prefix + (new RegExp("^" + HM + "\\s").test(body) ? "DOING " + body : `DOING ${now()} ` + body);
   if (kw === "DOING" || kw === "NOW" || kw === "IN-PROGRESS") {
     const t = body.match(new RegExp("^" + HM + "\\s*"));
     return prefix + (t ? `DONE ${t[1].replace("：", ":")}-${now()} ` + body.slice(t[0].length) : `DONE ${now()} ` + body);
@@ -47,7 +49,7 @@ function parkLine(line) {
   const k = rest.match(KW);
   let kw = k ? k[1] : null, body = k ? rest.slice(k[0].length) : rest;
   if (kw === "CANCELED") kw = "CANCELLED";
-  if (kw === "DOING" || kw === "NOW" || kw === "IN-PROGRESS" || kw === "DONE") {
+  if (kw === "DOING" || kw === "NOW" || kw === "IN-PROGRESS" || kw === "DONE" || kw === "TOREVIEW" || kw === "HITLIMIT") {
     body = body.replace(new RegExp("^" + HM + "(?:\\s*[-–~～]\\s*" + HM + ")?\\s*"), "");
   }
   const i = PARK.indexOf(kw);

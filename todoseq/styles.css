@@ -2582,3 +2582,19 @@
 .todoseq-keyword-formatted[data-task-keyword='SUSPENDED'] { --tsq-kw: #a17f66; }
 .todoseq-keyword-formatted:is([data-task-keyword='CANCELLED'], [data-task-keyword='CANCELED']) { --tsq-kw: #a4a8ac; }
 .todoseq-keyword-formatted[data-task-keyword='FAILED'] { --tsq-kw: #93606b; }
+/* TOREVIEW / HITLIMIT：Agent 会话的两个 DOING 中间态，螺旋日程按会话状态自动切（交互和 PAUSED 一样，⌘/ 或点一下回 DOING）。
+   颜色从 PAUSED 的琥珀色起，渐到另一头：TOREVIEW 渐到 DOING 的砖红（轮到你看了），HITLIMIT 渐到灰紫（额度用完，等重置）。
+   正文里写的是 HITLIMIT，显示时补一个「!」 */
+.todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT']) {
+  --tsq-kw: #b8934f;
+  background-image: linear-gradient(90deg, var(--tsq-kw), var(--tsq-kw-to) 85%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.todoseq-keyword-formatted[data-task-keyword='TOREVIEW'] { --tsq-kw-to: #c8635f; }
+.todoseq-keyword-formatted[data-task-keyword='HITLIMIT'] { --tsq-kw-to: #8a5a8c; }
+.todoseq-keyword-formatted[data-task-keyword='HITLIMIT']::after { content: "!"; }
+:is(.cm-editor, .markdown-preview-view, .table-cell-wrapper) .todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT']) {
+  text-shadow: none;   /* 渐变字是透明的，描边会从字里透出来 */
+}

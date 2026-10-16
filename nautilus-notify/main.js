@@ -241,14 +241,14 @@ module.exports = class NautilusNotify extends Plugin {
   }
 
   // ---------- 🐢 拖了好几天的任务：每件带三个按钮 ----------
-  // 日记里「- TODO xxx ← [[2026_10_02]]」= 从 10-02 一路挪过来的
+  // 日记里「- TODO xxx ← [[2026_10_02]]」= 从 10-02 一路挪过来的（日记整理会藏成注释「%%← 2026_10_02%%」，两种都认）
   async staleTasks() {
     const day = this.wToday();
     const path = this.wJournalPath(day);
     const lines = (await this.wRead(path)).split("\n");
     const out = [];
     lines.forEach((l, i) => {
-      const m = /^-\s+(?:TODO|LATER)\s+(.*?)\s*←\s*\[\[(\d{4})_(\d{2})_(\d{2})\]\]/.exec(l);
+      const m = /^-\s+(?:TODO|LATER)\s+(.*?)\s*(?:%%\s*)?←\s*(?:\[\[)?(\d{4})_(\d{2})_(\d{2})/.exec(l);
       if (!m) return;
       const age = day.diff(moment(`${m[2]}-${m[3]}-${m[4]}`, "YYYY-MM-DD"), "days");
       if (age >= this.settings.staleDays) out.push({ line: i, raw: l, label: m[1].replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g, "$1"), age, from: `${m[3]}-${m[4]}` });
@@ -351,7 +351,7 @@ module.exports = class NautilusNotify extends Plugin {
     for (const l of txt.split("\n")) {
       if (l === "---") { fm = !fm; continue; }
       if (fm || !l.trim() || /!\[\[|^\s*\^/.test(l)) continue;
-      const task = /^\s*-\s+(?:TODO|DOING|DONE|FAILED|CANCELED|WAITING|LATER|NOW|PAUSED|\[.\])\s/.test(l);
+      const task = /^\s*-\s+(?:TODO|DOING|DONE|FAILED|CANCELED|WAITING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|\[.\])\s/.test(l);
       if (!task && /^\s/.test(l)) continue;
       out.push(l.length > 140 ? l.slice(0, 140) + "…" : l);
       if (out.length >= maxLines) break;

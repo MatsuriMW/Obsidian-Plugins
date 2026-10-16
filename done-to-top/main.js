@@ -10,7 +10,7 @@
 //     （小红书 / 知乎 / X / GitHub / B 站 b23 / 抖音）就算链接类，聚到一起放在 TODO 区下面、其它内容上面。
 //     有任务关键字的（TODO / DOING / DONE / SUSPENDED / FAILED / CANCELLED…）一律算任务，优先级更高
 //   · DONE 栏 = 正文第一条「- ---」之前的那一段；手动放进去的普通条目留在栏里不动
-//   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED/SUSPENDED 归 DONE 区，PAUSED（停一下）归 DOING 区，WAITING 归 TODO 区
+//   · 关键字和复选框都认：DONE/[x]、DOING/NOW/[/]、TODO/LATER/[ ]；CANCELED/FAILED/SUSPENDED 归 DONE 区，PAUSED（停一下）和 Agent 会话的 TOREVIEW（等你看）/ HITLIMIT（撞限额）归 DOING 区，WAITING 归 TODO 区
 //   · core 挂在插件实例上，Telegram Inbox（自用版）收消息时也用它归位
 //   · 单独占一行的块 ID（闪卡插件写在卡片下面一行、顶格的「^q-r7d4」这类）算在它上面那一块里：
 //     移到顶部、归位、一键整理、发送到今天 / 明天时都跟着块一起走，不会落在原地
@@ -28,12 +28,16 @@
 //     页面顶部、今天 / 明天的日记、日历、提醒事项是 DONE 那一声；交给 Claude CLI、Claudian、MD Flow 去做的是 DOING 那一声
 //   · 优先级（Logseq 写法）：「TODO [#A] 核心任务」「TODO [#B] 重要任务」「TODO [#C] 次要任务」。
 //     简写「todoa」「todo a」「doing b」整理时改成标准写法（螺旋日程计时用的时刻排在前面：DOING 14:05 [#A] …）。
-//     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING 在 PAUSED 前、TODO 在 WAITING 前）；
+//     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING → TOREVIEW → HITLIMIT → PAUSED、TODO 在 WAITING 前）；
 //     DONE 区不看优先级，只按关键字聚类：DONE → SUSPENDED → FAILED → CANCELLED。块内部用分割线分了栏的也照此排
 //     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
 //   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后；一篇里有好几块的并成一块。
 //     core.appendInfo(text, [文字…]) 往它下面追加子块，还没有就在 TODO 区最后建一个（AI 记信息增量用）
-//   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）
+//   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）；点开日记时自动落到 DOING 区（设置里可关）
+//   · 给 AI 的 TODO：TODOFORAI / TODO4AI / TODO2AI / TODOTOAI（小写也认）算 TODO 类，归 TODO 区。昨天、今天、明天的日记里打了这种状态的条目，
+//     停手一会儿（设置 aiSettle 秒；光标还在这一块里就等 90 秒）后自动连同子块发给 Claude：替它定好会话号，交给 limit-resume task 开一个新会话，
+//     撞着限额就排到额度恢复以后；这一行原样不动，下面记一行 🔗 绑定那个会话（有 🔗 的不再发；想重发就删掉 🔗 那一行）。
+//     第一轮答完，limit-resume 用 claude://resume 把会话导入 Claude 桌面版，之后在 App 里接着聊。母块是给 AI 的，里面的子块不另发
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
 
@@ -53,24 +57,33 @@ const DEFAULTS = {
 	mdflowNote: "MD Flow/块.md",    // 发到 MD Flow 时，这一块先写进这篇中转笔记（每次覆盖）
 	explainModel: "claude-haiku-5-5",   // 「AI 解释」用哪个模型（claude 命令行的 --model）。写全名，别名会跟着版本变
 	hideDone: true,                 // 日记里的 DONE 栏（连同下面那条「- ---」）在编辑器里整段藏起来
+	jumpDoingOnOpen: true,          // 点开一篇日记时，光标自动落到 DOING 区开头
+	aiAuto: true,                   // 昨天、今天、明天日记里 TODO4AI 这类状态的条目，自动连同子块发给 Claude（新会话）
+	aiCwd: "",                      // 给 AI 的 TODO 在哪个目录跑；空 = 跟「发给 Claude CLI」同一个目录
+	aiSettle: 20,                   // 这一块停手多少秒没再改才发（光标还在这一块里就等 90 秒）
+	aiModel: "",                    // 用哪个模型；空 = claude 命令行的默认模型
+	aiOpenDesktop: true,            // 第一轮答完后把会话导入 Claude 桌面版
+	aiSent: {},                     // 发过的块（笔记路径 + 内容的指纹 → 时间），防止 🔗 没写上时重发；留 3 天
 };
 
 const BULLET_RE = /^(\s*)([-*+]|\d+[.)])(\s+|$)(.*)$/;   // 列表项：无序（- * +）和有序（1. 1)）一样对待
 const ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 const SEP_RE = /^[-*+]\s+-{3,}\s*$/;                 // 分割线只认「- ---」（*** ___ 不算）
 const SEP = "- ---";
-const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
+const KEYWORD_RE = /^(TODOFORAI|TODO4AI|TODO2AI|TODOTOAI|TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
 const CHECKBOX_RE = /^\[[^\]]\](\s+|$)/;
 const STAMP_RE = /^\*\*\d{1,2}[:：]\d{2}\*\*\s*/;          // 前面的 **07:37** 记录点
 const LEADING_TIME_RE = /^\d{1,2}(?:[:：]\d{2}|点)/;
 const TIME_OR_RANGE_RE = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
 const SINGLE_TIME_RE = /^(\d{1,2}[:：]\d{2})(?!\s*[-–~～]\s*\d)\s*/;
-const LOWER_KW_RE = /^(todo|doing|done)(?=[\s:：]|$)[:：]?\s*/i;   // todo / Todo / todo： → TODO
+const LOWER_KW_RE = /^(todo(?:for|4|2|to)ai|todo|doing|done)(?=[\s:：]|$)[:：]?\s*/i;   // todo / Todo / todo： → TODO；todo4ai → TODO4AI
+// 给 AI 的 TODO：这四种状态的条目自动发给 Claude（大小写都认，TODOseq 在光标离开时改成大写）
+const AI_KW_RE = /^(todo(?:for|4|2|to)ai)(?=\s|$)/i;
 // 优先级：[#A] / [#B] / [#C]（Logseq 写法）
 const PRIO_RE = /\[#([ABC])\]/;
 const PRIO_HEAD_RE = /^\[#([ABC])\]\s*/;
 const PRIO_RANK = { A: 0, B: 1, C: 2 };          // 没写的排在 C 后面（3）
-const SHORT_KW_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE)/i;
+const SHORT_KW_RE = /^(TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE)/i;
 // 优先级的简写：关键字后面紧跟 a / b / c（todoa 写稿），或者隔空格（todo a 写稿、doing b）。
 // 隔空格的，a / b / c 后面要么没字了、要么紧跟中文、要么空格后面不是英文字母（todo a book 是英文句子，不算）
 function prioShort(s) {
@@ -96,8 +109,9 @@ function joinPrio(prio, rest) {
 }
 const ZONE = {
 	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE", SUSPENDED: "DONE",
-	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
+	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING", TOREVIEW: "DOING", HITLIMIT: "DOING",
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO",
+	TODOFORAI: "TODO", TODO4AI: "TODO", TODO2AI: "TODO", TODOTOAI: "TODO",
 };
 // 常驻 TODO 区的母块：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后。
 // AI 往它下面追加子块，它在哪儿都一样追加；一篇里有好几块的，整理时并成一块
@@ -187,8 +201,8 @@ function normalizeKeyword(line, withTime) {
 // DONE 区不看优先级，只按关键字聚类（DONE 和手动放进来的、闪卡在前，然后 SUSPENDED → FAILED → CANCELLED）
 const KW_CLUSTER = {
 	DONE: { SUSPENDED: 1, FAILED: 2, CANCELLED: 3, CANCELED: 3 },
-	DOING: { PAUSED: 1 },
-	TODO: { WAITING: 1, WAIT: 1 },
+	DOING: { TOREVIEW: 1, HITLIMIT: 2, PAUSED: 3 },
+	TODO: { WAITING: 1, WAIT: 1, TODOFORAI: 2, TODO4AI: 2, TODO2AI: 2, TODOTOAI: 2 },
 };
 function rankIn(zone, line) {
 	let rest = line.replace(/^[ \t]*(?:[-*+]|\d+[.)])\s+/, "").replace(STAMP_RE, "");
@@ -468,7 +482,8 @@ function mark(line, zone) {
 		const p = content.slice(off).match(PRIO_HEAD_RE);
 		if (p) { prio = p[1]; content = content.slice(0, off) + content.slice(off + p[0].length); }
 	}
-	const wasStamped = old === "DOING" || old === "NOW" || old === "IN-PROGRESS" || old === "DONE";
+	// TOREVIEW / HITLIMIT 是 DOING 停在半路（螺旋日程切的），后面的时刻还是当初开始做的时刻
+	const wasStamped = old === "DOING" || old === "NOW" || old === "IN-PROGRESS" || old === "DONE" || old === "TOREVIEW" || old === "HITLIMIT";
 	if (zone === "DONE") {
 		// 完成时间写在 DONE 后面，螺旋日程靠它定位；DOING 记过开始时间的写成「开始-现在」
 		const t = wasStamped && old !== "DONE" ? content.match(SINGLE_TIME_RE) : null;
@@ -488,7 +503,8 @@ function mark(line, zone) {
 // ---------- 明天 / 后天 / 大后天：搬到那一天的日记 ----------
 const DAY_WORD_RE = /大后天|后天|明天/;
 const DAY_OFFSET = { 明天: 1, 后天: 2, 大后天: 3 };
-const FROM_RE = /\s←\s*\[\[\d{4}_\d{2}_\d{2}\]\]/;
+// 日记整理会把它藏成注释「%%← 2026_10_15%%」，两种都认
+const FROM_RE = /\s(?:%%\s*)?←\s*(?:\[\[)?\d{4}_\d{2}_\d{2}(?:\]\])?(?:\s*%%)?/;
 const JOURNAL_NAME_RE = /^(\d{4})_(\d{2})_(\d{2})$/;
 
 // 这一行要往后搬几天；0 = 不搬（没提日子、已经搬过、已经 DONE）
@@ -722,7 +738,7 @@ function plainText(line, keepPlan = false) {
 	let rest = (m ? m[2] : line.trim()).replace(STAMP_RE, "").replace(CHECKBOX_RE, "");
 	const k = rest.match(KEYWORD_RE);
 	if (k) rest = rest.slice(k[0].length);
-	if (!keepPlan || (k && /^(DOING|NOW|IN-PROGRESS|DONE)$/.test(k[1]))) rest = rest.replace(TIME_OR_RANGE_RE, "");
+	if (!keepPlan || (k && /^(DOING|NOW|IN-PROGRESS|DONE|TOREVIEW|HITLIMIT)$/.test(k[1]))) rest = rest.replace(TIME_OR_RANGE_RE, "");
 	return rest.replace(FROM_RE, "").replace(/\s+\^[A-Za-z0-9-]+$/, "").trim();
 }
 
@@ -992,6 +1008,8 @@ class SendSettings extends PluginSettingTab {
 		new Setting(containerEl).setName("日记").setHeading();
 		new Setting(containerEl).setName("隐藏 DONE 区").setDesc("日记里正文第一条「- ---」之前的 DONE 栏（连同这条分隔线）在编辑器里整段不显示。阅读视图照常显示。也可以用命令「隐藏 / 显示日记的 DONE 区」切换")
 			.addToggle((t) => t.setValue(!!s.hideDone).onChange(async (v) => { s.hideDone = v; await this.plugin.saveData(s); this.plugin.refreshHideDone(); }));
+		new Setting(containerEl).setName("点开日记时跳到 DOING 区").setDesc("标签页刚打开一篇日记时，光标落到 DONE 栏分隔线下面那一段的开头（和 ⌃1 一样）。切标签页回来不跳；点块链接进来、已经定位到别的行的也不跳")
+			.addToggle((t) => t.setValue(!!s.jumpDoingOnOpen).onChange(async (v) => { s.jumpDoingOnOpen = v; await this.plugin.saveData(s); }));
 		new Setting(containerEl).setName("快捷键").setHeading();
 		new Setting(containerEl).setName("叫出「发送这一块到…」面板").setDesc(`现在：${hotkeyText(this.app, "done-to-top:send-block") || "没有绑键"}。键位在 Obsidian 的「设置 → 快捷键」里改，改了就用你的，默认的那个自动让位。每个去向也各有一条命令，想给哪个单独绑键也在那里绑`)
 			.addButton((b) => b.setButtonText("去改").onClick(() => openHotkeys(this.app, "块去向")));
@@ -1012,6 +1030,14 @@ class SendSettings extends PluginSettingTab {
 				.onChange(async (v) => { s.claudeRun = v; await this.plugin.saveData(s); }));
 		text("tmux 会话的名字", "跑在 tmux 后台时，会话都开在这个 tmux 会话里（没有就建），一个 Agent 会话一个窗口。进去看：tmux attach -t 这个名字", "claudeTmuxSession", DEFAULTS.claudeTmuxSession);
 		text("无头跑时多带的参数", "无头的时候没人能替它点「允许」：不给权限它只能读、不能改文件也不能跑命令。要它动手就写在这里，比如 --permission-mode acceptEdits", "claudeHeadlessArgs", "留空 = 只读");
+		new Setting(containerEl).setName("给 AI 的 TODO").setHeading();
+		new Setting(containerEl).setName("自动发给 Claude").setDesc("昨天、今天、明天的日记里，状态写成 TODOFORAI / TODO4AI / TODO2AI / TODOTOAI 的条目，停手一会儿后连同子块发给 Claude，开一个新会话；撞着限额就等额度恢复再开跑（limit-resume 管）。这一行不改，下面记一行 🔗；有 🔗 的不再发，想重发就删掉那一行")
+			.addToggle((t) => t.setValue(s.aiAuto !== false).onChange(async (v) => { s.aiAuto = v; await this.plugin.saveData(s); }));
+		text("在哪个目录里跑", "留空 = 跟上面「发给 Claude CLI」同一个目录", "aiCwd", "留空同上");
+		text("停手多少秒再发", "这一块多少秒没再改才发，免得打到一半就发出去。光标还停在这一块里的话等 90 秒", "aiSettle", String(DEFAULTS.aiSettle));
+		text("用哪个模型", "claude 命令行的 --model，写全名。留空 = 命令行的默认模型", "aiModel", "留空用默认");
+		new Setting(containerEl).setName("答完放进 Claude 桌面版").setDesc("第一轮答完后用 claude://resume 把会话导入桌面 App（App 会跳到那个会话），之后在 App 里接着聊。关掉的话点 🔗 那一行也能打开")
+			.addToggle((t) => t.setValue(s.aiOpenDesktop !== false).onChange(async (v) => { s.aiOpenDesktop = v; await this.plugin.saveData(s); }));
 		new Setting(containerEl).setName("AI 解释").setHeading();
 		text("用哪个模型", "交给 claude 命令行（用它自己的登录）讲这一块是什么意思，答案记成这一块下面的「💡」子块。解释一句话不用强模型，默认 Haiku", "explainModel", DEFAULTS.explainModel);
 		new Setting(containerEl).setName("发到日历和提醒事项").setHeading();
@@ -1108,12 +1134,128 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
 		this.addSettingTab(new SendSettings(this.app, this));
 		this.app.workspace.onLayoutReady(() => this.patchSlash());
+		// 点开一篇日记，光标落到 DOING 区开头。标签页刚换成这篇时跳一次，切标签页回来不跳
+		this.seenLeaf = new WeakMap();
+		this.registerEvent(this.app.workspace.on("file-open", (file) => this.jumpOnOpen(file)));
+		// 给 AI 的 TODO：每 5 秒看一眼昨天、今天、明天的日记（只在电脑上）
+		if (Platform && Platform.isDesktopApp) this.app.workspace.onLayoutReady(() => this.registerInterval(window.setInterval(() => this.aiScan().catch((e) => console.error("[done-to-top] 给 AI 的 TODO", e)), 5000)));
 		// 不给默认快捷键，免得误按；要用就在「设置 → 快捷键」里自己绑
 		this.addCommand({
 			id: "delete-rest",
 			name: "以下全部删除：删掉光标所在行及以下的内容",
 			editorCallback: (editor) => this.deleteRest(editor),
 		});
+	}
+
+	// ---------- 给 AI 的 TODO ----------
+	// 昨天、今天、明天的日记文件（「今天」跟螺旋日程的日期分界走）
+	aiFiles() {
+		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
+		const folder = cfg.folder || "日记", d0 = this.dayNow(), out = [];
+		for (const off of [-1, 0, 1]) {
+			const d = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + off);
+			const f = this.app.vault.getAbstractFileByPath(`${folder}/${d.getFullYear()}_${pad(d.getMonth() + 1)}_${pad(d.getDate())}.md`);
+			if (f && f.extension === "md") out.push(f);
+		}
+		return out;
+	}
+	// 开着这篇笔记的编辑器（有好几个时取当前活动的那个）
+	aiEditors(file) {
+		return this.app.workspace.getLeavesOfType("markdown").map((l) => l.view).filter((v) => v && v.file && v.file.path === file.path && v.editor).map((v) => v.editor);
+	}
+	aiKey(path, body) { return require("crypto").createHash("sha1").update(`${path}\n${body}`).digest("hex").slice(0, 16); }
+	// 扫一遍：给 AI 的条目，下面还没有 🔗、内容停手够久了的，发出去
+	async aiScan() {
+		if (this.settings.aiAuto === false || this.aiBusy) return;
+		this.aiBusy = true;
+		try {
+			const now = Date.now(), seen = (this.aiSeen ||= new Map()), fails = (this.aiFails ||= new Map()), live = new Set();
+			const settle = Math.max(3, parseInt(this.settings.aiSettle, 10) || DEFAULTS.aiSettle) * 1000;
+			const sent = this.settings.aiSent || (this.settings.aiSent = {});
+			let budget = Math.max(1, parseInt(this.settings.claudeMaxParallel, 10) || DEFAULTS.claudeMaxParallel);
+			for (const file of this.aiFiles()) {
+				const eds = this.aiEditors(file);
+				const text = eds.length ? eds[0].getValue() : await this.app.vault.cachedRead(file);
+				const lines = text.split("\n"), cursors = eds.map((e) => e.getCursor().line);
+				let coveredTo = -1;
+				for (let i = topInsertLine(lines); i < lines.length; i++) {
+					if (i <= coveredTo) continue;
+					const m = lines[i].match(ITEM_RE);
+					if (!m || !AI_KW_RE.test(m[2].replace(STAMP_RE, ""))) continue;
+					const b = this.blockAt(lines, i);
+					if (!b || b.start !== i) continue;
+					coveredTo = b.end;   // 母块是给 AI 的：整块一起发，里面的子块不另发
+					if (this.aiLinked(lines, b)) continue;
+					const g = this.grabAt(lines, i);
+					if (g) g.title = g.title.replace(AI_KW_RE, "").trim();   // 还没被改成大写的 todo4ai 也去掉
+					if (!g || !g.title) continue;
+					const body = [g.title, ...contentOf(g)].join("\n").trim(), key = this.aiKey(file.path, body);
+					live.add(key);
+					if (sent[key] || (fails.get(key) || 0) > now) continue;
+					if (!seen.has(key)) seen.set(key, now);
+					const inBlock = cursors.some((c) => c >= b.start && c <= b.end);
+					if (now - seen.get(key) < (inBlock ? 90000 : settle) || budget <= 0) continue;
+					budget--;
+					await this.aiDispatch(file, i, lines[i], g, body, key);
+				}
+			}
+			for (const k of seen.keys()) if (!live.has(k)) seen.delete(k);
+		} finally { this.aiBusy = false; }
+	}
+	// 这一块的直接子项里有没有 🔗
+	aiLinked(lines, b) {
+		let w = Infinity;
+		for (let i = b.start + 1; i <= b.end; i++) if (BULLET_RE.test(lines[i])) w = Math.min(w, indentWidth(lines[i]));
+		for (let i = b.start + 1; i <= b.end; i++) if (indentWidth(lines[i]) === w && /^\s*[-*+]\s+🔗/.test(lines[i])) return true;
+		return false;
+	}
+	// 交给 limit-resume task（它判断是马上开跑还是排到额度恢复），再在这一行下面记 🔗。这一行本身不改
+	async aiDispatch(file, at, raw, g, body, key) {
+		const s = this.settings, sid = require("crypto").randomUUID(), name = g.title.replace(/[\r\n]+/g, " ").slice(0, 60);
+		let cwd = (s.aiCwd || "").trim() || (s.claudeCwd || "").trim() || (this.app.vault.adapter.getBasePath ? this.app.vault.adapter.getBasePath() : "");
+		if (cwd.startsWith("~")) cwd = require("os").homedir() + cwd.slice(1);
+		const job = { session_id: sid, name, cwd, prompt: body, source: file.basename, open_desktop: s.aiOpenDesktop !== false, ...(s.aiModel ? { model: s.aiModel.trim() } : {}) };
+		s.aiSent[key] = Date.now();   // 先记下，免得等回音的时候下一轮又发一遍
+		const r = await new Promise((ok) => {
+			try {
+				const child = require("child_process").execFile(findBin("limit-resume"), ["task"], { timeout: 30000 }, (err, out, errOut) => ok({ ok: !err, out: String(out || "").trim(), err: String(errOut || (err && err.message) || "").trim() }));
+				child.stdin.end(JSON.stringify(job));
+			} catch (e) { ok({ ok: false, out: "", err: String(e) }); }
+		});
+		let res = {};
+		try { res = JSON.parse(r.out.split("\n").pop() || "{}"); } catch (e) { /* 不是 JSON */ }
+		if (!r.ok || !res.ok) {
+			delete s.aiSent[key];
+			(this.aiFails ||= new Map()).set(key, Date.now() + 10 * 60000);   // 十分钟后再试
+			await this.saveData(s);
+			console.error("[done-to-top] limit-resume task 失败", r.err || r.out);
+			return new Notice(`🤖 没发出去：${g.title.slice(0, 24)}\n${(r.err || r.out).slice(0, 120) || "详情见控制台"}\n十分钟后再试`, 10000);
+		}
+		const cut = Date.now() - 3 * 86400000;
+		for (const [k, t] of Object.entries(s.aiSent)) if (t < cut) delete s.aiSent[k];
+		await this.saveData(s);
+		this.cue("DOING");
+		// 🔗 记在这一行下面（第一个子项的位置）；这期间那一行被改过就按内容再找一遍
+		const spiral = this.app.plugins.plugins["nautilus-spiral"], sc = spiral && spiral.constructor && spiral.constructor.core;
+		const indent = (raw.match(/^[ \t]*/) || [""])[0] + "\t";
+		const link = sc && sc.linkLine ? sc.linkLine(indent, "claude", name, sid) : `${indent}- 🔗 [Claude：${name.replace(/[\[\]()`]+/g, " ").slice(0, 40)}](claude://resume?session=${sid})`;
+		const where = (ls) => (ls[at] === raw ? at : ls.indexOf(raw));
+		let wrote = false;
+		const ed = this.aiEditors(file)[0];
+		if (ed) {
+			const n = where(ed.getValue().split("\n"));
+			if (n >= 0) { ed.transaction({ changes: [{ from: { line: n, ch: raw.length }, to: { line: n, ch: raw.length }, text: "\n" + link }] }); wrote = true; }
+		} else {
+			await this.app.vault.process(file, (text) => {
+				const ls = text.split("\n"), n = where(ls);
+				if (n < 0) return text;
+				ls.splice(n + 1, 0, link);
+				wrote = true;
+				return ls.join("\n");
+			});
+		}
+		const when = res.queued ? `\n额度用完了，${res.at} 恢复后自动开跑` : "\n已开跑，第一轮答完会放进 Claude 桌面版";
+		new Notice(`🤖 给 AI 的 TODO 已发出：${g.title.slice(0, 24)}${when}${wrote ? "" : "\n那一行这期间被改了，🔗 没记上"}`, 8000);
 	}
 
 	// 「今天」是哪一天（那天 0 点的 Date）：直接问螺旋日程，它设置里的「日记日期分界」之前还算前一天，它那边怎么算这边就怎么算。
@@ -1820,7 +1962,27 @@ module.exports = class DoneToTopPlugin extends Plugin {
 
 	// 跳到某一区的第一块（光标放在那一行末尾，那一行滚到屏幕上方）。DOING / TODO 只在 DONE 栏后面找；
 	// DONE：DONE 栏藏着的话先把隐藏关掉（和命令「隐藏 / 显示日记的 DONE 区」是同一个开关），再跳到栏里第一块
-	async jumpTo(editor, where) {
+	jumpOnOpen(file) {
+		if (!this.settings.jumpDoingOnOpen || !file || !JOURNAL_NAME_RE.test(file.basename)) return;
+		const leaf = this.app.workspace.activeLeaf;
+		if (!leaf || !leaf.view || leaf.view.file !== file || this.seenLeaf.get(leaf) === file.path) return;
+		this.seenLeaf.set(leaf, file.path);
+		// file-open 的时候编辑器里还是空的：等内容装好（最多 1.5 秒）；点的是某一块的链接（已经定位到别的行）就不抢
+		let tries = 0;
+		const attempt = () => {
+			const view = leaf.view, editor = view && view.editor;
+			if (!editor || view.file !== file || (view.getMode && view.getMode() === "preview")) return;
+			const text = editor.getValue();
+			if (!text && file.stat.size > 0) { if (++tries < 30) setTimeout(attempt, 50); return; }
+			// 刚打开时光标在第一行或属性下面第一行；比这靠后就是被定位过了
+			if (editor.getCursor().line > topInsertLine(text.split("\n"))) return;
+			this.jumpTo(editor, "DOING", true);
+		};
+		setTimeout(attempt, 50);
+	}
+
+	// quiet：自动跳（点开日记时）找不到也不弹提示
+	async jumpTo(editor, where, quiet) {
 		let line;
 		if (where === "END") line = editor.lastLine();
 		else {
@@ -1834,9 +1996,12 @@ module.exports = class DoneToTopPlugin extends Plugin {
 				}
 				if (end === 0) new Notice("DONE 栏是空的");
 				line = blocks.length ? blocks[0].start : head.length;
+			} else if (where === "DOING" && end >= 0) {
+				// DOING 区就是 DONE 栏分隔线下面那一段：落在它的第一块（TOREVIEW 这类没进 zone 的也算在里面）；空着就落在下一条分隔线上
+				line = blocks[end + 1] ? blocks[end + 1].start : blocks[end].start;
 			} else {
 				const b = blocks.slice(end >= 0 ? end + 1 : 0).find((x) => x.zone === where);
-				if (!b) return new Notice(`这篇里没有 ${where} 区`);
+				if (!b) return quiet ? null : new Notice(`这篇里没有 ${where} 区`);
 				line = b.start;
 			}
 		}

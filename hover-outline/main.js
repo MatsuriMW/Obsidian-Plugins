@@ -3,7 +3,7 @@
 //   · 目录 = 开头 + 标题 + 结尾；默认只列到 h3，笔记里有 h4 及更深的标题时，卡片顶上出现层级切换（H1…Hn）
 //   · 日记（「日记」文件夹里的，或 frontmatter 有 journal）：顶格分割线（「- ---」或单独一行 ---）当 h1 分段，
 //     分区规则同 Done To Top 的一键整理：
-//       第一段（第一条分割线之前）= DONE；紧接着的、任务全是 DOING / NOW / PAUSED 的段 = DOING；
+//       第一段（第一条分割线之前）= DONE；紧接着的、任务全是 DOING / NOW / PAUSED / TOREVIEW / HITLIMIT 的段 = DOING；
 //       再紧接着的、任务全是 TODO / LATER / WAITING / SUSPENDED 的段 = TODO；其余段显示分割线下第一条
 //     日记里如果也写了标题，标题整体降一级挂在分段下面
 //   · 有 dataview / dataviewjs 代码块的笔记不显示；除了开头结尾没有别的目录项时也不显示
@@ -15,12 +15,12 @@ const DEFAULT_LEVEL = 3;
 const DIARY_FOLDER = "日记/";
 
 // 和 Done To Top 同一套状态关键字
-const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
+const KEYWORD_RE = /^(TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
 const STAMP_RE = /^\*\*\d{1,2}[:：]\d{2}\*\*\s*/;
 const TIME_OR_RANGE_RE = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
 const ZONE = {
 	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE",
-	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING",
+	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING", TOREVIEW: "DOING", HITLIMIT: "DOING",
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO", SUSPENDED: "TODO",
 };
 
@@ -52,7 +52,7 @@ function zoneOf(line) {
 // 去掉链接 / 强调等标记，只留看得见的字
 function plain(s) {
 	return s
-		.replace(/\s*←\s*\[\[[^\]]*\]\]\s*$/, "")                   // 行尾「← [[来源日记]]」
+		.replace(/(?:\s*(?:%%\s*)?←\s*(?:\[\[[^\]]*\]\]|\d{4}_\d{2}_\d{2})(?:\s*%%)?)+\s*$/, "")   // 行尾「← [[来源日记]]」，或日记整理藏成的「%%← 来源日记%%」
 		.replace(/!?\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
 		.replace(/!?\[\[([^\]]*)\]\]/g, (_, a) => a.replace(/#\^?/g, " › "))
 		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")

@@ -35,6 +35,7 @@ const DEFAULTS = {
     hybridWeight: 0.15,
     minTopCos: 0.58,          // 拒答门槛：返回的块里最相近那块的余弦相似度低于它，就当库里没有，什么都不列（0 = 不设）。0.58 是 EmbeddingGemma 在评测集上定的，换模型要重定
     ctxPrefix: "notes",       // 切块带上下文：false 不加；"notes" 日记以外的笔记每块都加「页名 › 小标题」、日记只给从长块里拆出来的子块加（再带各层母块首行）；"nested" 只给拆出来的子块加；true 每块都加（日记块前面加日期会冲淡语义，评测里变差）。只影响算向量和字面检索，显示的原文不变；改了要重算向量
+    queryFilters: true,       // 从问题里认时间和文件夹：「2023 年 3 月」「去年」「上个月」「日记里」先圈范围再排序（只对 searchExtra(..., { question: true }) 这类「问题」生效，写作模式按段落找相近内容时不认）
     aliasExpand: false,       // 别名扩展：查询里出现某页的页名或别名时，把这页的其他名字也加进字面检索（RAG ⇄ 检索增强生成）
     shellPenalty: 3,          // 空壳块降权：去掉格式后不到 shellMinChars 个字的块（只有标题的列表项、只有页名的标题块），混合分减去这个数（0 = 不降）
     shellMinChars: 12,
@@ -147,6 +148,75 @@ async function revealLine(view, line, select = true) {
 function journalDate(basename) {
     const m = basename.match(JOURNAL_RE);
     return m ? window.moment(`${m[1]}-${m[2]}-${m[3]}`, "YYYY-M-D") : null;
+}
+// 块所在笔记的日期（YYYYMMDD 数字）：只有日记有，日期取自文件名；别的笔记返回 0
+function blockDay(b) {
+    const m = (b.ext ? b.ext.rel : b.path).split("/").pop().replace(/\.md$/, "").match(JOURNAL_RE);
+    return m ? +m[1] * 10000 + +m[2] * 100 + +m[3] : 0;
+}
+const dayNum = (m) => m.year() * 10000 + (m.month() + 1) * 100 + m.date();
+// 从问题里认出时间和文件夹（纯规则，不调模型）：「2023 年 3 月」「去年」「上个月」「最近两周」「日记里」……
+// 返回 { query: 去掉这些说法后的问题, dateFrom, dateTo: YYYYMMDD 数字（含两端）, folder, label: 给人看的过滤说明 }；什么都没认出就原样返回 query
+// 只认明确的说法：没写年份的「3 月」、「2023」不带「年」都不认，免得把正文里的数字当成过滤条件
+function parseQueryFilters(query, { now = window.moment(), folders = [] } = {}) {
+    let q = String(query);
+    const res = { query: q };
+    const CN = { 零: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+    const num = (s) => {
+        if (/^\d+$/.test(s)) return +s;
+        if (s === "半") return 0.5;
+        if (s.includes("十")) { const [a, b] = s.split("十"); return (a ? CN[a] : 1) * 10 + (b ? CN[b] : 0); }
+        return CN[s];
+    };
+    const N = "(\\d{1,2}|[一二两三四五六七八九十]{1,3}|半)";
+    const M = window.moment;
+    const yearsAgo = (w) => ({ 今年: 0, 去年: 1, 前年: 2 })[w];
+    const rules = [
+        // 2023 年 3 月 16 日 / 2023-03-16 / 2023/3/16 / 2023.3.16
+        [/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?|(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/, (m) => { const d = M([+(m[1] || m[4]), (m[2] || m[5]) - 1, +(m[3] || m[6])]); return d.isValid() && [d, d.clone()]; }],
+        // 2023 年 3 月 / 2023-03 / 2023/3（后面不能再跟数字）
+        [/(\d{4})\s*年\s*(\d{1,2})\s*月份?|(\d{4})[-/.](\d{1,2})(?![\d./-])/, (m) => { const d = M([+(m[1] || m[3]), (m[2] || m[4]) - 1, 1]); return d.isValid() && [d, d.clone().endOf("month")]; }],
+        // 去年 3 月 / 今年五月
+        [/(今年|去年|前年)\s*(\d{1,2}|[一二三四五六七八九十]{1,2})\s*月份?/, (m) => { const mo = num(m[2]); if (!(mo >= 1 && mo <= 12)) return null; const d = now.clone().subtract(yearsAgo(m[1]), "year").month(mo - 1).startOf("month"); return [d, d.clone().endOf("month")]; }],
+        // 2023 年上半年 / 去年下半年
+        [/(\d{4}\s*年|今年|去年|前年)\s*(上|下)半年/, (m) => { const y = /\d/.test(m[1]) ? +m[1].match(/\d{4}/)[0] : now.year() - yearsAgo(m[1]); const d = M([y, m[2] === "上" ? 0 : 6, 1]); return [d, d.clone().add(5, "month").endOf("month")]; }],
+        // 2023 年（不是「2023 年代」）/ 去年 / 今年 / 前年
+        [/(\d{4})\s*年(?!代)|(今年|去年|前年)/, (m) => { const y = m[1] ? +m[1] : now.year() - yearsAgo(m[2]); const d = M([y, 0, 1]); return [d, d.clone().endOf("year")]; }],
+        // 上个月 / 这个月
+        [/上个?月|这个月|本月/, (m) => { const d = now.clone().subtract(m[0].startsWith("上") ? 1 : 0, "month").startOf("month"); return [d, d.clone().endOf("month")]; }],
+        // 上周 / 这周（周一到周日）
+        [/上个?(?:周|星期|礼拜)|(?:这|本)个?(?:周|星期|礼拜)/, (m) => { const d = now.clone().subtract(m[0].startsWith("上") ? 1 : 0, "week").startOf("isoWeek"); return [d, d.clone().endOf("isoWeek")]; }],
+        // 最近 / 过去 / 近 N 天、周、个月、年
+        [new RegExp(`(?:最近|过去|近)\\s*${N}\\s*(天|日|周|个?星期|个?礼拜|个?月|年)`), (m) => { const n = num(m[1]); if (!n) return null; const u = /天|日/.test(m[2]) ? "day" : /周|星期|礼拜/.test(m[2]) ? "week" : /月/.test(m[2]) ? "month" : "year"; return [now.clone().subtract(n, u).add(1, "day"), now.clone()]; }],
+        // 今天 / 昨天 / 前天
+        [/今天|昨天|前天/, (m) => { const d = now.clone().subtract({ 今天: 0, 昨天: 1, 前天: 2 }[m[0]], "day"); return [d, d.clone()]; }],
+    ];
+    let hit = null;
+    for (const [re, fn] of rules) {
+        const m = q.match(re);
+        const r = m && fn(m);
+        if (!r) continue;
+        res.dateFrom = dayNum(r[0]); res.dateTo = dayNum(r[1]); hit = m[0];
+        q = q.replace(hit, " ");
+        break;
+    }
+    // 文件夹：「日记里」「在阅读收藏中」「读书笔记文件夹下」……名字得是库里真有的文件夹（两个字以上），后面得跟 里 / 中 / 下 / 文件夹 / 目录
+    const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const f of [...folders].sort((a, b) => b.length - a.length)) {
+        if (f.length < 2) continue;
+        const fm = q.match(new RegExp(`(?:在\\s*)?「?${reEsc(f)}」?\\s*(?:(?:文件夹|目录)\\s*)?(?:里面|里|中|下面|下)的?|(?:在\\s*)?「?${reEsc(f)}」?\\s*(?:文件夹|目录)`));
+        if (!fm) continue;
+        res.folder = f;
+        q = q.replace(fm[0], " ");
+        break;
+    }
+    if (hit || res.folder) {
+        const rest = q.replace(/\s+/g, " ").replace(/^[\s,，。、的在]+|[\s,，。、]+$/g, "").trim();
+        res.query = rest.length >= 2 ? rest : String(query);
+        const fmt = (n) => `${Math.floor(n / 10000)}-${String(Math.floor(n / 100) % 100).padStart(2, "0")}-${String(n % 100).padStart(2, "0")}`;
+        res.label = [hit ? (res.dateFrom === res.dateTo ? fmt(res.dateFrom) : `${fmt(res.dateFrom)} ~ ${fmt(res.dateTo)}`) : "", res.folder ? `${res.folder}/` : ""].filter(Boolean).join(" · ");
+    }
+    return res;
 }
 // 可复现的随机数：同一天同一个种子，抽到的东西一样（刷新不变，点「换一批」才变）
 function rng(seedStr) {
@@ -754,9 +824,19 @@ class BlockIndex {
         return { bm, cos, f, mu, sd };
     }
     // only：只要满足条件的块（写作模式用它把 Wiki 条目和普通笔记分开查）
-    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null, only = null } = {}) {
+    // dateFrom / dateTo：只要这段日期里的日记（YYYYMMDD 数字或 "YYYY-MM-DD"，含两端；日期取自日记文件名，别的笔记没有日期，一律不要）
+    // folder：只要这个文件夹里的（外部素材库按它库里的相对路径算）。过滤在排序前做：先圈范围，再在范围里按混合分排
+    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null, only = null, dateFrom = null, dateTo = null, folder = null } = {}) {
         if (!this.ready) return [];
         const S = this.scoreAll(query, qvec, excludePath);
+        const toDay = (x) => (x == null || x === "" ? null : typeof x === "number" ? x : +String(x).replace(/\D/g, "").slice(0, 8) || null);
+        const dFrom = toDay(dateFrom), dTo = toDay(dateTo);
+        const fold = folder ? String(folder).replace(/^\/+|\/+$/g, "") + "/" : null;
+        const inScope = dFrom || dTo || fold ? (b) => {
+            if (fold && !(b.ext ? b.ext.rel : b.path).startsWith(fold)) return false;
+            if (dFrom || dTo) { const d = blockDay(b); if (!d || (dFrom && d < dFrom) || (dTo && d > dTo)) return false; }
+            return true;
+        } : null;
         const arr = [];
         // 有查询向量：混合分 > 1.5 才算；没有就只按 BM25
         if (S.f) { for (let i = 0; i < S.f.length; i++) if (S.f[i] > 1.5) arr.push([i, S.f[i]]); }
@@ -765,6 +845,7 @@ class BlockIndex {
         const out = [], perCount = new Map(), seen = new Set();
         for (const [i, s] of ranked) {
             const b = this.blocks[i];
+            if (inScope && !inScope(b)) continue;
             const key = b.text.replace(/\s+/g, "").slice(0, 80);
             if (seen.has(key)) continue;
             seen.add(key);
@@ -1557,7 +1638,12 @@ module.exports = class SecondBrain extends Plugin {
     // ----- 给别的插件用（稿件台：填坑、概念锚点检索）-----
     // 在素材库里找和 query 意思相近的块：[{ vault, rel, line, text, score }]。vault 是外部素材库的名字就搜那个库，是本库的名字就搜本库；没开语义 / 连不上 Ollama 就只按字面找
     // 不在写作模式时借用索引，十分钟没人用就放掉
-    async searchExtra(query, { vault = null, limit = 12, perFile = 2, exclude = null } = {}) {
+    // question：query 是一个问题（不是一段正文）。设置 queryFilters 开着时，从里面认出时间和文件夹先圈范围（见 parseQuery），剩下的部分再去找
+    // dateFrom / dateTo / folder：直接指定范围，和 IndexStore.search 一样。返回的数组带 .filter（实际用的范围，给人看的说明），没圈范围就没有
+    async searchExtra(query, { vault = null, limit = 12, perFile = 2, exclude = null, question = false, dateFrom = null, dateTo = null, folder = null } = {}) {
+        const pq = question && this.settings.queryFilters ? this.parseQuery(query) : { query: String(query) };
+        query = pq.query;
+        const range = { dateFrom: dateFrom ?? pq.dateFrom ?? null, dateTo: dateTo ?? pq.dateTo ?? null, folder: folder ?? pq.folder ?? null };
         const idx = await this.ensureIndex();
         if (!this.writing) {
             clearTimeout(this.idxTimer);
@@ -1567,8 +1653,18 @@ module.exports = class SecondBrain extends Plugin {
         if (idx.store && idx.store.n) { try { qvec = (await this.embedTexts([String(query).slice(0, 1200)], true))[0]; } catch (e) { /* 连不上 Ollama：只按字面找 */ } }
         const self = this.app.vault.getName();
         const where = (b) => (b.ext ? { vault: b.ext.vault, rel: b.ext.rel } : { vault: self, rel: b.path });
-        return idx.search(String(query), { limit, perFile, qvec, only: (b) => { const w = where(b); return (!vault || w.vault === vault) && !(exclude && exclude(w.rel, b.line, b.text)); } })
+        const res = idx.search(String(query), { limit, perFile, qvec, ...range, only: (b) => { const w = where(b); return (!vault || w.vault === vault) && !(exclude && exclude(w.rel, b.line, b.text)); } })
             .map((b) => ({ ...where(b), line: b.line, text: b.text, score: b.score }));
+        if (range.dateFrom || range.dateTo || range.folder) res.filter = { ...range, query, label: pq.label || "" };
+        return res;
+    }
+    // 从问题里认出时间和文件夹（规则见 parseQueryFilters）。文件夹只认库里的顶层文件夹；「今天」按螺旋日程的日期分界（凌晨分界前算前一天）
+    parseQuery(query) {
+        const folders = (this.app.vault.getRoot().children || []).filter((f) => f.children).map((f) => f.name);
+        const ns = this.app.plugins.plugins["nautilus-spiral"];
+        let now = window.moment();
+        if (ns?.today) { try { now = window.moment(ns.today()); } catch (e) { /* 用本机日期 */ } }
+        return parseQueryFilters(query, { now, folders });
     }
     // 插入了哪条素材：记进正在写的这篇的属性「素材」；在稿子库里，再记到主库里挂着这篇稿子的选题页（属性「用到的素材」）
     async recordSource(base, ext) {
@@ -2242,6 +2338,7 @@ class SBSettings extends PluginSettingTab {
             .addDropdown((d) => d.addOptions({ off: "不加", notes: "日记以外每块都加，日记只给拆出来的子块加", nested: "只给拆出来的子块加", all: "每块都加" })
                 .setValue(s.ctxPrefix === "notes" || s.ctxPrefix === "nested" ? s.ctxPrefix : s.ctxPrefix ? "all" : "off")
                 .onChange(async (v) => { s.ctxPrefix = v === "off" ? false : v === "all" ? true : v; await p.saveSettings(); p.rebuildIndex(); }));
+        tog("从问题里认时间和文件夹", "问题里有「2023 年 3 月」「去年」「上个月」「最近两周」「日记里」这类说法时，先把范围圈到那段时间的日记 / 那个文件夹，再在里面排序。日期取自日记文件名，别的笔记没有日期。只对别的插件按「问题」来查时生效，写作模式按段落找相近内容时不认", "queryFilters");
         tog("别名扩展", "查询里出现某页的页名或别名（3 个字以上）时，把这页的其他名字也加进字面检索，比如 RAG ⇄ 检索增强生成", "aliasExpand");
         text("空壳块降权", "去掉格式后不到「空壳字数」的块（只有标题的列表项、只有页名的标题块），混合分减去这个数。默认 3；0 = 不降", "shellPenalty");
         text("空壳字数", "", "shellMinChars");

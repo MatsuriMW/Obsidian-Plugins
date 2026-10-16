@@ -135,6 +135,10 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
  * 1. 优先级的简写：关键字后面跟 a / b / c（todoa 写稿、todo a 写稿、doing b 写周报），光标离开那一行时改成 Logseq 写法「TODO [#A] 写稿」。
  *    隔空格的写法，a / b / c 后面要么没字了、要么紧跟中文、要么空格后面不是英文字母（todo a book 是英文句子，不改）。
  *    DOING 后面紧跟的时刻排在优先级前面（DOING 14:05 [#A] …），螺旋日程靠它计时。块去向的一键整理 / 日记整理用同一套规则
+ * 1b. 给 AI 的 TODO：TODOFORAI / TODO4AI / TODO2AI / TODOTOAI 在设置里归「未开始」组（和 TODO 同类）。小写或大小写混着打的
+ *    （todo4ai 写稿），光标离开那一行时改成大写。块去向会把昨天、今天、明天日记里这种条目连同子块发给 Claude，并记一行 🔗
+ * 1c. Agent 会话的两个 DOING 中间态：TOREVIEW（会话停下来等你看 / 等你回复）、HITLIMIT（撞了用量限额，显示成 HITLIMIT!）。
+ *    设置里和 PAUSED 一样归「未开始」组，转换写成 (PAUSED | TOREVIEW | HITLIMIT) -> DOING；螺旋日程按 🔗 绑着的会话自动切，颜色在 styles.css
  * 2. 切换「重要」（⌃⇧I）/ 切换「紧急」（⌃⇧U）：四象限和优先级是一回事——
  *    A = 重要且紧急，B = 紧急不重要，C = 重要不紧急，都不是 = 不写优先级（SUSPENDED 也算这一类）。
  *    行里还留着旧的 #q1…#q4 标签的，按标签算现在在哪个象限，切换后换成优先级、标签去掉
@@ -143,7 +147,7 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 	const { EditorView } = require("@codemirror/view");
 	const { Notice } = require("obsidian");
 	const ITEM = /^(\s*(?:[-*+]|\d+[.)])\s+)(\*\*\d{1,2}[:：]\d{2}\*\*\s*)?(.*)$/;
-	const KWS = "TODO|DOING|LATER|NOW|PAUSED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE";
+	const KWS = "TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE";
 	const SHORT_KW = new RegExp(`^(${KWS})`, "i");
 	const KW = new RegExp(`^(${KWS})(?:\\s+|$)`);
 	const TIME = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
@@ -167,9 +171,13 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		const after = rest.slice(t[0].length);
 		return `${t[0].trimEnd()} [#${prio}]${after ? " " + after : ""}`;
 	}
+	// 给 AI 的 TODO：小写 / 大小写混着的改成大写
+	const AI_KW = /^(todo(?:for|4|2|to)ai)(?=\s|$)/i;
 	// 简写改成标准写法；不是简写返回 null
 	function expand(line) {
 		const m = ITEM.exec(line);
+		const ai = m && AI_KW.exec(m[3]);
+		if (ai) return ai[1] === ai[1].toUpperCase() ? null : `${m[1]}${m[2] || ""}${ai[1].toUpperCase()}${m[3].slice(ai[1].length)}`;
 		const p = m && short(m[3]);
 		return p ? `${m[1]}${m[2] || ""}${p.kw} ${joinPrio(p.prio, p.rest)}` : null;
 	}
