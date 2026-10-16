@@ -33,6 +33,11 @@ const DEFAULTS = {
     embedModel: "embeddinggemma",
     embedDims: 768,
     hybridWeight: 0.15,
+    minTopCos: 0.58,          // 拒答门槛：返回的块里最相近那块的余弦相似度低于它，就当库里没有，什么都不列（0 = 不设）。0.58 是 EmbeddingGemma 在评测集上定的，换模型要重定
+    ctxPrefix: "nested",      // 切块带上下文：false 不加；"nested" 只给从长块里拆出来的子块加「页名 › 小标题 › 各层母块首行」；true 每块都加。只影响算向量和字面检索，显示的原文不变；改了要重算向量
+    aliasExpand: false,       // 别名扩展：查询里出现某页的页名或别名时，把这页的其他名字也加进字面检索（RAG ⇄ 检索增强生成）
+    shellPenalty: 3,          // 空壳块降权：去掉格式后不到 shellMinChars 个字的块（只有标题的列表项、只有页名的标题块），混合分减去这个数（0 = 不降）
+    shellMinChars: 12,
     extraVaults: "",          // 每行一个：库名|绝对路径（把那个库当素材源）
  langPattern: "^.{1,4}[语文](记录|表达)$",   // 随机漫步：卡片本身、上层或下层链到名字符合这个规则的页（英文记录、日语记录、英文表达、拉丁语记录……）算语言类
     langExcept: "中文记录, 中文表达",        // 但这些不算（中文的记录 / 表达留在「知识」里）
@@ -486,6 +491,16 @@ function tokenize(text) {
     }
     return out;
 }
+// 去掉列表符号、任务框、块 ID、#card、双链括号、高亮 / 加粗记号和标点之后剩几个字：用来认出空壳块
+function contentLen(text) {
+    return String(text).replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2").replace(/\^[\w-]+/g, "").replace(/#card\b/g, "")
+        .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[.\]\s+)?/gm, "").replace(/[\s\p{P}\p{S}]/gu, "").length;
+}
+// 母块的第一行，拿来当子块的上下文：去掉列表符号、任务框、块 ID、标题井号和强调记号
+function ctxLine(line) {
+    return String(line || "").replace(LINE_PREFIX_RE, "").replace(/\s\^[\w-]+\s*$/, "").replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2")
+        .replace(/(\*\*|==|__)/g, "").trim().slice(0, 60);
+}
 const STOP_EN = new Set("the and for are but not you with this that from have was were will would can could what when where which who how all any your our their its his her they them then than there here into onto about just also very more most some such only other of to in on at by is it be as or an if so do does did no yes we he she i me my".split(" "));
 
 class BlockIndex {
@@ -515,13 +530,32 @@ class BlockIndex {
         const L = text.split("\n");
         const priv = keepPrivate ? null : this.plugin.privateRe();
         const res = [];
-        const push = (line, s, title = false) => {
+        const push = (line, s, title = false, ctx = "") => {
             const t = s.trim();
             if (t.replace(/\s/g, "").length < 8) return;
             if (priv && priv.test(t)) return;
-            res.push({ line, end: line + s.replace(/\s+$/, "").split("\n").length - 1, text: t, title });
+            res.push({ line, end: line + s.replace(/\s+$/, "").split("\n").length - 1, text: t, title, ctx });
         };
         const isJournal = !!journalDate(file.basename);
+        // 切块带上下文（设置 ctxPrefix）：页名（日记是日期）› 所在小标题 › 子项单独成块时各层母块的第一行
+        // "nested" 只给拆出来的子块加：评测里给每块都加日期 / 页名会冲淡普通块的语义
+        const ctxMode = this.plugin.settings.ctxPrefix, ctxOn = !!ctxMode;
+        const page = isJournal ? journalDate(file.basename).format("YYYY-MM-DD") : file.basename;
+        const heads = (cache.headings || []).map((h) => ({ line: h.position.start.line, text: h.heading }));
+        const itemAt = new Map((cache.listItems || []).map((it) => [it.position.start.line, it]));
+        const ctxOf = (line, nested) => {
+            if (!ctxOn || (ctxMode === "nested" && !nested)) return "";
+            const parts = [page];
+            let h = ""; for (const x of heads) { if (x.line < line) h = x.text; else break; }
+            if (h) parts.push(h);
+            if (nested) {
+                const chain = [];
+                // 只往上找、最多 8 层：母块必须在当前块上面，防止异常的列表结构让循环停不下来
+                for (let it = itemAt.get(line), k = 0; it && it.parent >= 0 && k < 8; k++) { const pa = itemAt.get(it.parent); if (!pa || pa.position.start.line >= it.position.start.line) break; chain.unshift(ctxLine(L[pa.position.start.line])); it = pa; }
+                parts.push(...chain.filter(Boolean));
+            }
+            return parts.join(" › ").slice(0, 200);
+        };
         if (!isJournal) {
             const fm = cache.frontmatter || {};
             push(0, `${file.basename} ${fm.def || ""} ${[fm.aliases].flat().filter(Boolean).join(" ")}`, true);   // 标题块：页名 + 定义 + 别名，不是正文
@@ -544,27 +578,28 @@ class BlockIndex {
             // 太长的块（整页只有一个大列表）按子项再切，免得一整篇算一块
             if (joined.length > 1500) {
                 for (const it of items) if (it.position.start.line >= b.start && it.position.start.line <= b.end && !skip.has(it.position.start.line))
-                    push(it.position.start.line, L.slice(it.position.start.line, it.position.end.line + 1).join("\n"));
-            } else push(b.start, joined);
+                    push(it.position.start.line, L.slice(it.position.start.line, it.position.end.line + 1).join("\n"), false, ctxOf(it.position.start.line, true));
+            } else push(b.start, joined, false, ctxOf(b.start, false));
         }
         if (!isJournal) for (const s of cache.sections || []) {
             if (s.type !== "paragraph" && s.type !== "blockquote" && s.type !== "callout") continue;
             if (inList.has(s.position.start.line)) continue;
-            push(s.position.start.line, L.slice(s.position.start.line, s.position.end.line + 1).join("\n"));
+            push(s.position.start.line, L.slice(s.position.start.line, s.position.end.line + 1).join("\n"), false, ctxOf(s.position.start.line, false));
         }
         return res;
     }
     addBlocks(file, list, ext = null) {
         const ids = [];
         for (const b of list) {
-            const toks = tokenize(b.text);
-            if (!toks.length) continue;
+            if (!tokenize(b.text).length) continue;
+            const et = b.ctx ? b.ctx + "\n" + b.text : b.text;   // 带上下文的文字：只用来算向量和字面检索
+            const toks = tokenize(et);
             const idx = this.blocks.length;
-            const text = b.text.slice(0, 1200);
-            const h = hashOf(text);
+            const text = b.text.slice(0, 1200), etx = et.slice(0, 1200);
+            const h = hashOf(etx);
             const v = this.store ? this.store.idx(h) : -1;
             if (v < 0) this.missing = true;
-            this.blocks.push({ path: file.path, line: b.line, text, len: toks.length, dead: false, h, v, ext });
+            this.blocks.push({ path: file.path, line: b.line, text, et: etx !== text ? etx : undefined, clen: contentLen(text), len: toks.length, dead: false, h, v, ext });
             this.totalLen += toks.length;
             const tf = new Map();
             for (const t of toks) tf.set(t, (tf.get(t) || 0) + 1);
@@ -582,6 +617,12 @@ class BlockIndex {
             this.store = null;
             if (st.semantic && st.embedModel) { try { this.store = new VectorStore(st.embedModel, st.embedDims); } catch (e) { console.warn("[second-brain] 向量缓存打不开", e); } }
             const files = this.app.vault.getMarkdownFiles().filter((f) => !this.excluded(f.path));
+            // 别名表：[页名, 别名…]，别名扩展用
+            this.aliases = [];
+            for (const f of files) {
+                const al = [this.app.metadataCache.getFileCache(f)?.frontmatter?.aliases].flat().filter((x) => typeof x === "string" && x.trim());
+                if (al.length) this.aliases.push([f.basename, ...al].map((x) => x.trim()));
+            }
             for (let i = 0; i < files.length; i++) {
                 try { this.addBlocks(files[i], await this.blocksOf(files[i])); } catch (e) { console.warn("[second-brain] index", files[i].path, e); }
                 if (i % 150 === 0) { onProgress && onProgress(i, files.length); await sleep(0); }
@@ -627,7 +668,7 @@ class BlockIndex {
             for (const b of this.blocks) {
                 if (b.dead || b.v >= 0) continue;
                 const i = this.store.idx(b.h);
-                if (i >= 0) b.v = i; else if (!todo.has(b.h)) todo.set(b.h, b.text);
+                if (i >= 0) b.v = i; else if (!todo.has(b.h)) todo.set(b.h, b.et || b.text);
             }
             const items = [...todo.entries()];
             for (let i = 0; i < items.length && !this.stopEmbed; i += 32) {
@@ -646,17 +687,32 @@ class BlockIndex {
         for (const b of this.blocks) if (!b.dead) { live++; if (b.v >= 0) have++; }
         return { live, have };
     }
-    // only：只要满足条件的块（写作模式用它把 Wiki 条目和普通笔记分开查）
-    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null, only = null } = {}) {
-        if (!this.ready) return [];
+    // 查询里出现某页的页名或别名（3 个字以上；英文要整词）时，把这页的其他名字也拿来做字面检索，比如 RAG ⇄ 检索增强生成
+    expandQuery(query) {
+        if (!this.plugin.settings.aliasExpand || !this.aliases?.length) return query;
+        const q = String(query).toLowerCase(), add = new Set();
+        const has = (x) => (CJK.test(x) ? q.includes(x) : new RegExp(`(^|[^a-z0-9])${x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`).test(q));
+        for (const names of this.aliases) {
+            if (!names.some((n) => n.length >= 3 && has(n.toLowerCase()))) continue;
+            for (const n of names) if (!q.includes(n.toLowerCase())) add.add(n);
+            if (add.size > 12) break;
+        }
+        return add.size ? query + "\n" + [...add].join(" ") : query;
+    }
+    // 每块的分：BM25（bm）、余弦（cos，没有查询向量时为 null）、混合分（f = 余弦和 BM25 各自 z-score 标准化后加权相加，空壳块再减 shellPenalty）
+    // search 和评测脚本（~/claude/rag-eval）共用这一份
+    scoreAll(query, qvec = null, excludePath = null) {
+        const st = this.plugin.settings;
+        const N = this.blocks.length;
+        let dead = 0; for (const b of this.blocks) if (b.dead) dead++;
+        const live = N - dead || 1;
         const qtf = new Map();
-        for (const t of tokenize(query)) qtf.set(t, (qtf.get(t) || 0) + 1);
-        const N = this.blocks.length, live = N - this.blocks.filter((b) => b.dead).length || 1;
+        for (const t of tokenize(this.expandQuery(query))) qtf.set(t, (qtf.get(t) || 0) + 1);
         const avg = this.totalLen / live || 1;
         // 只用最有区分度的 48 个词，长段落也不会慢
         const terms = [...qtf.keys()].map((t) => { const p = this.post.get(t); const df = p ? p.length / 2 : 0; return { t, df, idf: df ? Math.log(1 + (N - df + 0.5) / (df + 0.5)) : 0 }; })
             .filter((x) => x.df && x.df < N * 0.2).sort((a, b) => b.idf - a.idf).slice(0, 48);
-        const score = new Map();
+        const bm = new Float64Array(N);
         const k1 = 1.2, bb = 0.75;
         for (const { t, idf } of terms) {
             const p = this.post.get(t);
@@ -665,15 +721,13 @@ class BlockIndex {
                 const b = this.blocks[p[i]];
                 if (b.dead || b.path === excludePath) continue;
                 const tf = p[i + 1];
-                const s = idf * (tf * (k1 + 1)) / (tf + k1 * (1 - bb + bb * b.len / avg)) * qw;
-                score.set(p[i], (score.get(p[i]) || 0) + s);
+                bm[p[i]] += idf * (tf * (k1 + 1)) / (tf + k1 * (1 - bb + bb * b.len / avg)) * qw;
             }
         }
-        let ranked = null;
-        // 有查询向量：每块的余弦相似度和 BM25 分各自标准化后相加（语义为主，字面命中加分）
+        let cos = null, f = null, mu = 0, sd = 1;
         if (qvec && this.store && this.store.n) {
             const d = this.store.dims, data = this.store.data;
-            const cos = new Float32Array(N);
+            cos = new Float32Array(N);
             let sum = 0, sum2 = 0, cnt = 0;
             for (let i = 0; i < N; i++) {
                 const b = this.blocks[i];
@@ -683,22 +737,31 @@ class BlockIndex {
                 cos[i] = s; sum += s; sum2 += s * s; cnt++;
             }
             if (cnt > 50) {
-                const mu = sum / cnt, sd = Math.sqrt(Math.max(1e-9, sum2 / cnt - mu * mu));
+                mu = sum / cnt; sd = Math.sqrt(Math.max(1e-9, sum2 / cnt - mu * mu));
                 let bs = 0, bs2 = 0;
-                for (const v of score.values()) { bs += v; bs2 += v * v; }
+                for (let i = 0; i < N; i++) if (bm[i]) { bs += bm[i]; bs2 += bm[i] * bm[i]; }
                 const bmu = bs / live, bsd = Math.sqrt(Math.max(1e-9, bs2 / live - bmu * bmu));
-                const w = Number(this.plugin.settings.hybridWeight) || 0;
-                const arr = [];
+                const w = Number(st.hybridWeight) || 0;
+                const pen = Number(st.shellPenalty) || 0, minc = Number(st.shellMinChars) || 0;
+                f = new Float64Array(N);
                 for (let i = 0; i < N; i++) {
                     const b = this.blocks[i];
-                    if (b.dead || b.path === excludePath) continue;
-                    const f = (Number.isNaN(cos[i]) ? 0 : (cos[i] - mu) / sd) + w * (((score.get(i) || 0) - bmu) / bsd);
-                    if (f > 1.5) arr.push([i, f]);
+                    if (b.dead || b.path === excludePath) { f[i] = -Infinity; continue; }
+                    f[i] = (Number.isNaN(cos[i]) ? 0 : (cos[i] - mu) / sd) + w * ((bm[i] - bmu) / bsd) - (pen && b.clen < minc ? pen : 0);
                 }
-                ranked = arr.sort((a, b) => b[1] - a[1]);
-            }
+            } else cos = null;
         }
-        if (!ranked) ranked = [...score.entries()].sort((a, b) => b[1] - a[1]);
+        return { bm, cos, f, mu, sd };
+    }
+    // only：只要满足条件的块（写作模式用它把 Wiki 条目和普通笔记分开查）
+    search(query, { excludePath = null, limit = 12, perFile = 2, onlyNotes = false, qvec = null, only = null } = {}) {
+        if (!this.ready) return [];
+        const S = this.scoreAll(query, qvec, excludePath);
+        const arr = [];
+        // 有查询向量：混合分 > 1.5 才算；没有就只按 BM25
+        if (S.f) { for (let i = 0; i < S.f.length; i++) if (S.f[i] > 1.5) arr.push([i, S.f[i]]); }
+        else for (let i = 0; i < S.bm.length; i++) if (S.bm[i] > 0) arr.push([i, S.bm[i]]);
+        const ranked = arr.sort((a, b) => b[1] - a[1]);
         const out = [], perCount = new Map(), seen = new Set();
         for (const [i, s] of ranked) {
             const b = this.blocks[i];
@@ -710,9 +773,13 @@ class BlockIndex {
             const c = perCount.get(b.path) || 0;
             if (c >= perFile) continue;
             perCount.set(b.path, c + 1);
-            out.push({ ...b, score: s });
+            out.push({ ...b, score: s, cos: S.cos ? S.cos[i] : null });
             if (out.length >= limit) break;
         }
+        // 拒答门槛：相对分数总能排出前几名，库里根本没有的东西也会列出来。前 10 条里最相近的那块也不够像，就当没找到
+        // （只看前 10 条，结果不随 limit 变；0.58 取自 48 题评测集：应拒答题前 10 最高 ≤ 0.561（goroutine 一道 0.598 例外），应答题最低 0.597）
+        const minCos = Number(this.plugin.settings.minTopCos) || 0;
+        if (minCos > 0 && S.cos && out.length && Math.max(...out.slice(0, 10).map((b) => (Number.isNaN(b.cos) ? -1 : b.cos))) < minCos) return [];
         return out;
     }
 }
@@ -1878,6 +1945,17 @@ module.exports = class SecondBrain extends Plugin {
             return true;
         });
     }
+    // 切块方式改了：已经建好的索引按新切法重建，缺的向量后台补算；没建过就等下次用到时按新设置建
+    async rebuildIndex() {
+        if (!this.index) return;
+        const n = new Notice("第二大脑：切块方式改了，重建索引…", 0);
+        try {
+            await this.index.build();
+            if (this.index?.store) await this.index.embedMissing((d, t) => n.setMessage(`第二大脑：重算向量 ${d}/${t}`));
+            n.setMessage("第二大脑：索引已按新切块重建");
+        } catch (e) { n.setMessage("第二大脑：重建失败（" + (e.message || e) + "）"); }
+        setTimeout(() => n.hide(), 6000);
+    }
     async ensureIndex(onProgress) {
         if (!this.index) this.index = new BlockIndex(this);
         if (!this.index.ready) await this.index.build(onProgress);
@@ -2159,6 +2237,14 @@ class SBSettings extends PluginSettingTab {
         text("向量模型", "Ollama 里的模型名。换模型要重新算一遍向量（旧的缓存留着，换回来不用重算）", "embedModel");
         num("向量维度", "embedDims");
         text("字面命中的加分权重", "0 = 纯语义；默认 0.15", "hybridWeight");
+        text("拒答门槛（余弦）", "列出来的块里最相近的那块，余弦相似度低于它就当库里没有，什么都不列。默认 0.58（按 EmbeddingGemma 定的，换模型要重定）；0 = 不设", "minTopCos");
+        new Setting(c).setName("切块带上下文").setDesc("算向量和字面检索时，在块前面加上「页名（日记是日期）› 小标题 › 各层母块的第一行」，显示的原文不变。改了要重算受影响的向量，Ollama 后台跑几分钟")
+            .addDropdown((d) => d.addOptions({ off: "不加", nested: "只给拆出来的子块加", all: "每块都加" })
+                .setValue(s.ctxPrefix === "nested" ? "nested" : s.ctxPrefix ? "all" : "off")
+                .onChange(async (v) => { s.ctxPrefix = v === "off" ? false : v === "nested" ? "nested" : true; await p.saveSettings(); p.rebuildIndex(); }));
+        tog("别名扩展", "查询里出现某页的页名或别名（3 个字以上）时，把这页的其他名字也加进字面检索，比如 RAG ⇄ 检索增强生成", "aliasExpand");
+        text("空壳块降权", "去掉格式后不到「空壳字数」的块（只有标题的列表项、只有页名的标题块），混合分减去这个数。默认 3；0 = 不降", "shellPenalty");
+        text("空壳字数", "", "shellMinChars");
         new Setting(c).setName("随机漫步").setHeading();
         text("语言类双链（正则）", "卡片本身、上层或下层链到名字符合它的页就算语言类，连同下面的子块。默认 ^.{1,4}[语文](记录|表达)$：英文记录、日语记录、英文表达、拉丁语记录…", "langPattern");
         text("不算语言类的", "逗号分隔，默认中文记录、中文表达（留在「知识」里）", "langExcept");
