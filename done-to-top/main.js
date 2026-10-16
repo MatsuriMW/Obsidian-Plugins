@@ -14,7 +14,7 @@
 //   · core 挂在插件实例上，Telegram Inbox（自用版）收消息时也用它归位
 //   · 单独占一行的块 ID（闪卡插件写在卡片下面一行、顶格的「^q-r7d4」这类）算在它上面那一块里：
 //     移到顶部、归位、一键整理、发送到今天 / 明天时都跟着块一起走，不会落在原地
-//   · 一键整理时，顶格条目带「明天 / 后天 / 大后天」的，整块搬到那一天的日记，行尾记上「← [[来源日记]]」
+//   · 一键整理时，顶格条目带「明天 / 后天 / 大后天」的，整块搬到那一天的日记，行尾记上「← [[来源日记]]」（只认带任务关键字的条目）
 //     （带这个记号的不会再被搬；DONE 和 DONE 栏里的不搬）。⌥Space 快速记录（nautilus-cli.js）用同一份规则
 //   · 发送：光标所在块（连同子项）可以发到几个去向（命令「发送这一块到…」列出全部，每个去向也各有一条命令）：
 //     页面顶部、明天的日记、Claude CLI（开一个会话，这一块当第一句话；选中几块并列的就每块各开一个；
@@ -33,7 +33,7 @@
 //     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
 //   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后；一篇里有好几块的并成一块。
 //     core.appendInfo(text, [文字…]) 往它下面追加子块，还没有就在 TODO 区最后建一个（AI 记信息增量用）
-//   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）；点开日记时自动落到 DOING 区（设置里可关）
+//   · 快速跳转：⌃1 DOING 区、⌃2 TODO 区、⌃3 结尾、⌃0 DONE 栏（DONE 栏藏着的话先关掉隐藏）；点开今天的日记时自动落到 DOING 区（往期、未来的照常打开；设置里可关）
 //   · 给 AI 的 TODO：TODOFORAI / TODO4AI / TODO2AI / TODOTOAI（小写也认）算 TODO 类，归 TODO 区。昨天、今天、明天的日记里打了这种状态的条目，
 //     停手一会儿（设置 aiSettle 秒；光标还在这一块里就等 90 秒）后自动连同子块发给 Claude：替它定好会话号，交给 limit-resume task 开一个新会话，
 //     撞着限额就排到额度恢复以后；这一行原样不动，下面记一行 🔗 绑定那个会话（有 🔗 的不再发；想重发就删掉 🔗 那一行）。
@@ -57,7 +57,7 @@ const DEFAULTS = {
 	mdflowNote: "MD Flow/块.md",    // 发到 MD Flow 时，这一块先写进这篇中转笔记（每次覆盖）
 	explainModel: "claude-haiku-5-5",   // 「AI 解释」用哪个模型（claude 命令行的 --model）。写全名，别名会跟着版本变
 	hideDone: true,                 // 日记里的 DONE 栏（连同下面那条「- ---」）在编辑器里整段藏起来
-	jumpDoingOnOpen: true,          // 点开一篇日记时，光标自动落到 DOING 区开头
+	jumpDoingOnOpen: true,          // 点开今天的日记时，光标自动落到 DOING 区开头（往期、未来的不跳）
 	aiAuto: true,                   // 昨天、今天、明天日记里 TODO4AI 这类状态的条目，自动连同子块发给 Claude（新会话）
 	aiCwd: "",                      // 给 AI 的 TODO 在哪个目录跑；空 = 跟「发给 Claude CLI」同一个目录
 	aiSettle: 20,                   // 这一块停手多少秒没再改才发（光标还在这一块里就等 90 秒）
@@ -510,16 +510,26 @@ const DAY_OFFSET = { 明天: 1, 后天: 2, 大后天: 3 };
 const FROM_RE = /\s(?:%%\s*)?←\s*(?:\[\[)?\d{4}_\d{2}_\d{2}(?:\]\])?(?:\s*%%)?/;
 const JOURNAL_NAME_RE = /^(\d{4})_(\d{2})_(\d{2})$/;
 
-// 这一行要往后搬几天；0 = 不搬（没提日子、已经搬过、已经 DONE）
+// 这一行要往后搬几天；0 = 不搬（没提日子、已经搬过、已经 DONE、不是任务）。
+// 不是任务的条目搬过去也不记来源，没法认出「已经搬过」，会一天天往后滚，所以只搬任务
 function dayWordOffset(line) {
-	if (FROM_RE.test(line) || zoneOf(line) === "DONE") return 0;
+	if (FROM_RE.test(line) || zoneOf(line) === "DONE" || !isTaskLine(line)) return 0;
 	const bare = line.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "");   // 网址、双链里的不算
 	const m = DAY_WORD_RE.exec(bare);
 	return m ? DAY_OFFSET[m[0]] : 0;
 }
 
-// 行尾记上从哪篇日记搬来的（块 ID 要留在行尾）
+// 带任务关键字（TODO / DOING / DONE / TODO4AI……）或复选框的条目才算任务
+function isTaskLine(line) {
+	const m = line.match(ITEM_RE);
+	if (!m) return false;
+	const rest = m[2].replace(STAMP_RE, "");
+	return KEYWORD_RE.test(rest) || CHECKBOX_RE.test(rest);
+}
+
+// 行尾记上从哪篇日记搬来的（块 ID 要留在行尾）。只有任务要追踪拖了几天，不带任务关键字的条目原样搬，不记
 function markFrom(line, sourceName) {
+	if (!isTaskLine(line)) return line;
 	const id = line.match(/\s+\^[A-Za-z0-9-]+$/);
 	const body = (id ? line.slice(0, id.index) : line).replace(/\s+$/, "");
 	return `${body} ← [[${sourceName}]]${id ? id[0] : ""}`;
@@ -1011,7 +1021,7 @@ class SendSettings extends PluginSettingTab {
 		new Setting(containerEl).setName("日记").setHeading();
 		new Setting(containerEl).setName("隐藏 DONE 区").setDesc("日记里正文第一条「- ---」之前的 DONE 栏（连同这条分隔线）在编辑器里整段不显示。阅读视图照常显示。也可以用命令「隐藏 / 显示日记的 DONE 区」切换")
 			.addToggle((t) => t.setValue(!!s.hideDone).onChange(async (v) => { s.hideDone = v; await this.plugin.saveData(s); this.plugin.refreshHideDone(); }));
-		new Setting(containerEl).setName("点开日记时跳到 DOING 区").setDesc("标签页刚打开一篇日记时，光标落到 DONE 栏分隔线下面那一段的开头（和 ⌃1 一样）。切标签页回来不跳；点块链接进来、已经定位到别的行的也不跳")
+		new Setting(containerEl).setName("点开今天的日记时跳到 DOING 区").setDesc("标签页刚打开今天的日记时（和螺旋日程同一个日期分界），光标落到 DONE 栏分隔线下面那一段的开头（和 ⌃1 一样）。往期、未来的日记照常打开；切标签页回来不跳；点块链接进来、已经定位到别的行的也不跳")
 			.addToggle((t) => t.setValue(!!s.jumpDoingOnOpen).onChange(async (v) => { s.jumpDoingOnOpen = v; await this.plugin.saveData(s); }));
 		new Setting(containerEl).setName("快捷键").setHeading();
 		new Setting(containerEl).setName("叫出「发送这一块到…」面板").setDesc(`现在：${hotkeyText(this.app, "done-to-top:send-block") || "没有绑键"}。键位在 Obsidian 的「设置 → 快捷键」里改，改了就用你的，默认的那个自动让位。每个去向也各有一条命令，想给哪个单独绑键也在那里绑`)
@@ -1137,7 +1147,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
 		this.addSettingTab(new SendSettings(this.app, this));
 		this.app.workspace.onLayoutReady(() => this.patchSlash());
-		// 点开一篇日记，光标落到 DOING 区开头。标签页刚换成这篇时跳一次，切标签页回来不跳
+		// 点开今天的日记，光标落到 DOING 区开头。标签页刚换成这篇时跳一次，切标签页回来不跳；往期、未来的不跳
 		this.seenLeaf = new WeakMap();
 		this.registerEvent(this.app.workspace.on("file-open", (file) => this.jumpOnOpen(file)));
 		// 给 AI 的 TODO：每 5 秒看一眼昨天、今天、明天的日记（只在电脑上）
@@ -1293,7 +1303,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		return { name: ymd.join("_"), date: ymd.join("-"), folder, source: file ? file.basename : ymd.join("_") };
 	}
 
-	// 光标所在行到页尾整段拿走，原样追加到今天 / 明天日记的末尾；顶格条目行尾记上「← [[来源]]」。
+	// 光标所在行到页尾整段拿走，原样追加到今天 / 明天日记的末尾；顶格的任务条目行尾记上「← [[来源]]」。
 	// 光标在列表项的续行上时从这一项开始；光标正好在分隔线上时跳过这条线（它留在原处，原日记就以分隔线收尾）
 	async sendRest(editor, file, day = "today") {
 		file = file || this.app.workspace.getActiveFile();
@@ -1315,7 +1325,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const moved = orig.map((l) => {
 			const out = isBlank(l) ? "" : dedent(l, baseIndent);
 			const fence = /^\s*(```|~~~)/.test(out);
-			// 顶格列表项（不是分隔线、不在代码块里、还没记过来源）记上来源
+			// 顶格列表项（不是分隔线、不在代码块里、还没记过来源）记上来源；不带任务关键字的 markFrom 原样返回
 			const top = !inFence && !fence && ITEM_RE.test(out) && !/^\s/.test(out) && !isSep(out);
 			if (fence) inFence = !inFence;
 			return top && !FROM_RE.test(out) ? markFrom(normalizeKeyword(out, false), to.source) : out;
@@ -1814,7 +1824,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		new Notice(`☑️ 已加到提醒事项（${r.out || "默认列表"}）：${due}${g.title.slice(0, 24)}`);
 	}
 
-	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，行尾记上「← [[来源]]」
+	// 整块从这里拿走（一次 ⌘Z 可以撤回原文这边），写进明天的日记：任务进对应分区，其余追加到末尾，任务行尾记上「← [[来源]]」
 	async sendToTomorrow(editor, file) {
 		file = file || this.app.workspace.getActiveFile();
 		const lines = editor.getValue().split("\n");
@@ -1967,6 +1977,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	// DONE：DONE 栏藏着的话先把隐藏关掉（和命令「隐藏 / 显示日记的 DONE 区」是同一个开关），再跳到栏里第一块
 	jumpOnOpen(file) {
 		if (!this.settings.jumpDoingOnOpen || !file || !JOURNAL_NAME_RE.test(file.basename)) return;
+		if (file.basename !== this.todayOf(file).name) return;   // 只有今天的日记跳；往期、未来的照常打开
 		const leaf = this.app.workspace.activeLeaf;
 		if (!leaf || !leaf.view || leaf.view.file !== file || this.seenLeaf.get(leaf) === file.path) return;
 		this.seenLeaf.set(leaf, file.path);
@@ -1974,9 +1985,10 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		let tries = 0;
 		const attempt = () => {
 			const view = leaf.view, editor = view && view.editor;
-			if (!editor || view.file !== file || (view.getMode && view.getMode() === "preview")) return;
+			if (!editor || view.file !== file) return;
 			const text = editor.getValue();
-			if (!text && file.stat.size > 0) { if (++tries < 30) setTimeout(attempt, 50); return; }
+			// 新标签页刚换成这篇时视图还没装好：内容是空的，模式也会先报一阵 preview 再变成编辑模式，都接着等；真是阅读模式的等满 1.5 秒就算了
+			if ((!text && file.stat.size > 0) || (view.getMode && view.getMode() === "preview")) { if (++tries < 30) setTimeout(attempt, 50); return; }
 			// 刚打开时光标在第一行或属性下面第一行；比这靠后就是被定位过了
 			if (editor.getCursor().line > topInsertLine(text.split("\n"))) return;
 			this.jumpTo(editor, "DOING", true);
