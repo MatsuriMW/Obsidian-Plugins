@@ -28,7 +28,7 @@
 //     页面顶部、今天 / 明天的日记、日历、提醒事项是 DONE 那一声；交给 Claude CLI、Claudian、MD Flow 去做的是 DOING 那一声
 //   · 优先级（Logseq 写法）：「TODO [#A] 核心任务」「TODO [#B] 重要任务」「TODO [#C] 次要任务」。
 //     简写「todoa」「todo a」「doing b」整理时改成标准写法（螺旋日程计时用的时刻排在前面：DOING 14:05 [#A] …）。
-//     DOING / TODO 区里按 A → B → C → 没写优先级的排，同一级里同一个关键字的挨在一起（DOING → TOREVIEW → HITLIMIT → PAUSED、TODO 在 WAITING 前）；
+//     DOING 区固定 DOING → TOREVIEW / HITLIMIT → PAUSED 三段，段里按 A → B → C → 没写优先级的排；TODO 区按优先级排，同一级里 TODO 在 WAITING 前；
 //     DONE 区不看优先级，只按关键字聚类：DONE → SUSPENDED → FAILED → CANCELLED。块内部用分割线分了栏的也照此排
 //     （切换「重要 / 紧急」在 TODOseq 里：A = 重要且紧急、B = 紧急不重要、C = 重要不紧急）
 //   · 信息增量：顶格只写「- [[信息增量]]」的那一块没有状态，归 TODO 区，排在 TODO 区最后；一篇里有好几块的并成一块。
@@ -197,7 +197,8 @@ function normalizeKeyword(line, withTime) {
 	return `${m[1]}${stamp}${kw}${body ? " " + body : ""}`;
 }
 
-// 这一块在本区里排第几类：DOING / TODO 区先按优先级（A → B → C → 没写），同一级里同一个关键字的挨在一起；
+// 这一块在本区里排第几类：TODO 区先按优先级（A → B → C → 没写），同一级里同一个关键字的挨在一起；
+// DOING 区先按关键字分三段：DOING → TOREVIEW / HITLIMIT → PAUSED（和关键词颜色红 → 红黄渐变 → 黄一致），段里再按优先级；
 // DONE 区不看优先级，只按关键字聚类（DONE 和手动放进来的、闪卡在前，然后 SUSPENDED → FAILED → CANCELLED）
 const KW_CLUSTER = {
 	DONE: { SUSPENDED: 1, FAILED: 2, CANCELLED: 3, CANCELED: 3 },
@@ -213,7 +214,9 @@ function rankIn(zone, line) {
 	const cluster = (kw && KW_CLUSTER[zone] && KW_CLUSTER[zone][kw]) || 0;
 	if (zone === "DONE") return cluster;
 	const p = line.match(PRIO_RE);
-	return (p ? PRIO_RANK[p[1]] : 3) * 10 + cluster;
+	const prio = (p ? PRIO_RANK[p[1]] : 3) * 10;
+	if (zone === "DOING") return (cluster === 3 ? 200 : cluster ? 100 : 0) + prio + cluster;
+	return prio + cluster;
 }
 // 稳定排序：同一类里保持原来的先后。「- [[信息增量]]」排在 TODO 区最后
 function sortZone(zone, items) {
