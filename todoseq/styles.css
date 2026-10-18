@@ -2582,11 +2582,13 @@
 .todoseq-keyword-formatted[data-task-keyword='SUSPENDED'] { --tsq-kw: #a17f66; }
 .todoseq-keyword-formatted:is([data-task-keyword='CANCELLED'], [data-task-keyword='CANCELED']) { --tsq-kw: #a4a8ac; }
 .todoseq-keyword-formatted[data-task-keyword='FAILED'] { --tsq-kw: #93606b; }
-/* TOREVIEW / HITLIMIT：Agent 会话的两个 DOING 中间态，螺旋日程按会话状态自动切（交互和 PAUSED 一样，⌘/ 或点一下回 DOING）。
-   颜色从 DOING 的砖红起（本来在跑），渐到它停下来的方向：TOREVIEW 渐到 PAUSED 的黄（停下等你看），HITLIMIT 渐到灰紫（额度用完，等重置）。
-   DOING 区里也按这个顺序排：DOING → TOREVIEW / HITLIMIT → PAUSED，红到黄一路过去。
-   正文里写的是 HITLIMIT，显示时补一个「!」 */
-.todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT']) {
+/* Agent 会话的 DOING 中间态，螺旋日程按会话状态自动切（交互和 PAUSED 一样，⌘/ 或点一下回 DOING）。
+   颜色从 DOING 的砖红起（本来在跑），渐到它停下来的方向：
+     TOREVIEW → PAUSED 的黄（停下等你看）；NEEDOK → 赭橙（停在「允许吗？」上，要你马上点）；
+     ERRORED → FAILED 的酒红（出错停了）；DELEGATED → 灰青（交给别的 Agent 在跑）；HITLIMIT → 灰紫（额度用完，等重置）；QUEUED → 雾蓝（已排队，到点自己续跑）。
+   DOING 区也按这个顺序排：DOING → NEEDOK / TOREVIEW / ERRORED → HITLIMIT / QUEUED → PAUSED。
+   正文里写的是 HITLIMIT / NEEDOK，显示时补一个「!」/「?」 */
+.todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT'], [data-task-keyword='NEEDOK'], [data-task-keyword='QUEUED'], [data-task-keyword='ERRORED'], [data-task-keyword='DELEGATED']) {
   --tsq-kw: #c8635f;
   background-image: linear-gradient(90deg, var(--tsq-kw), var(--tsq-kw-to) 85%);
   -webkit-background-clip: text;
@@ -2594,8 +2596,116 @@
   -webkit-text-fill-color: transparent;
 }
 .todoseq-keyword-formatted[data-task-keyword='TOREVIEW'] { --tsq-kw-to: #b39a3e; }
+.todoseq-keyword-formatted[data-task-keyword='NEEDOK'] { --tsq-kw-to: #bf7a45; }
+.todoseq-keyword-formatted[data-task-keyword='ERRORED'] { --tsq-kw-to: #93606b; }
 .todoseq-keyword-formatted[data-task-keyword='HITLIMIT'] { --tsq-kw-to: #8a5a8c; }
+.todoseq-keyword-formatted[data-task-keyword='QUEUED'] { --tsq-kw-to: #6f86a8; }
+.todoseq-keyword-formatted[data-task-keyword='DELEGATED'] { --tsq-kw-to: #5b9690; }
 .todoseq-keyword-formatted[data-task-keyword='HITLIMIT']::after { content: "!"; }
-:is(.cm-editor, .markdown-preview-view, .table-cell-wrapper) .todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT']) {
+.todoseq-keyword-formatted[data-task-keyword='NEEDOK']::after { content: "?"; }
+:is(.cm-editor, .markdown-preview-view, .table-cell-wrapper) .todoseq-keyword-formatted:is([data-task-keyword='TOREVIEW'], [data-task-keyword='HITLIMIT'], [data-task-keyword='NEEDOK'], [data-task-keyword='QUEUED'], [data-task-keyword='ERRORED'], [data-task-keyword='DELEGATED']) {
   text-shadow: none;   /* 渐变字是透明的，描边会从字里透出来 */
+}
+
+/* ---------- 本地补丁：关键词图标（main.js 末尾「关键词前面的动效小图标」那一段插的） ----------
+   图标照 lucide-animated，颜色跟关键词走（渐变的几个取它渐到的那个颜色）。
+   DOING 一类一直转；别的动效只在 .is-fire 下播一次（这一行刚换成这个关键词时），时长、节奏照 lucide-animated 的参数 */
+.tsq-ico {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.22em;
+  vertical-align: -0.15em;
+  color: var(--tsq-ico, var(--interactive-accent));
+  pointer-events: none;
+}
+.tsq-ico svg { width: 100%; height: 100%; display: block; overflow: visible; stroke-width: 2.2; }
+.tsq-ico svg * { transform-box: view-box; transform-origin: 12px 12px; }
+.tsq-ico:is([data-kw='TODO'], [data-kw='LATER']) { --tsq-ico: #5c86b4; }
+.tsq-ico:is([data-kw='DOING'], [data-kw='NOW'], [data-kw='IN-PROGRESS']) { --tsq-ico: #c8635f; }
+.tsq-ico[data-kw='DONE'] { --tsq-ico: #629c7f; }
+.tsq-ico[data-kw='PAUSED'] { --tsq-ico: #b39a3e; }
+.tsq-ico:is([data-kw='WAITING'], [data-kw='WAIT']) { --tsq-ico: #8f7fb6; }
+.tsq-ico[data-kw='SUSPENDED'] { --tsq-ico: #a17f66; }
+.tsq-ico:is([data-kw='CANCELLED'], [data-kw='CANCELED']) { --tsq-ico: #a4a8ac; }
+.tsq-ico[data-kw='FAILED'] { --tsq-ico: #93606b; }
+.tsq-ico[data-kw='TOREVIEW'] { --tsq-ico: #b39a3e; }
+.tsq-ico[data-kw='NEEDOK'] { --tsq-ico: #bf7a45; }
+.tsq-ico[data-kw='ERRORED'] { --tsq-ico: #93606b; }
+.tsq-ico[data-kw='HITLIMIT'] { --tsq-ico: #8a5a8c; }
+.tsq-ico[data-kw='QUEUED'] { --tsq-ico: #6f86a8; }
+.tsq-ico[data-kw='DELEGATED'] { --tsq-ico: #5b9690; }
+
+/* DOING：loader-circle，一直转（0.8 秒一圈，匀速） */
+.tsq-ico-doing .spin { animation: tsq-spin 0.8s linear infinite; }
+@keyframes tsq-spin { to { transform: rotate(360deg); } }
+
+/* HITLIMIT：gauge 的指针平时就停在打满的位置；刚切过来时从中间弹过去 */
+.tsq-ico-hitlimit .needle { transform: translate(0.5px, 3px) rotate(72deg); }
+.tsq-ico-hitlimit.is-fire .needle { animation: tsq-needle 0.7s cubic-bezier(.3, 1.5, .6, 1) both; }
+@keyframes tsq-needle { from { transform: none; } to { transform: translate(0.5px, 3px) rotate(72deg); } }
+
+/* 画线：circle-check 的勾、ban、x */
+.tsq-ico.is-fire .draw { stroke-dasharray: 1; animation: tsq-draw 0.4s ease-out both; }
+.tsq-ico.is-fire .draw.late { animation-delay: 0.2s; }
+.tsq-ico.is-fire .draw.slash { animation-delay: 0.5s; }
+.tsq-ico-failed.is-fire .draw { animation-duration: 0.3s; }
+@keyframes tsq-draw { from { stroke-dashoffset: 1; opacity: 0; } 25% { opacity: 1; } to { stroke-dashoffset: 0; opacity: 1; } }
+
+/* TODO：circle-dashed 的八段一段段亮起来 */
+.tsq-ico-todo.is-fire .seg { animation: tsq-fade 0.3s ease-out both; animation-delay: calc((var(--i) + 1) * 0.1s); }
+@keyframes tsq-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* 给 AI 的 TODO：bot 眨一下眼 */
+.tsq-ico-bot .eyes { transform-origin: 12px 14px; }
+.tsq-ico-bot.is-fire .eyes { animation: tsq-blink 0.5s ease-in-out 0.2s both; }
+@keyframes tsq-blink { 50% { transform: scaleY(0); } }
+
+/* PAUSED：左右两根先后往下按一下 */
+.tsq-ico-paused.is-fire .l { animation: tsq-press-l 0.5s ease-in-out both; }
+.tsq-ico-paused.is-fire .r { animation: tsq-press-r 0.5s ease-in-out both; }
+@keyframes tsq-press-l { 0%, 50%, 100% { transform: none; } 20% { transform: translateY(2px); } }
+@keyframes tsq-press-r { 0%, 20%, 100% { transform: none; } 50% { transform: translateY(2px); } }
+
+/* WAITING：沙漏翻过来（弹簧） */
+.tsq-ico-waiting.is-fire .flip { animation: tsq-flip 0.8s cubic-bezier(.34, 1.4, .64, 1) both; }
+@keyframes tsq-flip { from { transform: none; } to { transform: rotate(180deg); } }
+
+/* SUSPENDED：雪花左右晃 */
+.tsq-ico-suspended.is-fire .wob { animation: tsq-wob 0.4s linear both; }
+@keyframes tsq-wob { 0%, 100% { transform: none; } 20%, 60% { transform: rotate(-5deg); } 40%, 80% { transform: rotate(5deg); } }
+
+/* CANCELLED：ban 先画圈，再划一道 */
+/* （画线规则在上面，这里只是圈和斜线的先后） */
+
+/* TOREVIEW：眼睛眨一下 */
+.tsq-ico-review.is-fire .lid { animation: tsq-lid 0.4s ease-in-out both; }
+.tsq-ico-review.is-fire .pupil { animation: tsq-pupil 0.4s ease-in-out both; }
+@keyframes tsq-lid { 50% { transform: scaleY(0.1); opacity: 0.3; } }
+@keyframes tsq-pupil { 50% { transform: scale(0.3); opacity: 0.3; } }
+
+/* NEEDOK：举手挥一挥 */
+.tsq-ico-needok .wave { transform-origin: 12px 21.6px; }
+.tsq-ico-needok.is-fire .wave { animation: tsq-wave 0.8s ease-in-out both; }
+@keyframes tsq-wave { 25% { transform: rotate(-15deg); } 50% { transform: rotate(10deg); } 75% { transform: rotate(-5deg); } }
+
+/* ERRORED：警示章抖一下 */
+.tsq-ico-errored.is-fire .shake { animation: tsq-shake 0.5s ease-in-out both; }
+@keyframes tsq-shake { 0%, 100% { transform: none; } 20% { transform: scale(1.1) rotate(-3deg); } 40% { transform: scale(1.1) rotate(3deg); } 60% { transform: scale(1.1) rotate(-2deg); } 80% { transform: scale(1.05) rotate(2deg); } }
+
+/* QUEUED：闹钟响一阵（三下）再落回去 */
+.tsq-ico-queued.is-fire .ring { animation: tsq-ring 0.9s linear both; }
+.tsq-ico-queued.is-fire .bells { animation: tsq-bells 0.9s linear both; }
+@keyframes tsq-ring { 0%, 100% { transform: none; } 10%, 30%, 50%, 70% { transform: translate(-1px, -1.5px); } 20%, 40%, 60%, 80% { transform: translate(1px, -1.5px); } }
+@keyframes tsq-bells { 0%, 100% { transform: none; } 10%, 30%, 50%, 70% { transform: translate(-2px, -2.5px); } 20%, 40%, 60%, 80% { transform: translate(2px, -2.5px); } }
+
+/* DELEGATED：纸飞机往右上飞出去再落回来，身后拖一道虚线 */
+.tsq-ico-delegated .trail { opacity: 0; }
+.tsq-ico-delegated.is-fire .fly { animation: tsq-fly 0.9s ease-in-out both; }
+.tsq-ico-delegated.is-fire .trail { animation: tsq-trail 0.9s ease-out both; }
+@keyframes tsq-fly { 0%, 100% { transform: none; } 50% { transform: translate(3px, -3px) scale(0.8); } }
+@keyframes tsq-trail { 0% { opacity: 0; } 30%, 60% { opacity: 0.7; } 100% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .tsq-ico *, .tsq-ico.is-fire * { animation: none !important; }
 }

@@ -26,7 +26,7 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 //   1. 日记始终以编辑模式打开（原来的 Journal Edit Mode 插件并进来了）
 //   2. 判断每篇日记「整理完没有」，标在日历上：实心点 = 整理完，空心圈 = 没整理完
 //      整理完 = 最后一条顶格内容是分割线（- --- / ---），而且全篇没有没做完的任务
-//      （TODO / DOING / PAUSED / TOREVIEW / HITLIMIT / NOW / LATER / WAIT / [ ]）；今天以后的日记和空日记不判断
+//      （TODO / DOING / PAUSED / TOREVIEW / HITLIMIT / NEEDOK / QUEUED / ERRORED / NOW / LATER / WAIT / [ ]）；今天以后的日记和空日记不判断
 //   3. 一键列出近两个月没整理完的日记：命令（默认 ⌘⇧J），日历顶上的「未整理 N」按钮也能打开
 //   4. 侧栏里单独占一格的日历：这一格的高度自动贴合日历内容（翻到 6 周的月份会跟着变高），不留空白
 //   5. 样式见 styles.css 末尾同名补丁：去掉侧栏里日历上方的标签头、分割线和多余留白
@@ -70,7 +70,7 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 	// 日记命名：2026_09_23 / 2026-9-3 都算（和原 Journal Edit Mode 一样）
 	const JOURNAL_NAME_RE = /^\d{4}[_-]\d{1,2}[_-]\d{1,2}$/;
 	const DAY_RE = /^(\d{4})_(\d{2})_(\d{2})$/;
-	const OPEN_RE = /^\s*[-*+]\s+(?:\[ \]|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|WAIT|WAITING|IN-PROGRESS)\b)/;
+	const OPEN_RE = /^\s*[-*+]\s+(?:\[ \]|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAIT|WAITING|IN-PROGRESS)\b)/;
 	const DIVIDER_RE = /^(?:[-*+]\s+)?(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 	// 一篇日记的整理状态：null = 不判断；{ done, open, lastDivider }

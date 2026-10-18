@@ -137,8 +137,9 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
  *    DOING 后面紧跟的时刻排在优先级前面（DOING 14:05 [#A] …），螺旋日程靠它计时。块去向的一键整理 / 日记整理用同一套规则
  * 1b. 给 AI 的 TODO：TODOFORAI / TODO4AI / TODO2AI / TODOTOAI 在设置里归「未开始」组（和 TODO 同类）。小写或大小写混着打的
  *    （todo4ai 写稿），光标离开那一行时改成大写。块去向会把昨天、今天、明天日记里这种条目连同子块发给 Claude，并记一行 🔗
- * 1c. Agent 会话的两个 DOING 中间态：TOREVIEW（会话停下来等你看 / 等你回复）、HITLIMIT（撞了用量限额，显示成 HITLIMIT!）。
- *    设置里和 PAUSED 一样归「未开始」组，转换写成 (PAUSED | TOREVIEW | HITLIMIT) -> DOING；螺旋日程按 🔗 绑着的会话自动切，颜色在 styles.css
+ * 1c. Agent 会话的几个 DOING 中间态：TOREVIEW（会话停下来等你看 / 等你回复）、NEEDOK（停在「允许吗？」上等你批准，显示成 NEEDOK?）、
+ *    ERRORED（不是限额的报错停了：过载、断网、认证失败、上下文满了）、DELEGATED（块去向 ⌥⌘D 委派给 Agent 了，会话在跑）、HITLIMIT（撞了用量限额，显示成 HITLIMIT!）、QUEUED（撞限额后 limit-resume 已经排上队，到点自动续跑）。
+ *    设置里和 PAUSED 一样归「未开始」组，转换写成 (PAUSED | TOREVIEW | NEEDOK | ERRORED | HITLIMIT | QUEUED | DELEGATED) -> DOING；螺旋日程按 🔗 绑着的会话自动切，颜色在 styles.css
  * 2. 切换「重要」（⌃⇧I）/ 切换「紧急」（⌃⇧U）：四象限和优先级是一回事——
  *    A = 重要且紧急，B = 紧急不重要，C = 重要不紧急，都不是 = 不写优先级（SUSPENDED 也算这一类）。
  *    行里还留着旧的 #q1…#q4 标签的，按标签算现在在哪个象限，切换后换成优先级、标签去掉
@@ -147,7 +148,7 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 	const { EditorView } = require("@codemirror/view");
 	const { Notice } = require("obsidian");
 	const ITEM = /^(\s*(?:[-*+]|\d+[.)])\s+)(\*\*\d{1,2}[:：]\d{2}\*\*\s*)?(.*)$/;
-	const KWS = "TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE";
+	const KWS = "TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELLED|CANCELED|FAILED|DONE";
 	const SHORT_KW = new RegExp(`^(${KWS})`, "i");
 	const KW = new RegExp(`^(${KWS})(?:\\s+|$)`);
 	const TIME = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
@@ -259,4 +260,125 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		this.addCommand({ id: "toggle-urgent", name: "切换「紧急」（A 重要且紧急 · B 紧急不重要 · C 重要不紧急）", hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "u" }], editorCallback: (editor) => toggle(editor, 1) });
 	};
 	as.__mzlPriority = { short, expand, axesOf, setPrio };
+})();
+
+/* ===== 马自立 本地补丁：关键词前面的动效小图标。更新插件会丢，要把这一段接回末尾（样式在 styles.css 末尾「关键词图标」一节） =====
+ * 图标和动效照 lucide-animated（lucide-animated.com，源码 github.com/pqoqubbw/icons，图标本体是 Lucide，ISC 许可）逐个翻成 CSS 动画：
+ *   TODO / LATER = circle-dashed · TODOFORAI 这类给 AI 的 = bot · DOING / NOW / IN-PROGRESS = loader-circle（一直转）· DONE = circle-check
+ *   PAUSED = pause · WAITING = hourglass · SUSPENDED = snowflake · CANCELLED = ban · FAILED = x
+ *   DELEGATED = send（纸飞机飞出去）· TOREVIEW = eye · NEEDOK = hand · ERRORED = badge-alert · HITLIMIT = gauge（指针打到头）· QUEUED = alarm-clock
+ * 图标是 CodeMirror 的小部件，插在关键词前面，不碰 TODOseq 自己的关键词元素。
+ * 只有 DOING 一类的动效一直循环；别的只在这一行刚换成这个关键词的那一下播一次（⌘/、点关键词、手敲、螺旋日程自动切都算），
+ * 滚动、重开笔记、别处重画时不再播。一次改了五行以上的（同步、批量整理）不播。只管编辑器（实时预览 / 源码），阅读视图不加
+ */
+(() => {
+	const { EditorView, ViewPlugin, Decoration, WidgetType } = require("@codemirror/view");
+	const { RangeSetBuilder } = require("@codemirror/state");
+	const { syntaxTree } = require("@codemirror/language");
+	const P = (d, cls) => `<path${cls ? ` class="${cls}"` : ""} d="${d}"${cls && cls.includes("draw") ? ' pathLength="1"' : ""}/>`;
+	const ICON = {
+		todo: ["M10.1 2.182a10 10 0 0 1 3.8 0", "M17.609 3.721a10 10 0 0 1 2.69 2.7", "M21.818 10.1a10 10 0 0 1 0 3.8", "M20.279 17.609a10 10 0 0 1-2.7 2.69",
+			"M13.9 21.818a10 10 0 0 1-3.8 0", "M6.391 20.279a10 10 0 0 1-2.69-2.7", "M2.182 13.9a10 10 0 0 1 0-3.8", "M3.721 6.391a10 10 0 0 1 2.7-2.69"]
+			.map((d, i) => `<path class="seg" style="--i:${i}" d="${d}"/>`).join(""),
+		bot: P("M12 8V4H8") + '<rect x="4" y="8" width="16" height="12" rx="2"/>' + P("M2 14h2") + P("M20 14h2") + '<g class="eyes"><line x1="15" x2="15" y1="13" y2="15"/><line x1="9" x2="9" y1="13" y2="15"/></g>',
+		doing: P("M21 12a9 9 0 1 1-6.219-8.56", "spin"),
+		done: '<circle cx="12" cy="12" r="10"/>' + P("m9 12 2 2 4-4", "draw"),
+		paused: '<rect class="l" x="6" y="4" width="4" height="16" rx="1"/><rect class="r" x="14" y="4" width="4" height="16" rx="1"/>',
+		waiting: '<g class="flip">' + P("M5 22h14") + P("M5 2h14") + P("M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22") + P("M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2") + "</g>",
+		suspended: '<g class="wob">' + ["m10 20-1.25-2.5L6 18", "M10 4 8.75 6.5 6 6", "m14 20 1.25-2.5L18 18", "m14 4 1.25 2.5L18 6", "m17 21-3-6h-4", "m17 3-3 6 1.5 3",
+			"M2 12h6.5L10 9", "m20 10-1.5 2 1.5 2", "M22 12h-6.5L14 15", "m4 10 1.5 2L4 14", "m7 21 3-6-1.5-3", "m7 3 3 6h4"].map((d) => P(d)).join("") + "</g>",
+		cancelled: '<circle class="draw" pathLength="1" cx="12" cy="12" r="10"/>' + P("m4.9 4.9 14.2 14.2", "draw slash"),
+		failed: P("M18 6 6 18", "draw") + P("m6 6 12 12", "draw late"),
+		review: P("M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0", "lid") + '<circle class="pupil" cx="12" cy="12" r="3"/>',
+		needok: '<g class="wave">' + P("M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2") + P("M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2") + P("M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8") + P("M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15") + "</g>",
+		errored: '<g class="shake">' + P("M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z") + '<line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></g>',
+		hitlimit: P("m12 14 4-4", "needle") + P("M3.34 19a10 10 0 1 1 17.32 0"),
+		delegated: '<g class="fly">' + P("M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z") + P("m21.854 2.147-10.94 10.939") + "</g>" +
+			'<path class="trail" stroke-dasharray="2 2" d="M -3 28 C -0.5 26.8 1.6 24.6 3.3 22 C 4.8 19.7 5.2 17.6 4.2 16.1 C 3.2 14.7 1.4 14.5 0.3 15.8 C -0.9 17.2 -0.6 19.4 1.2 20.4 C 3.4 21.5 6.4 19.4 9 15.8"/>',
+		queued: '<g class="ring">' + P("M18 20.5L19.5 22") + P("M6 20.5L4.5 22") + P("M21 13C21 17.968 16.968 22 12 22C7.032 22 3 17.968 3 13C3 8.032 7.032 4 12 4C16.968 4 21 8.032 21 13Z") + P("M15.339 15.862L12.549 14.197C12.063 13.909 11.667 13.216 11.667 12.649V8.95898") + "</g>" +
+			'<g class="bells">' + P("M18 2L21.747 5.31064") + P("M6 2L2.25304 5.31064") + "</g>",
+	};
+	const KIND = {
+		TODO: "todo", LATER: "todo", TODOFORAI: "bot", TODO4AI: "bot", TODO2AI: "bot", TODOTOAI: "bot",
+		DOING: "doing", NOW: "doing", "IN-PROGRESS": "doing", DONE: "done", PAUSED: "paused", WAITING: "waiting", WAIT: "waiting",
+		SUSPENDED: "suspended", CANCELLED: "cancelled", CANCELED: "cancelled", FAILED: "failed",
+		TOREVIEW: "review", NEEDOK: "needok", ERRORED: "errored", HITLIMIT: "hitlimit", QUEUED: "queued", DELEGATED: "delegated",
+	};
+	const KWS = Object.keys(KIND).sort((a, b) => b.length - a.length).map((k) => k.replace("-", "\\-")).join("|");
+	// 行首（引用、列表符号、**07:37** 记录时刻之后）的关键词
+	const LINE = new RegExp(`^(\\s*(?:>\\s*)*(?:(?:[-*+]|\\d+[.)])\\s+)?(?:\\*\\*\\d{1,2}[:：]\\d{2}\\*\\*\\s*)?)(${KWS})(?=\\s|$)`);
+	const kwOf = (text) => { const m = LINE.exec(text); return m ? { at: m[1].length, kw: m[2] } : null; };
+	// 去掉关键词、时刻、优先级以后的正文：同一行换关键词时它不变，拿它认「还是这一行」
+	const bodyOf = (text) => text.replace(LINE, "$1").replace(/^\s*(?:>\s*)*(?:(?:[-*+]|\d+[.)])\s+)?(?:\*\*\d{1,2}[:：]\d{2}\*\*\s*)?/, "")
+		.replace(/^\s*(?:\[#[ABC]\]\s*)?(?:\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*)?(?:\[#[ABC]\]\s*)?/, "").trim();
+	const FIRE_MS = 2500;
+
+	class Icon extends WidgetType {
+		constructor(kw, fire) { super(); this.kw = kw; this.fire = fire; }
+		eq(o) { return o.kw === this.kw && o.fire === this.fire; }
+		toDOM() {
+			const el = document.createElement("span");
+			const kind = KIND[this.kw];
+			el.className = `tsq-ico tsq-ico-${kind}${this.fire ? " is-fire" : ""}`;
+			el.setAttribute("data-kw", this.kw);
+			el.setAttribute("aria-hidden", "true");
+			el.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICON[kind]}</svg>`;
+			return el;
+		}
+		ignoreEvent() { return false; }
+	}
+
+	const inCode = (state, pos) => {
+		for (let n = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) if (/codeblock|inline-code|frontmatter|hmd-code/i.test(n.name)) return true;
+		return false;
+	};
+
+	const icons = ViewPlugin.fromClass(class {
+		constructor(view) { this.fires = new Map(); this.seq = 0; this.decorations = this.build(view); }
+		update(u) {
+			if (u.docChanged) {
+				const now = Date.now(), moved = new Map();
+				for (const [pos, f] of this.fires) if (now - f.at < FIRE_MS) moved.set(u.changes.mapPos(pos, 1), f);
+				this.fires = moved;
+				const a = u.startState.doc, b = u.state.doc, fresh = [];
+				let lines = 0;
+				u.changes.iterChangedRanges((fa, ta, fb, tb) => {
+					const was = new Map();
+					for (let n = a.lineAt(fa).number, end = a.lineAt(ta).number; n <= end && lines < 50; n++, lines++) {
+						const t = a.line(n).text, k = kwOf(t);
+						was.set(bodyOf(t), k ? k.kw : "");
+					}
+					for (let n = b.lineAt(fb).number, end = b.lineAt(tb).number; n <= end && lines < 100; n++, lines++) {
+						const line = b.line(n), k = kwOf(line.text);
+						if (!k) continue;
+						const old = was.get(bodyOf(line.text));
+						if (old !== undefined && old !== k.kw) fresh.push([line.from, k.kw]);
+					}
+				});
+				if (fresh.length && fresh.length <= 5) for (const [pos, kw] of fresh) this.fires.set(pos, { kw, id: ++this.seq, at: now });
+			}
+			if (u.docChanged || u.viewportChanged || this.fires.size) this.decorations = this.build(u.view);
+		}
+		build(view) {
+			const out = new RangeSetBuilder(), doc = view.state.doc, now = Date.now();
+			for (const [pos, f] of this.fires) if (now - f.at >= FIRE_MS) this.fires.delete(pos);
+			for (const { from, to } of view.visibleRanges) {
+				for (let pos = from; pos <= to;) {
+					const line = doc.lineAt(pos), k = kwOf(line.text);
+					if (k && !inCode(view.state, line.from)) {
+						const f = this.fires.get(line.from), fire = f && f.kw === k.kw ? f.id : 0;
+						out.add(line.from + k.at, line.from + k.at, Decoration.widget({ widget: new Icon(k.kw, fire), side: -1 }));
+					}
+					pos = line.to + 1;
+				}
+			}
+			return out.finish();
+		}
+	}, { decorations: (v) => v.decorations });
+
+	const onload0 = as.prototype.onload;
+	as.prototype.onload = async function () {
+		await onload0.call(this);
+		this.registerEditorExtension(icons);
+	};
 })();

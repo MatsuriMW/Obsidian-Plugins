@@ -351,7 +351,7 @@ module.exports = class NautilusNotify extends Plugin {
     for (const l of txt.split("\n")) {
       if (l === "---") { fm = !fm; continue; }
       if (fm || !l.trim() || /!\[\[|^\s*\^/.test(l)) continue;
-      const task = /^\s*-\s+(?:TODO|DOING|DONE|FAILED|CANCELED|WAITING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|\[.\])\s/.test(l);
+      const task = /^\s*-\s+(?:TODO|DOING|DONE|FAILED|CANCELED|WAITING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|\[.\])\s/.test(l);
       if (!task && /^\s/.test(l)) continue;
       out.push(l.length > 140 ? l.slice(0, 140) + "…" : l);
       if (out.length >= maxLines) break;
