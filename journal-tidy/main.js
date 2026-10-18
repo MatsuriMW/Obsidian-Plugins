@@ -10,6 +10,9 @@
  *    顶格只写「- [[信息增量]]」的那一块归 TODO 区，排在 TODO 区最后（问题汇总、摘录都不碰它）。
  *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
  *    聚成「链接」区，放在 TODO 区下面；有任务关键字的算任务，优先级更高。
+ *    其中只写了标题和链接的（纯供阅读）收进「- 🔗 链接 · N 条」母块，整理完折起来：DONE 栏里的收在栏底，别处的收在链接区最后。
+ *    DONE 栏里分三组：DONE 类任务（DONE → SUSPENDED → FAILED → CANCELLED）→ 没有任务标识的条目（原顺序，闪卡也在这组）→ 🔗 链接母块。
+ * 8. 分享文案瘦身：抖音、小红书、B 站复制来的分享口令只留标题和链接，链接去掉追踪参数（规则照 tracker-remover，本地改写不联网）。基础整理就做，在分区之前。
  *    顶格条目带「明天 / 后天 / 大后天」的，先整块搬到那一天的日记，行尾记上「← [[来源日记]]」（只认带任务关键字的条目）。
  *    这一步原来是块去向（done-to-top）的「一键整理」，2026-10-19 整个搬到这里（代码见「任务分区」一节）；状态怎么认、区里怎么排还用块去向的 core，
  *    那个插件没开时退回旧的「待办上移」。
@@ -50,6 +53,7 @@ const DEFAULTS = {
     questionBlockTitle: "问题汇总｜[[等待尝试]]",
     moveTodos: true,
     fixNumbered: true,
+    cleanShare: true,
     hideFrom: true,
     answerQuestions: true,
     fillFields: true,
@@ -158,6 +162,63 @@ function fixNumberedBullets(text) {
         return `${m[1]}${m[2]}.${m[3] ? " " + m[3] : ""}`;
     });
     return { text: [...fm, ...out].join("\n"), count };
+}
+
+// ---------------- 分享文案瘦身 ----------------
+// 从抖音 / 小红书 App 复制来的分享文案，只留标题和链接：
+//   「7.66 复制打开抖音，看看【某某的图文作品】标题… https://v.douyin.com/xxx/ oqE:/ n@Q.kP :3pm 12/26」→「标题… https://v.douyin.com/xxx/」
+//   「标题… https://xhslink.cn/o/xxx 内容复制后，前往【小红书】直接打开笔记。」→「标题… https://xhslink.cn/o/xxx」
+// 链接上的追踪参数照 tracker-remover（github.com/leez233/tracker-remover）的各平台规则删；只在本地改写，不联网展开短链。代码块里的不动
+const URL_RE = /https?:\/\/[^\s<>()\[\]"'　-￿]+/g;
+const SHARE_URL_RE = /https?:\/\/(?:[\w-]+\.)*(?:douyin\.com|iesdouyin\.com|xhslink\.(?:com|cn)|xiaohongshu\.com|bilibili\.com|b23\.tv)[\/?]/i;
+// 抖音口令里跟着的乱码：c@A.TL、:8pm、08/04、Vlc:/
+const DY_JUNK = String.raw`(?:[A-Za-z]@[A-Za-z]\.[A-Za-z]{2}|:\d{1,2}[ap]m|\d{1,2}\/\d{2}|[A-Za-z]{2,4}:\/)`;
+const DY_HEAD_RE = new RegExp(String.raw`(?:\d+\.\d+\s+)?(?:${DY_JUNK}\s+)*(?:长按)?复制(?:打开|此链接，打开)(?:抖音|Dou音)[^【\s]*?【[^】]*】\s*`, "g");
+const DY_TAIL_RE = new RegExp(String.raw`(\S)((?:\s+${DY_JUNK})+)(?=\s|$)`, "g");
+const SHARE_JUNK_RES = [
+    /(?:^|(?<=[\s，,]))[^\s。！!]*(?:【小红书】|打开(?:抖音|Dou音)搜索)[^\s。！!]*[。！!]?/g,   // 内容复制后，前往【小红书】直接打开笔记。/ 复制本条信息，打开【小红书】App查看精彩内容！
+    /[^\s，。！!]*发布了一篇小红书笔记，快来看吧[！!]?/g,
+    /😆\s*[A-Za-z0-9]{6,16}\s*😆/g,
+];
+function cleanUrl(u) {
+    let url;
+    try { url = new URL(u); } catch (e) { return u; }
+    const h = url.hostname.replace(/^www\./, "");
+    const keep = (names) => { const kept = names.map(n => [n, url.searchParams.get(n)]).filter(([, v]) => v !== null); url.search = ""; for (const [n, v] of kept) url.searchParams.set(n, v); };
+    // 只管抖音、小红书、B 站三家
+    if (/(^|\.)xiaohongshu\.com$/.test(h)) { if (!url.search) return u; keep(["xsec_token"]); if (url.searchParams.has("xsec_token")) url.searchParams.set("xsec_source", "pc_user"); }
+    else if (/(^|\.)(?:douyin|iesdouyin)\.com$/.test(h)) { if (!url.search) return u; url.search = ""; }
+    else if (/(^|\.)bilibili\.com$/.test(h)) { if (!url.search) return u; keep(["p", "t"]); }   // 分 P 和时间点留着
+    else return u;
+    const out = url.toString();
+    return u.endsWith("/") || !out.endsWith("/") || url.search ? out : out.replace(/\/$/, "");
+}
+function cleanShareText(text) {
+    const { fm, body } = splitFrontmatter(text);
+    let fence = null, lines = 0, urls = 0;
+    const out = body.map((l) => {
+        const f = l.match(/^[ \t]*(?:[-*+][ \t]+)?(`{3,}|~{3,})/);
+        if (f) { if (!fence) fence = f[1]; else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null; return l; }
+        if (fence || !/https?:\/\//.test(l)) return l;
+        let s = l.replace(URL_RE, (u) => { const c = cleanUrl(u); if (c !== u) urls++; return c; });
+        if (SHARE_URL_RE.test(s)) {
+            const m = s.match(/^([ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?)([\s\S]*)$/);
+            // 只在链接以外的片段上删（口令里链接和「，复制本条信息…」之间常常没有空格）
+            let rest = m[2].split(/(https?:\/\/[^\s<>()\[\]"'　-￿]+)/).map((seg, i) => {
+                if (i % 2) return seg;
+                seg = seg.replace(DY_HEAD_RE, "");
+                for (const re of SHARE_JUNK_RES) seg = seg.replace(re, "");
+                seg = seg.replace(/【([^】]+?)[-_]哔哩哔哩(?:_bilibili)?】/g, "$1");   // B 站：【标题-哔哩哔哩】→ 标题
+                return seg && /^[\s，,、。！!]*$/.test(seg) ? " " : seg;
+            }).join("");
+            rest = rest.replace(DY_TAIL_RE, (all, c, junk, at, str) => (/https?:\/\/\S*$/.test(str.slice(0, at + 1)) ? c : all));
+            rest = rest.replace(/[ \t]{2,}/g, " ").trim();
+            const n = (x) => (x.match(URL_RE) || []).length;
+            if (rest && n(rest) === n(m[2]) && m[1] + rest !== s) { s = m[1] + rest; lines++; }   // 链接少了就说明删过头，不改
+        }
+        return s;
+    });
+    return { text: [...fm, ...out].join("\n"), lines, urls };
 }
 
 // SuperTag 字段：defsOf(名字) 返回 [{ key, def }]（来自 SuperTags 插件），没有就是空数组
@@ -363,12 +424,43 @@ function zoneInner(z, lines) {
     return out;
 }
 
-// 任务分区：DONE 栏 → DOING → TODO → 链接 → 其余（原顺序、原样），区之间「- ---」
+// 纯供阅读的链接：链接类条目（块去向的 isLinkBlock）里只有一行、只写了标题和链接的——链接后面没有自己的话，没有 [[双链]]、#标签。
+// 这类收进「- 🔗 链接 · N 条」母块，整理完折起来；DONE 栏里的收在栏底，别处的收在链接区最后
+const LINK_HEAD_RE = /^- 🔗 链接(?: · \d+ 条)?[ \t]*$/;
+function isReadLink(z, lines) {
+    if (!z.isLinkBlock(lines)) return false;
+    const ls = z.trimBlock(lines).filter((l, i) => i === 0 || !z.ID_LINE_RE.test(l));
+    if (ls.length > 1) return false;
+    const s = ls[0].replace(/^(?:[-*+]|\d+[.)])\s+/, "").replace(FROM_TAIL_RE, "").replace(/%%[^%]*%%/g, "").replace(/\s\^[A-Za-z0-9-]+\s*$/, "").trim();
+    if (/\[\[|(?:^|\s)#[^\s#]/.test(s)) return false;
+    const us = [...s.matchAll(URL_RE)];
+    if (!us.length) return false;
+    const last = us[us.length - 1];
+    return !s.slice(last.index + last[0].length).replace(/^\)/, "").trim();
+}
+// items：每项是一组顶格的行；母块下面原有的子项（已缩进）放在 kids 里。同一行重复的只留一条
+function linkCluster(kids, items) {
+    const seen = new Set(), out = [];
+    for (const l of [...kids, ...items.flat().map(l => (isBlank(l) ? l : "\t" + l))]) {
+        if (isBlank(l)) continue;
+        const k = l.trim();
+        if (/^(?:[-*+]|\d+[.)])[ \t]/.test(k) && seen.has(k)) continue;
+        seen.add(k); out.push(l);
+    }
+    if (!out.length) return [];
+    const depth = Math.min(...out.map(indentOf));
+    const n = out.filter(l => indentOf(l) === depth && CHILD_ITEM_RE.test(l)).length;
+    return [`- 🔗 链接 · ${n} 条`, ...out];
+}
+
+// 任务分区：DONE 栏 → DOING → TODO → 链接 → 其余（原顺序、原样），区之间「- ---」。
+// DONE 栏里再分三组：DONE 类任务（DONE → SUSPENDED → FAILED → CANCELLED）→ 没有任务标识的条目（原顺序，闪卡也在这组）→ 收起的链接
 function zoneOrganize(z, text) {
     const { parse, doneZoneEnd, normalizeKeyword, zoneOf, hasPrioShort, isCardBlock, trimBlock, isLinkBlock, sortZone, SEP } = z;
     const { head, blocks, tail } = parse(text);
     const zones = { DONE: [], DOING: [], TODO: [] };
     const links = [], rest = [];
+    const donePlain = [], doneRead = [], read = [], doneReadKids = [], readKids = [];
     let pin = null;   // 「- [[信息增量]]」那一块（TODO 区里）
     const keep = doneZoneEnd(blocks);
     blocks.forEach((b, i) => { b.inDone = i < keep; });
@@ -391,26 +483,30 @@ function zoneOrganize(z, text) {
         if (!b.sep && isCardBlock(b.lines)) b.zone = "DONE";   // 做成了闪卡的块归 DONE 区，不管首行写的是什么状态
         if (b.pin && pin) pin.push(...trimBlock(b.lines).slice(1));   // 第二块「- [[信息增量]]」：子块并进第一块
         else if (b.pin) zones.TODO.push((pin = trimBlock(b.lines)));
+        else if (zoned && LINK_HEAD_RE.test(b.lines[0])) (b.inDone ? doneReadKids : readKids).push(...trimBlock(b.lines).slice(1));   // 已有的「🔗 链接」母块：子项并进来
+        else if (b.zone === "DONE" && zoneOf(b.lines[0]) !== "DONE") donePlain.push(trimBlock(b.lines));   // 闪卡（首行没写 DONE 类关键字）跟普通条目一组
         else if (b.zone) zones[b.zone].push(trimBlock(b.lines));
-        else if (b.inDone) zones.DONE.push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
+        else if (b.inDone) (zoned && isReadLink(z, b.lines) ? doneRead : donePlain).push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
         else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
-        else if (zoned && isLinkBlock(b.lines)) links.push(trimBlock(b.lines));   // 链接类：归到链接区
+        else if (zoned && isLinkBlock(b.lines)) (isReadLink(z, b.lines) ? read : links).push(trimBlock(b.lines));   // 链接类：归到链接区
         else rest.push(b);
     }
     if (rest.length && rest[rest.length - 1].sep) rest.pop();
     const out = [];
-    const extra = [links.flat(), rest.flatMap((b) => b.lines)].filter((ls) => ls.length);   // 链接区：任务区（TODO）下面、其它内容上面
+    const readBlock = linkCluster(readKids, read);
+    const extra = [[...links.flat(), ...readBlock], rest.flatMap((b) => b.lines)].filter((ls) => ls.length);   // 链接区：任务区（TODO）下面、其它内容上面
     if (zoned) {
         // 日记的固定三区：DONE 栏 | DOING 区 | TODO 区（信息增量在它最后），后面还有内容的话，空着的区也留着它那条分隔线，
         // 所以 TODO 区永远在第二条「- ---」下面（模板 Templates/日记.md 就是这两条分隔线）
         const slots = ["DONE", "DOING", "TODO"].map((z) => sortZone(z, zones[z]).flat());
+        slots[0].push(...donePlain.flat(), ...linkCluster(doneReadKids, doneRead));
         slots.forEach((ls, k) => {
             out.push(...ls);
             if (slots.slice(k + 1).some((x) => x.length) || extra.length) out.push(SEP);
         });
     }
     extra.forEach((ls, i) => { if (i) out.push(SEP); out.push(...ls); });
-    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, inner };
+    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, READ: read.length + doneRead.length, inner };
     return { text: head.concat(out, tail).join("\n"), counts };
 }
 
@@ -479,7 +575,7 @@ function findExcerptCandidates(text, tag, summaryTitle) {
     const out = [];
     for (const s of segment(splitFrontmatter(text).body)) {
         const first = s.lines[0];
-        if (!LIST_ITEM.test(first) || SEP_LINE.test(first) || TASK_TOP.test(first) || THEME_HEAD_RE.test(first) || INFO_HEAD_RE.test(first)) continue;
+        if (!LIST_ITEM.test(first) || SEP_LINE.test(first) || TASK_TOP.test(first) || THEME_HEAD_RE.test(first) || INFO_HEAD_RE.test(first) || LINK_HEAD_RE.test(first)) continue;
         if (hasTag(first, tag) || first.startsWith("- " + summaryTitle)) continue;
         const all = s.lines.join("\n");
         if (/#(?:card|toread|towatch)\b/.test(all) || /^[ \t]*(```|~~~)/m.test(all)) continue;
@@ -633,7 +729,7 @@ module.exports = class JournalTidy extends Plugin {
     // 这种方式做哪几步：基础整理只做本地的；进阶整理再加上要问 Claude 的（各自还受设置里的开关管）
     optFor(mode) {
         const s = this.settings, deep = mode === "deep";
-        return { mode, fixNumbered: s.fixNumbered, hideFrom: s.hideFrom, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
+        return { mode, fixNumbered: s.fixNumbered, cleanShare: s.cleanShare !== false, hideFrom: s.hideFrom, fillFields: s.fillFields, moveTodos: s.moveTodos, answerQuestions: deep && s.answerQuestions, groupMachine: deep && s.groupMachine, markExcerpts: deep && s.markExcerpts, markThoughts: deep && s.markThoughts };
     }
 
     toggleExcerpt(editor) {
@@ -731,7 +827,7 @@ module.exports = class JournalTidy extends Plugin {
         const fm = prev && prev.folds && prev.folds.find((f) => f.from === 0);
         if (fm) folds.push(fm);
         blocks.forEach((b, i) => {
-            if (b.sep || !(i < end || b.zone === "DONE")) return;
+            if (b.sep || !(i < end || b.zone === "DONE" || LINK_HEAD_RE.test(b.lines[0]))) return;   // 「🔗 链接」母块在哪儿都折
             // 顶格的块 ID 那一行不在 Obsidian 的折叠范围里：只折到它前面
             const ls = z.trimBlock(b.lines);
             const cut = ls.findIndex((l, k) => k > 0 && z.ID_LINE_RE.test(l) && !/^\s/.test(l));
@@ -770,6 +866,12 @@ module.exports = class JournalTidy extends Plugin {
                 await this.app.vault.process(file, (data) => { const r = fixNumberedBullets(data); n = r.count; return r.text; });
                 if (n) report.push(`${n} 处「- 1.」改成了有序列表「1.」`);
             }
+            // 分享文案瘦身（纯本地）：抖音 / 小红书 / B 站的分享口令只留标题和链接，链接去掉追踪参数。放在分区前面，瘦完的才认得出是纯阅读链接
+            if (opt.cleanShare) {
+                let r = null;
+                await this.app.vault.process(file, (data) => { r = cleanShareText(data); return r.text; });
+                if (r.lines || r.urls) report.push(`分享文案瘦身 ${r.lines} 条` + (r.urls ? `，${r.urls} 个链接去掉了追踪参数` : ""));
+            }
             // 0. SuperTag 字段（纯本地）：[[菜谱]] 之类的项下面补上字段，让你填
             if (opt.fillFields) {
                 const st = this.app.plugins.plugins["supertags-local"];
@@ -787,7 +889,7 @@ module.exports = class JournalTidy extends Plugin {
                     const moved = await this.moveDayItems(z, file, await this.app.vault.read(file));
                     let c = null, changed = false;
                     await this.app.vault.process(file, (data) => { const r = zoneOrganize(z, moved.length ? z.dropBlocks(data, moved.map(m => m.orig)) : data); c = r.counts; changed = r.text !== data; return r.text; });
-                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}` + (c.LINK ? ` · 链接 ${c.LINK}` : "") + (c.inner ? `；块内归位 ${c.inner} 处` : "") : "任务分区本来就是整理好的");
+                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}` + (c.LINK ? ` · 链接 ${c.LINK}` : "") + (c.READ ? ` · 新收起的链接 ${c.READ}` : "") + (c.inner ? `；块内归位 ${c.inner} 处` : "") : "任务分区本来就是整理好的");
                     if (moved.length) report.push(`搬到以后的日记：${this.movedSummary(moved)}`);
                 } else {
                     let moved = 0;
@@ -1062,13 +1164,15 @@ class TidyModal extends Modal {
             });
         });
         let mode = s.lastMode === "deep" ? "deep" : "basic";
-        const opt = { fixNumbered: s.fixNumbered !== false, hideFrom: s.hideFrom !== false, moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
+        const opt = { fixNumbered: s.fixNumbered !== false, cleanShare: s.cleanShare !== false, hideFrom: s.hideFrom !== false, moveTodos: s.moveTodos, fillFields: s.fillFields, answerQuestions: s.answerQuestions, groupMachine: s.groupMachine, markExcerpts: s.markExcerpts, markThoughts: s.markThoughts };
         const deepRows = [];
         const show = () => deepRows.forEach(r => r.settingEl.toggle(mode === "deep"));
         new Setting(this.contentEl).setName("方式").setDesc("基础整理只在本地排，马上完成；进阶整理先做一遍基础整理，再请本机的 Claude 做下面几件，要一两分钟")
             .addDropdown(d => d.addOption("basic", "基础整理").addOption("deep", "进阶整理").setValue(mode).onChange(v => { mode = v; show(); }));
         new Setting(this.contentEl).setName("编号改成有序列表").setDesc("「- 1. 内容」「- 1、内容」这种在无序列表里手打编号的，改成标准的「1. 内容」；缩进和编号不变，「- 5.25」这种小数不动")
             .addToggle(t => t.setValue(opt.fixNumbered).onChange(v => { opt.fixNumbered = v; }));
+        new Setting(this.contentEl).setName("分享文案瘦身").setDesc("抖音、小红书、B 站复制来的分享口令只留标题和链接（去掉「复制打开抖音，看看【…的作品】」「来【小红书】一探究竟吧！」和口令乱码），链接去掉追踪参数；只写了标题和链接的条目收进「🔗 链接」母块折起来")
+            .addToggle(t => t.setValue(opt.cleanShare).onChange(v => { opt.cleanShare = v; }));
         new Setting(this.contentEl).setName("补 SuperTag 字段").setDesc("写了 [[菜谱]] 这类 SuperTag 的项，下面插上还没有的字段（如「学会:: 否」），留给你填")
             .addToggle(t => t.setValue(opt.fillFields).onChange(v => { opt.fillFields = v; }));
         new Setting(this.contentEl).setName("任务按状态分区").setDesc("顶格任务块连同子块排成 DONE → DOING → TODO → 链接 → 其它，区之间用「- ---」隔开，整理完把 DONE 区折起来；块内用「- ---」分了栏的，子项也在块内按状态排")
@@ -1122,4 +1226,4 @@ class TidySettings extends PluginSettingTab {
     }
 }
 
-module.exports.__test = { hideFromMarks, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
+module.exports.__test = { cleanShareText, cleanUrl, isReadLink, linkCluster, zoneOrganize, hideFromMarks, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };

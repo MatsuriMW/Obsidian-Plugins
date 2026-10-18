@@ -40,6 +40,8 @@
 //     第一轮答完，limit-resume 用 claude://resume 把会话导入 Claude 桌面版，之后在 App 里接着聊。母块是给 AI 的，里面的子块不另发
 //   · 一键委派（⌥⌘D）：光标所在块连同子块交给 Claude，和给 AI 的 TODO 同一条路在后台开新会话、答完进 Claude 桌面版；
 //     这一行改成「DELEGATED 时刻 …」、下面记 🔗、整块挪进 DOING 区。螺旋日程按 🔗 盯着：会话在跑时保持 DELEGATED，停下来照会话状态切
+//   · todos 母块：一行只写「- todos：」（大小写、全角半角冒号都认），下面直接挂着的那一层子条目没写关键字的也当 TODO（螺旋日程、TODOseq 认的是同一套写法）。
+//     整块按子条目的状态归区：有一条在做（DOING 区的状态）就进 DOING 区，全做完了进 DONE 区，其余都在 TODO 区
 //   · 列表项不分有序无序：「1. 」「1) 」开头的和「- 」开头的一样移动、归位、改状态、发送（序号原样带走，不重排）
 const { Plugin, Notice, PluginSettingTab, Setting, FuzzySuggestModal, Platform } = require("obsidian");
 
@@ -76,6 +78,7 @@ const SEP = "- ---";
 const KEYWORD_RE = /^(TODOFORAI|TODO4AI|TODO2AI|TODOTOAI|TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
 const CHECKBOX_RE = /^\[[^\]]\](\s+|$)/;
 const STAMP_RE = /^\*\*\d{1,2}[:：]\d{2}\*\*\s*/;          // 前面的 **07:37** 记录点
+const TODOS_HEAD_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?todos(?:\*\*)?\s*(?:[:：]|$)/i;   // todos 母块的那一行
 const LEADING_TIME_RE = /^\d{1,2}(?:[:：]\d{2}|点)/;
 const TIME_OR_RANGE_RE = /^\d{1,2}[:：]\d{2}(?:\s*[-–~～]\s*\d{1,2}[:：]\d{2})?\s*/;
 const SINGLE_TIME_RE = /^(\d{1,2}[:：]\d{2})(?!\s*[-–~～]\s*\d)\s*/;
@@ -176,7 +179,27 @@ function zoneOf(line) {
 	if (cb) return cb[1] === " " ? "TODO" : cb[1] === "/" ? "DOING" : /[xX-]/.test(cb[1]) ? "DONE" : null;
 	rest = rest.replace(STAMP_RE, "");
 	const k = rest.match(KEYWORD_RE);
-	return k ? ZONE[k[1]] : null;
+	return k ? ZONE[k[1]] : TODOS_HEAD_RE.test(line) ? "TODO" : null;   // todos 母块只看这一行时算 TODO，整块的区在 parse 里按子条目定
+}
+
+// todos 母块整块归哪个区：看直接挂着的那一层子条目（没写关键字的算 TODO；🔗 / ⏱ / 💬 这类记号、分隔线不算）。
+// 有一条在 DOING 区的状态 → DOING；有子条目而且全在 DONE 区 → DONE；其余 → TODO
+function todosZone(lines) {
+	const w = (l) => /^[ \t]*/.exec(l)[0].replace(/\t/g, "    ").length;
+	const base = w(lines[0]);
+	let kidW = -1;
+	const zones = [];
+	for (const l of lines.slice(1)) {
+		if (isBlank(l) || !ITEM_RE.test(l) || w(l) <= base) continue;
+		if (kidW < 0) kidW = w(l);
+		if (w(l) !== kidW) continue;
+		const rest = l.replace(ITEM_RE, "$2").replace(STAMP_RE, "");
+		if (!rest.trim() || /^(?:⏱|🔗|💬|📸|🤖\s*(?:子代理|side chat)|-{3,}\s*$)/.test(rest)) continue;
+		zones.push(itemZone(l) || "TODO");
+	}
+	if (zones.includes("DOING")) return "DOING";
+	if (zones.length && zones.every((z) => z === "DONE")) return "DONE";
+	return "TODO";
 }
 
 // todo / Doing / done： 这类写法统一成大写关键字；优先级的简写（todoa / todo a / doing b）改成「TODO [#A]」；
@@ -245,6 +268,7 @@ function parse(text) {
 		} else blocks[blocks.length - 1].lines.push(line);
 		if (fence) inFence = !inFence;
 	}
+	for (const b of blocks) if (!b.sep && TODOS_HEAD_RE.test(b.lines[0])) b.zone = todosZone(b.lines);
 	return { head: lines.slice(0, bodyStart), blocks, tail: lines.slice(bodyEnd) };
 }
 
@@ -410,12 +434,12 @@ function dayWordOffset(line) {
 	return m ? DAY_OFFSET[m[0]] : 0;
 }
 
-// 带任务关键字（TODO / DOING / DONE / TODO4AI……）或复选框的条目才算任务
+// 带任务关键字（TODO / DOING / DONE / TODO4AI……）或复选框的条目才算任务；todos 母块也算
 function isTaskLine(line) {
 	const m = line.match(ITEM_RE);
 	if (!m) return false;
 	const rest = m[2].replace(STAMP_RE, "");
-	return KEYWORD_RE.test(rest) || CHECKBOX_RE.test(rest);
+	return KEYWORD_RE.test(rest) || CHECKBOX_RE.test(rest) || TODOS_HEAD_RE.test(line);
 }
 
 // 行尾记上从哪篇日记搬来的（块 ID 要留在行尾）。只有任务要追踪拖了几天，不带任务关键字的条目原样搬，不记
@@ -566,7 +590,7 @@ function applyText(editor, newText, cursor) {
 }
 
 // core 挂在插件实例上给别的插件用：日记整理（journal-tidy）的任务分区、Telegram Companion 收消息时的归位都用这里的规则
-const core = { plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, isLinkBlock, place, mark, zoneOf, itemZone, normalizeKeyword, hasPrioShort, prioShort, joinPrio, sortZone, isCardBlock, trimBlock, doneZoneEnd, isBlank, indentWidth, diffChange, diffChanges, SEP, ANY_SEP_RE, ID_LINE_RE, JOURNAL_NAME_RE, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock, appendInfo };
+const core = { todosZone, TODOS_HEAD_RE, plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, isLinkBlock, place, mark, zoneOf, itemZone, normalizeKeyword, hasPrioShort, prioShort, joinPrio, sortZone, isCardBlock, trimBlock, doneZoneEnd, isBlank, indentWidth, diffChange, diffChanges, SEP, ANY_SEP_RE, ID_LINE_RE, JOURNAL_NAME_RE, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock, appendInfo };
 
 // ---------- 发送去向 ----------
 const execFile = (cmd, args, timeout = 30000, env = undefined) => new Promise((ok) => {
