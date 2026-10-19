@@ -467,7 +467,7 @@ function takeDayItems(text, sourceName) {
 	blocks.forEach((b, i) => {
 		const rest = b.lines[0].replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/, "");
 		const kw = (rest.match(SHORT_KW_RE) || [])[1];
-		const agentActive = kw && AGENT_KWS.includes(kw.toUpperCase());   // 委派 / 等你看 / 出错的 Agent 行留在今天：挪走会断掉 🔗
+		const agentActive = kw && ["DELEGATED", "TOREVIEW", "HITLIMIT", "NEEDOK", "QUEUED", "ERRORED"].includes(kw.toUpperCase());   // 委派 / 等你看 / 出错的 Agent 行留在今天：挪走会断掉 🔗
 		const off = b.sep || i < keep || agentActive ? 0 : dayWordOffset(b.lines[0]);
 		const to = off && journalAfter(sourceName, off);
 		if (!to) return;
