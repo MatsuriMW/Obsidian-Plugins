@@ -7,7 +7,7 @@
 //     · 一个组只在一个标签栏里，组内标签页始终挨在一起；拖出组外 / 拖到别的分屏或窗口就退组，拖进组的中间就进组
 //     · 「在右侧新建」、复制标签页、⌘点击链接在新标签页打开，都进同一组；⌘T 和标签栏的「＋」新建的空白页不进组
 //     · 折叠时如果正看着组里的标签页，先切到组外最近的标签页（没有就在组后面新建一个）；切回被折叠的标签页时自动展开
-//   命令：添加到新组、移出组、折叠/展开、编辑组、关闭组、搜索标签页、在右侧新建、复制、移到新拆分视图（快捷键自己绑）
+//   命令：添加到新组、移出组、折叠/展开、编辑组、关闭组、搜索标签页、在右侧新建、复制、向新拆分视图添加标签页（⌘⌥↵，固定向右，焦点跟到新栏）
 //   分栏上限 3 栏：已经 3 栏时，「向新拆分视图添加」改为挪到最右边一栏（和 palette-split-open 的 ⌘⌥↵ 一致）
 //   分组按标签页 id 存在 data.json 里，重启后恢复
 const { Plugin, Modal, SuggestModal, Notice, WorkspaceLeaf, prepareFuzzySearch, setIcon } = require("obsidian");
@@ -619,15 +619,34 @@ module.exports = class ChromeTabGroups extends Plugin {
 			// 已经 3 栏：挪到最右边一栏、它当前标签页的右边
 			const tabs = cols.rightmost;
 			this.moveLeaf(leaf, tabs, tabs.currentTab + 1);
-			this.activate(leaf);
+			this.focusAfterLayout(leaf);
 			this.commit();
 			return;
 		}
-		const nl = this.app.workspace.createLeafBySplit(leaf, "vertical");
+		// 固定向右：锚在最右边那一栏上再拆，新栏一定出现在它右边（也就是整个窗口的最右边），
+		// 不跟着当前栏的位置走，也不会因为 Obsidian 的「新标签页位置」之类设置跑到左边。
+		// createLeafBySplit 的第三个参数 before=false 明确表示放在锚点后面。
+		const anchor = (cols.rightmost && (cols.rightmost.children[cols.rightmost.currentTab] || cols.rightmost.children[0])) || leaf;
+		const nl = this.app.workspace.createLeafBySplit(anchor, "vertical", false);
 		this.moveLeaf(leaf, nl.parent, 0);
 		nl.detach();
-		this.activate(leaf);
+		this.focusAfterLayout(leaf);
 		this.commit();
+	}
+
+	// 拆完等布局落定，再把焦点（和光标）挪到右边新栏里。
+	// 只 setActiveLeaf 有时只换高亮、编辑器的光标还留在原来那栏，所以在下一帧和稍后再各补一次 editor.focus()。
+	focusAfterLayout(leaf) {
+		const ws = this.app.workspace;
+		ws.setActiveLeaf(leaf, { focus: true });
+		const again = () => {
+			if (!leaf.view) return;
+			try { ws.setActiveLeaf(leaf, { focus: true }); } catch (e) { /* 布局正忙，下一次再试 */ }
+			try { leaf.view.editor?.focus?.(); } catch (e) { /* 不是 markdown 视图 */ }
+			try { if (!leaf.view.editor) leaf.view.contentEl?.focus?.(); } catch (e) { /* 视图没有焦点就不强求 */ }
+		};
+		window.setTimeout(again, 0);
+		window.setTimeout(again, 60);
 	}
 
 	// ============================ 右键菜单 ============================
@@ -816,7 +835,13 @@ module.exports = class ChromeTabGroups extends Plugin {
 		this.addCommand({ id: "search-tabs", name: "搜索标签页", callback: () => new TabSearchModal(this).open() });
 		this.addCommand({ id: "new-tab-right", name: "在右侧新建标签页", checkCallback: withLeaf((l) => this.newTabRight(l)) });
 		this.addCommand({ id: "duplicate-tab", name: "复制当前标签页", checkCallback: withLeaf((l) => this.duplicate(l)) });
-		this.addCommand({ id: "move-to-new-split", name: "将当前标签页移到新拆分视图", checkCallback: withLeaf((l) => this.toNewSplit(l)) });
+		this.addCommand({
+			id: "move-to-new-split",
+			name: "向新拆分视图添加标签页（固定向右）",
+			// 和库里的「在右侧打开 / Open in split view」用同一个手势：⌘⌥↵
+			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "Enter" }],
+			checkCallback: withLeaf((l) => this.toNewSplit(l)),
+		});
 		this.addCommand({ id: "pin-to-left", name: "锁定当前标签页并移到最左", checkCallback: withLeaf((l) => this.pinToLeft(l)) });
 	}
 };

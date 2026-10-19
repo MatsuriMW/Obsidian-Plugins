@@ -18,6 +18,7 @@
 //     整理时顶格条目带「明天 / 后天 / 大后天」的整块搬到那一天的日记，判断在 takeDayItems（带「← [[来源日记]]」记号的不会再被搬；DONE 和 DONE 栏里的不搬）。⌥Space 快速记录（nautilus-cli.js）用同一份规则
 //   · 发送：光标所在块（连同子项）可以发到几个去向（命令「发送这一块到…」列出全部，每个去向也各有一条命令）：
 //     页面顶部、明天的日记、Claude CLI（开一个会话，这一块当第一句话；选中几块并列的就每块各开一个；
+//     「明天的日记」一律按螺旋日程的日期分界算：螺旋的今天 + 1 天，不是当前打开那篇日记的日期 + 1；
 //     「Claude CLI 并发」是母块当背景、每个子块一个会话；会话可以跑在终端窗口、后台的 tmux、或者无头的 claude -p 里）、Claudian 的 Inline edit（选中整块再叫它）、
 //     MD Flow（写进中转笔记、选一个模板、打开排版面板）、macOS 日历、提醒事项、AI 解释。后面这些只在桌面端有
 //     AI 解释：这一块（连同子块）交给 claude -p 讲讲是什么意思、里面的英文词和术语各指什么，答案记成这一块下面的一个「💡」子块；
@@ -1247,16 +1248,16 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 	}
 
-	// 明天的日记：当前笔记是日记就取它的后一天；不是日记就取「今天」的后一天（和螺旋日程同一个日期分界，见 dayNow）
+	// 明天的日记：一律取螺旋日程「今天」的后一天（和它同一个日期分界，见 dayNow），
+	// 和当前打开的是哪一篇日记无关。在补 10/18 的日记时，「明天」也是真实的明天，而不是 10/19。
 	tomorrowOf(file) {
-		if (file && JOURNAL_NAME_RE.test(file.basename)) {
-			const to = journalAfter(file.basename, 1);
-			return { ...to, folder: file.parent && file.parent.path !== "/" ? file.parent.path : "", source: file.basename };
-		}
 		const cfg = this.app.plugins?.plugins?.["nautilus-spiral"]?.settings || {};
 		const d = this.dayNow();
-		const today = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())].join("_");
-		return { ...journalAfter(today, 1), folder: cfg.folder || "日记", source: file ? file.basename : today };
+		d.setDate(d.getDate() + 1);
+		const ymd = [d.getFullYear(), pad(d.getMonth() + 1), pad(d.getDate())];
+		const isJournal = file && JOURNAL_NAME_RE.test(file.basename);
+		const folder = isJournal ? (file.parent && file.parent.path !== "/" ? file.parent.path : "") : cfg.folder || "日记";
+		return { name: ymd.join("_"), date: ymd.join("-"), folder, source: file ? file.basename : ymd.join("_") };
 	}
 
 	// 今天的日记（和螺旋日程同一个日期分界，见 dayNow）；当前笔记是日记就放在它那个文件夹
