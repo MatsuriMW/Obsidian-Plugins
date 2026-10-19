@@ -827,7 +827,8 @@ module.exports = class JournalTidy extends Plugin {
         const fm = prev && prev.folds && prev.folds.find((f) => f.from === 0);
         if (fm) folds.push(fm);
         blocks.forEach((b, i) => {
-            if (b.sep || !(i < end || b.zone === "DONE" || LINK_HEAD_RE.test(b.lines[0]))) return;   // 「🔗 链接」母块在哪儿都折
+            if (b.sep || b.zone === "DOING" || b.zone === "TODO") return;   // 任务区不折：DELEGATED / DOING / TODO 即使落在第一条分割线之前也不收起
+            if (!(i < end || b.zone === "DONE" || LINK_HEAD_RE.test(b.lines[0]))) return;   // 「🔗 链接」母块在哪儿都折
             // 顶格的块 ID 那一行不在 Obsidian 的折叠范围里：只折到它前面
             const ls = z.trimBlock(b.lines);
             const cut = ls.findIndex((l, k) => k > 0 && z.ID_LINE_RE.test(l) && !/^\s/.test(l));

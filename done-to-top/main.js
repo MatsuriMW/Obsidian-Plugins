@@ -465,7 +465,9 @@ function takeDayItems(text, sourceName) {
 	const keep = doneZoneEnd(blocks);
 	const moves = [];
 	blocks.forEach((b, i) => {
-		const off = b.sep || i < keep ? 0 : dayWordOffset(b.lines[0]);
+		const kw = (b.lines[0].match(KEYWORD_RE) || [])[1];
+		const agentActive = kw && AGENT_KWS.includes(kw.toUpperCase());   // 委派 / 等你看 / 出错的 Agent 行留在今天：挪走会断掉 🔗
+		const off = b.sep || i < keep || agentActive ? 0 : dayWordOffset(b.lines[0]);
 		const to = off && journalAfter(sourceName, off);
 		if (!to) return;
 		const lines = trimBlock(b.lines);
