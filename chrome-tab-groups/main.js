@@ -8,8 +8,8 @@
 //     · 「在右侧新建」、复制标签页、⌘点击链接在新标签页打开，都进同一组；⌘T 和标签栏的「＋」新建的空白页不进组
 //     · 折叠时如果正看着组里的标签页，先切到组外最近的标签页（没有就在组后面新建一个）；切回被折叠的标签页时自动展开
 //   命令：添加到新组、移出组、折叠/展开、编辑组、关闭组、搜索标签页、在右侧新建、复制、向新拆分视图添加标签页（⌘⌥↵，固定向右，焦点跟到新栏）
-//   只有一个标签页也能拆：先把原栏补一个空白标签页，再把当前页挪到右边新栏
-//   分栏上限 3 栏：已经 3 栏时，「向新拆分视图添加」改为挪到最右边一栏（和 palette-split-open 的 ⌘⌥↵ 一致）
+//   只有一个标签页也能拆：当前页留在左栏，右边新栏里开一个空白新标签页
+//   分栏上限 3 栏：已经 3 栏时，「向新拆分视图添加」改为在最右边一栏里开一个空白标签页（和 palette-split-open 的 ⌘⌥↵ 一致）
 //   分组按标签页 id 存在 data.json 里，重启后恢复
 const { Plugin, Modal, SuggestModal, Notice, WorkspaceLeaf, prepareFuzzySearch, setIcon } = require("obsidian");
 
@@ -604,50 +604,37 @@ module.exports = class ChromeTabGroups extends Plugin {
 		this.activate(nl);
 	}
 
-	// 不能拆分的原因；能拆 / 能挪就返回 null
+	// 不能拆分的原因；能拆就在右边开新栏，返回 null
 	splitBlocked(leaf) {
 		const cols = columnsOf(this.app.workspace, leaf);
-		if (cols.count >= MAX_COLUMNS) return cols.rightmost === leaf.parent ? "已经在最右边一栏了（最多 3 栏）" : null;
-		return null;   // 只剩一个标签页也能拆：先把这一栏补一个空白页，再把当前页挪到右边
-	}
-
-	// 只有一页的标签栏，把这一页挪走以后整栏会空掉、被 Obsidian 收掉，拆分就白做了。
-	// 先在这一栏补一个空白标签页，挪走以后左边还留着一页，右边才是真正的新栏。
-	fillSource(parent) {
-		try { this.app.workspace.createLeafInParent(parent, 0); }
-		catch (e) { console.error("[chrome-tab-groups] 补空白标签页失败", e); }
+		if (cols.count >= MAX_COLUMNS && cols.rightmost === leaf.parent) return "已经在最右边一栏了（最多 3 栏）";
+		return null;
 	}
 
 	toNewSplit(leaf) {
 		const why = this.splitBlocked(leaf);
 		if (why) return new Notice(why);
-		this.removeFromGroup(leaf, false);
 		const cols = columnsOf(this.app.workspace, leaf);
-		const source = leaf.parent;
-		const only = source.children.length === 1;
 		if (cols.count >= MAX_COLUMNS) {
-			// 已经 3 栏：挪到最右边一栏、它当前标签页的右边
+			// 已经 3 栏：在最右边那一栏里开一个空白标签页；当前页留在自己的栏里不动
 			const tabs = cols.rightmost;
-			if (only) this.fillSource(source);
-			this.moveLeaf(leaf, tabs, tabs.currentTab + 1);
-			this.focusAfterLayout(leaf);
+			const nl = this.app.workspace.createLeafInParent(tabs, tabs.currentTab + 1);
+			this.focusAfterLayout(nl);
 			this.commit();
 			return;
 		}
 		// 固定向右：锚在最右边那一栏上再拆，新栏一定出现在它右边（也就是整个窗口的最右边），
 		// 不跟着当前栏的位置走，也不会因为 Obsidian 的「新标签页位置」之类设置跑到左边。
 		// createLeafBySplit 的第三个参数 before=false 明确表示放在锚点后面。
+		// 新栏里是刚建出来的空白标签页；当前页原样留在左边，不跟着搬。
 		const anchor = (cols.rightmost && (cols.rightmost.children[cols.rightmost.currentTab] || cols.rightmost.children[0])) || leaf;
 		const nl = this.app.workspace.createLeafBySplit(anchor, "vertical", false);
-		if (only) this.fillSource(source);
-		this.moveLeaf(leaf, nl.parent, 0);
-		nl.detach();
-		this.focusAfterLayout(leaf);
+		this.focusAfterLayout(nl);
 		this.commit();
 	}
 
-	// 拆完等布局落定，再把焦点（和光标）挪到右边新栏里。
-	// 只 setActiveLeaf 有时只换高亮、编辑器的光标还留在原来那栏，所以在下一帧和稍后再各补一次 editor.focus()。
+	// 拆完等布局落定，再把焦点挪到右边新栏里。
+	// 只 setActiveLeaf 有时只换高亮、焦点还留在原来那栏，所以在下一帧和稍后再各补一次。
 	focusAfterLayout(leaf) {
 		const ws = this.app.workspace;
 		ws.setActiveLeaf(leaf, { focus: true });
@@ -655,7 +642,14 @@ module.exports = class ChromeTabGroups extends Plugin {
 			if (!leaf.view) return;
 			try { ws.setActiveLeaf(leaf, { focus: true }); } catch (e) { /* 布局正忙，下一次再试 */ }
 			try { leaf.view.editor?.focus?.(); } catch (e) { /* 不是 markdown 视图 */ }
-			try { if (!leaf.view.editor) leaf.view.contentEl?.focus?.(); } catch (e) { /* 视图没有焦点就不强求 */ }
+			try {
+				if (!leaf.view.editor) {
+					// 右边是新空白页：能直接开始打字最好，把新标签页里的搜索框先聚焦
+					const input = leaf.view.contentEl?.querySelector?.("input, textarea");
+					if (input) input.focus();
+					else leaf.view.contentEl?.focus?.();
+				}
+			} catch (e) { /* 视图没有焦点就不强求 */ }
 		};
 		window.setTimeout(again, 0);
 		window.setTimeout(again, 60);
