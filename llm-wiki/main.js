@@ -361,7 +361,7 @@ module.exports = class LlmWiki extends Plugin {
     const topics = s.topics.filter((t) => t.keywords.length);
     const res = { mode: "keyword", err: "", byTopic: {} };
     try {
-      const sb = this.app.plugins.plugins["second-brain"];
+      const sb = this.app.plugins.plugins["second-brain-local"];
       let blocks = null;
       const cand = new Map(), fileTopics = new Map();
       if (s.semantic && !sb?.semanticBlocks) res.err = "没装「第二大脑」";
@@ -677,7 +677,7 @@ ${list}
       const hit = idsIn(r.s, r.e, k)[0];
       if (hit) return { id: hit.id, how: `原 id 还在第 ${k + 1} 行，但 Obsidian 现在认的是同一块的 ^${hit.id}` };
     }
-    const sb = this.app.plugins.plugins["second-brain"];
+    const sb = this.app.plugins.plugins["second-brain-local"];
     if (claim.trim() && sb?.semanticBlocks) {
       try {
         const bl = (await sb.semanticBlocks([dest], { c: [claim] })).filter((b) => !b.title).sort((a, b) => b.sims.c - a.sims.c);

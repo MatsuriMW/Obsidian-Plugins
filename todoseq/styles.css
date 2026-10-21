@@ -2709,3 +2709,13 @@
 @media (prefers-reduced-motion: reduce) {
   .tsq-ico *, .tsq-ico.is-fire * { animation: none !important; }
 }
+
+/* ===== 马自立 本地补丁：关键词查询页（任务查询/<关键词>.md），配 main.js 末尾「点关键词 = 打开查询页」 ===== */
+.kwq-sum { color: var(--text-muted); font-size: var(--font-ui-small); margin-bottom: .6em; }
+.kwq-day { margin: 1.1em 0 .3em; font-size: var(--font-ui-small); font-weight: 600; color: var(--text-muted); letter-spacing: .02em; }
+.kwq-list { border-left: 2px solid var(--background-modifier-border); padding-left: .7em; }
+.kwq-row { display: flex; gap: .8em; align-items: baseline; padding: .22em .4em; border-radius: 5px; cursor: pointer; transition: background-color .15s ease, transform .15s ease; }
+.kwq-row:hover { background: var(--background-modifier-hover); transform: translateX(2px); }
+.kwq-text { flex: 1; }
+.kwq-src { color: var(--text-faint); font-size: var(--font-ui-smaller); white-space: nowrap; }
+.kwq-empty { color: var(--text-faint); }

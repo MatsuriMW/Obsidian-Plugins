@@ -147,9 +147,9 @@ var Expandomatic = class extends import_obsidian.Plugin {
   }
   onunload() {
   }
-  // 本地改动：装着 esc-select-block（编辑体验 Logseq 化）、并且它带对接用的方法时返回它
+  // 本地改动：装着 emacs-logseq-inspired-outline（原 esc-select-block，编辑体验 Logseq 化）、并且它带对接用的方法时返回它
   escPlugin(editor) {
-    const p = this.app.plugins.plugins["esc-select-block"];
+    const p = this.app.plugins.plugins["emacs-logseq-inspired-outline"];
     return p && p.expandBlock && p.shrinkBlock && p.restoreBlock && editor.cm ? p : null;
   }
   rangeEq(a, b) {
@@ -157,7 +157,7 @@ var Expandomatic = class extends import_obsidian.Plugin {
   }
   expand(editor) {
     var _a;
-    // 本地改动：Esc 选中整块（esc-select-block）的状态下先交给它接着扩，保持整块选中；它接不了（已经到顶层）再走下面的逻辑
+    // 本地改动：Esc 选中整块（emacs-logseq-inspired-outline）的状态下先交给它接着扩，保持整块选中；它接不了（已经到顶层）再走下面的逻辑
     const esc = this.escPlugin(editor);
     if (esc && esc.expandBlock(editor.cm))
       return;
@@ -203,7 +203,7 @@ var Expandomatic = class extends import_obsidian.Plugin {
     }
   }
   shrink(editor) {
-    // 本地改动：Esc 整块选中状态下扩大过的，交给 esc-select-block 一步步退回
+    // 本地改动：Esc 整块选中状态下扩大过的，交给 emacs-logseq-inspired-outline 一步步退回
     const esc = this.escPlugin(editor);
     if (esc && esc.shrinkBlock(editor.cm))
       return;
@@ -218,7 +218,7 @@ var Expandomatic = class extends import_obsidian.Plugin {
       return;
     }
     const prev = this.selStack.pop();
-    // 本地改动：退回到的是 Esc 整块选中 → 让 esc-select-block 重新选上，整块选中状态接着用（↑↓ 换块、再缩小）
+    // 本地改动：退回到的是 Esc 整块选中 → 让 emacs-logseq-inspired-outline 重新选上，整块选中状态接着用（↑↓ 换块、再缩小）
     if (!(prev.block && esc && esc.restoreBlock(editor.cm, prev.block)))
       editor.setSelection(prev.anchor, prev.head);
     this.lastSet = prev;

@@ -8,5 +8,5 @@
 	"authorUrl": "https://github.com/reuseman",
 	"isDesktopOnly": true,
 	"pinnedFrom": "2.2.0",
-	"localPatch": "修了往 flashcards 属性里追加条目时少换行、把条目粘到下一个属性上的 bug（3 处 entriesEnd 插入）"
+	"localPatch": "修了往 flashcards 属性里追加条目时少换行、把条目粘到下一个属性上的 bug（3 处 entriesEnd 插入）；卡片标识符写在卡片末行行尾、不再顶格另起一行（末行已有标识符/代码块/表格时另起一行并跟随缩进），卡片指纹忽略行尾标识符；题型变化（挖空↔问答）需要重建卡片时不再弹确认，直接重建"
 }

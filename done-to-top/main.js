@@ -1,6 +1,9 @@
 // 任务归位：按状态把顶格任务块放进各自的分区
 //   分区顺序：DONE（最上面）→ DOING（中间）→ TODO（DOING 下面）→ 没状态的（最下面，原样不动），分区之间用「- ---」隔开；
 //     日记是固定三区：后面还有内容时，空着的区也留着它的分隔线，TODO 区永远在第二条「- ---」下面（新日记的模板就是两条分隔线）
+//   · 主线（2026-10-20）：顶格块里有一条任务带 [#A]（或简写 todo a）的，整块算一个主线块，一天最多 3 块（按日记里的先后取前三块）。
+//     还没开始的主线块在 DOING 区和 TODO 区之间单独一区：DONE | DOING | 主线 | TODO，这时 TODO 区在第三条「- ---」下面；没有主线块就没有这一区。
+//     分区整理（日记整理）把多出来的 [#A] 降成 [#B]；放一个普通 TODO 进来时落在主线区下面。规则在 isMainBlock，螺旋日程照同一条规则追踪完成率
 //   · 只看顶格条目的状态；子项的状态不参与分类，整块跟着母项走
 //   · 块内部也一样：块里自己用「- ---」分了栏的，子项按状态在块内排成 DONE → DOING → TODO → 没状态的，
 //     只在块内部排，不会跑到别的块里、也不会被提到文件级；块里没用分割线的不动
@@ -67,6 +70,7 @@ const DEFAULTS = {
 	aiCwd: "",                      // 给 AI 的 TODO 在哪个目录跑；空 = 跟「发给 Claude CLI」同一个目录
 	aiSettle: 20,                   // 这一块停手多少秒没再改才发（光标还在这一块里就等 90 秒）
 	aiModel: "",                    // 用哪个模型；空 = claude 命令行的默认模型
+	aiMode: "acceptEdits",          // 委派 / 给 AI 的 TODO 的工作模式：acceptEdits（直接改文件）/ plan（只出方案，不动文件）
 	aiOpenDesktop: true,            // 第一轮答完后把会话导入 Claude 桌面版
 	aiSent: {},                     // 发过的块（笔记路径 + 内容的指纹 → 时间），防止 🔗 没写上时重发；留 3 天
 };
@@ -246,6 +250,29 @@ function rankIn(zone, line) {
 	if (zone === "DOING") return (cluster === 3 ? 200 : cluster ? 100 : 0) + prio + cluster;
 	return prio + cluster;
 }
+// ---------- 主线 ----------
+// 主线 = 这一天最要紧的几件：顶格块里有一条任务（自己那一行或任何一层子项）带 [#A]，或者写的是简写 todo a，这一整块就是一个主线块。
+// 一天最多 MAIN_MAX 块，按在日记里的先后取前几块；多出来的由日记整理降成 [#B]（demoteMain）
+const MAIN_MAX = 3;
+function isMainLine(line) {
+	const m = line.match(ITEM_RE);
+	if (!m) return false;
+	let rest = m[2].replace(STAMP_RE, "");
+	const ps = prioShort(rest);
+	if (ps) return ps.prio === "A";
+	const cb = rest.match(CHECKBOX_RE);
+	if (cb) rest = rest.slice(cb[0].length);
+	else if (!KEYWORD_RE.test(rest)) return false;   // 不是任务的行里写了 [#A] 不算
+	return rest.includes("[#A]");
+}
+function isMainBlock(lines) {
+	return lines.some(isMainLine);
+}
+// 主线块降级：块里所有 A 级的任务行（简写先改成「TODO [#A]」）改成 [#B]
+function demoteMain(lines) {
+	return lines.map((l) => (isMainLine(l) ? normalizeKeyword(l, false).replace("[#A]", "[#B]") : l));
+}
+
 // 稳定排序：同一类里保持原来的先后。「- [[信息增量]]」排在 TODO 区最后
 function sortZone(zone, items) {
 	return items.map((ls, i) => ({ ls, i, k: INFO_PIN_RE.test(ls[0]) ? 1e3 : rankIn(zone, ls[0]) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.ls);
@@ -352,18 +379,27 @@ function place(text, blockLines, zone) {
 		// 新的 TODO 放在「- [[信息增量]]」前面，它留在 TODO 区最后；TODO 区里只有它的话就插在它前面
 		const pinAt = blocks.findIndex((x, i) => i >= from && i < headEnd && x.pin);
 		let inTodo = false;   // 找到的位置已经在 TODO 区里（挨着别的 TODO 或信息增量）
+		// 主线区（DOING 和 TODO 之间）：主线块接在主线块后面，普通 TODO 接在普通 TODO 后面
+		const main = zone === "TODO" && isMainBlock(ins);
+		const isMain = (b) => b.zone === "TODO" && !b.pin && isMainBlock(b.lines);
+		let lastMain = -1;
+		for (let i = headEnd - 1; i >= from && lastMain < 0; i--) if (isMain(blocks[i])) lastMain = i;
+		let gap = false;   // 落在主线区最后一块后面、中间还没有分隔线：先补一条
 		for (const z of zone === "DOING" ? ["DOING"] : ["TODO", "DOING"]) {
-			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z && !blocks[i].pin) { idx = i + 1; break; }
-			if (idx < 0 && z === "TODO" && pinAt >= 0) idx = pinAt;
+			for (let i = headEnd - 1; i >= from; i--) if (blocks[i].zone === z && !blocks[i].pin && (z !== "TODO" || isMain(blocks[i]) === main)) { idx = i + 1; break; }
+			if (idx < 0 && z === "TODO" && pinAt >= 0 && !main) idx = pinAt;
+			// 普通 TODO、TODO 区还空着、上面有主线区：落到主线区那条分隔线下面
+			if (idx < 0 && z === "TODO" && !main && lastMain >= 0) { idx = lastMain + 1; if (blocks[idx] && blocks[idx].sep) idx++; else gap = true; }
 			if (idx >= 0) { inTodo = z === "TODO"; break; }
 		}
 		if (idx < 0) idx = hasZone ? doneEnd + 1 : 0;   // 紧跟 DONE 栏的分隔线
 		// TODO 区里还没东西：越过 DOING 区后面那条分隔线（DOING 区空着时就是紧挨着的第二条），落进 TODO 区
 		if (zone === "TODO" && !inTodo && blocks[idx] && blocks[idx].sep) idx++;
 		const prev = blocks[idx - 1], next = blocks[idx];
-		if (!hasZone && idx === 0) ins.unshift(...(zone === "TODO" ? [SEP, SEP] : [SEP]));   // 还没有栏：先留出空的 DONE 栏（TODO 连空的 DOING 区也留出来）
+		if (gap) ins.unshift(SEP);
+		else if (!hasZone && idx === 0) ins.unshift(...(zone === "TODO" ? [SEP, SEP] : [SEP]));   // 还没有栏：先留出空的 DONE 栏（TODO 连空的 DOING 区也留出来）
 		else if (prev && !prev.sep && prev.zone !== zone) ins.unshift(SEP);
-		if (next && !next.sep && next.zone !== zone) ins.push(SEP);
+		if (next && !next.sep && (next.zone !== zone || (main && !isMain(next)))) ins.push(SEP);   // 新开的主线区和下面的 TODO 区隔开
 	}
 	const before = blocks.slice(0, idx).flatMap((b) => b.lines);
 	const after = blocks.slice(idx).flatMap((b) => b.lines);
@@ -594,7 +630,7 @@ function applyText(editor, newText, cursor) {
 }
 
 // core 挂在插件实例上给别的插件用：日记整理（journal-tidy）的任务分区、Telegram Companion 收消息时的归位都用这里的规则
-const core = { todosZone, TODOS_HEAD_RE, plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, isLinkBlock, place, mark, zoneOf, itemZone, normalizeKeyword, hasPrioShort, prioShort, joinPrio, sortZone, isCardBlock, trimBlock, doneZoneEnd, isBlank, indentWidth, diffChange, diffChanges, SEP, ANY_SEP_RE, ID_LINE_RE, JOURNAL_NAME_RE, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock, appendInfo };
+const core = { MAIN_MAX, isMainLine, isMainBlock, demoteMain, todosZone, TODOS_HEAD_RE, plainText, whenOf, timeIn, planOf, calendarScript, remindersScript, mdflowText, parse, isLinkBlock, place, mark, zoneOf, itemZone, normalizeKeyword, hasPrioShort, prioShort, joinPrio, sortZone, isCardBlock, trimBlock, doneZoneEnd, isBlank, indentWidth, diffChange, diffChanges, SEP, ANY_SEP_RE, ID_LINE_RE, JOURNAL_NAME_RE, dayWordOffset, markFrom, journalAfter, takeDayItems, dropBlocks, addBlock, appendInfo };
 
 // ---------- 发送去向 ----------
 const execFile = (cmd, args, timeout = 30000, env = undefined) => new Promise((ok) => {
@@ -969,6 +1005,9 @@ class SendSettings extends PluginSettingTab {
 		text("在哪个目录里跑", "留空 = 跟上面「发给 Claude CLI」同一个目录", "aiCwd", "留空同上");
 		text("停手多少秒再发", "这一块多少秒没再改才发，免得打到一半就发出去。光标还停在这一块里的话等 90 秒", "aiSettle", String(DEFAULTS.aiSettle));
 		text("用哪个模型", "claude 命令行的 --model，写全名。留空 = 命令行的默认模型", "aiModel", "留空用默认");
+		new Setting(containerEl).setName("工作模式").setDesc("给 AI 的 TODO 和 ⌥⌘D 一键委派用哪种权限模式开会话。直接改文件 = acceptEdits；只出方案 = plan，只读不改，方案写在会话里等你点头。能读写的目录由 limit-resume 定（下载、主库、~/claude 工作区等）；单次想用计划模式，用命令「委派给 Claude · 计划模式」")
+			.addDropdown((d) => d.addOption("acceptEdits", "直接改文件（acceptEdits）").addOption("plan", "只出方案（plan）").setValue(s.aiMode === "plan" ? "plan" : "acceptEdits")
+				.onChange(async (v) => { s.aiMode = v; await this.plugin.saveData(s); }));
 		new Setting(containerEl).setName("答完放进 Claude 桌面版").setDesc("第一轮答完后用 claude://resume 把会话导入桌面 App（App 会跳到那个会话），之后在 App 里接着聊。关掉的话点 🔗 那一行也能打开")
 			.addToggle((t) => t.setValue(s.aiOpenDesktop !== false).onChange(async (v) => { s.aiOpenDesktop = v; await this.plugin.saveData(s); }));
 		new Setting(containerEl).setName("AI 解释").setHeading();
@@ -1064,6 +1103,11 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			hotkeys: [{ modifiers: ["Mod", "Alt"], key: "D" }],   // 和 ⌥⌘S 一样，字母要大写
 			editorCallback: (editor, ctx) => this.delegate(editor, ctx && ctx.file),
 		});
+		this.addCommand({
+			id: "delegate-to-claude-plan",
+			name: "委派给 Claude · 计划模式：只出方案不改文件（其余同一键委派）",
+			editorCallback: (editor, ctx) => this.delegate(editor, ctx && ctx.file, "plan"),
+		});
 		this.addCommand({ id: "stop-headless", name: "停掉一个在后台无头跑着的 Claude 会话…", callback: () => this.stopHeadless() });
 		this.addSettingTab(new SendSettings(this.app, this));
 		this.app.workspace.onLayoutReady(() => this.patchSlash());
@@ -1147,7 +1191,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const s = this.settings, sid = require("crypto").randomUUID(), name = g.title.replace(/[\r\n]+/g, " ").slice(0, 60);
 		let cwd = (s.aiCwd || "").trim() || (s.claudeCwd || "").trim() || (this.app.vault.adapter.getBasePath ? this.app.vault.adapter.getBasePath() : "");
 		if (cwd.startsWith("~")) cwd = require("os").homedir() + cwd.slice(1);
-		const job = { session_id: sid, name, cwd, prompt: body, source: file.basename, open_desktop: s.aiOpenDesktop !== false, ...(s.aiModel ? { model: s.aiModel.trim() } : {}) };
+		const job = { session_id: sid, name, cwd, prompt: body, source: file.basename, open_desktop: s.aiOpenDesktop !== false, permission_mode: s.aiMode === "plan" ? "plan" : "acceptEdits", ...(s.aiModel ? { model: s.aiModel.trim() } : {}) };
 		s.aiSent[key] = Date.now();   // 先记下，免得等回音的时候下一轮又发一遍
 		const { r, res } = await this.aiTask(job);
 		if (!r.ok || !res.ok) {
@@ -1200,7 +1244,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 	// 第一轮答完导入 Claude 桌面版，之后在 App 里接着聊）。发出去以后这一行改成「DELEGATED 时刻 …」、下面记一行 🔗，整块挪进 DOING 区；
 	// 螺旋日程按 🔗 盯着这个会话：在跑时保持 DELEGATED，停下来切 TOREVIEW / NEEDOK / ERRORED / HITLIMIT / QUEUED。
 	// 下面已经有 🔗 的不再发（想重发就删掉那一行 🔗）；没发出去的这一行原样不动
-	async delegate(editor, file) {
+	async delegate(editor, file, mode) {
 		if (!this.desktopOnly()) return;
 		const lines0 = editor.getValue().split("\n"), b0 = this.blockAt(lines0, editor.getCursor().line);
 		if (!b0) return new Notice("光标不在列表项里");
@@ -1212,7 +1256,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		let cwd = (s.aiCwd || "").trim() || (s.claudeCwd || "").trim() || (this.app.vault.adapter.getBasePath ? this.app.vault.adapter.getBasePath() : "");
 		if (cwd.startsWith("~")) cwd = require("os").homedir() + cwd.slice(1);
 		const body = [title, ...contentOf(g)].join("\n").trim();
-		const job = { session_id: sid, name, cwd, prompt: body, source: file ? file.basename : "", open_desktop: true, ...(s.aiModel ? { model: s.aiModel.trim() } : {}) };
+		const job = { session_id: sid, name, cwd, prompt: body, source: file ? file.basename : "", open_desktop: true, permission_mode: (mode || s.aiMode) === "plan" ? "plan" : "acceptEdits", ...(s.aiModel ? { model: s.aiModel.trim() } : {}) };
 		const raw = g.raw, notice = new Notice(`🛫 正在委派：${name.slice(0, 24)}…`, 0);
 		const { r, res } = await this.aiTask(job);
 		notice.hide();

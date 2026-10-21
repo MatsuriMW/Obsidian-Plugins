@@ -10,7 +10,7 @@ const { Plugin, Notice, Menu, Modal, MarkdownView, MarkdownRenderer, Component, 
 const nfs = require("fs"), npath = require("path"), nos = require("os");
 const { spawn } = require("child_process");
 
-const CLAUDIAN_ID = "realclaudian", MTT_ID = "my-text-tools", SB_ID = "second-brain";
+const CLAUDIAN_ID = "realclaudian", MTT_ID = "my-text-tools", SB_ID = "second-brain-local";
 const OUT_ROOT = "选题/_采访";
 const STYLE_DIR = "写作与创作";
 const TIDY_BATCH = { id: "draft-desk-tidy", name: "稿件台 · 规范排版" };

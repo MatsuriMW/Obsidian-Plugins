@@ -1,0 +1,13 @@
+# 已经拆成单独仓库的插件：插件 id <TAB> GitHub 仓库。sync.sh 不再把它们复制进这个仓库，README 末尾只列链接
+# 新拆出一个插件，就在这里加一行
+emacs-logseq-inspired-outline	MatsuriMW/emacs-logseq-inspired-outline
+hover-outline	MatsuriMW/hover-outline
+logseq-style-alias	MatsuriMW/logseq-style-alias
+logseq-style-fold	MatsuriMW/logseq-style-fold
+list-fold-memory	MatsuriMW/list-fold-memory
+roam-backlinks	MatsuriMW/roam-backlinks
+nautilus-spiral	MatsuriMW/nautilus-spiral
+telegram-companion	MatsuriMW/telegram-companion
+chrome-tab-groups	MatsuriMW/obsidian-chrome-tab-groups
+agent-deck	MatsuriMW/obsidian-agent-deck
+token-receipt	MatsuriMW/token-receipt

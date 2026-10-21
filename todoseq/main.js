@@ -390,3 +390,41 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		this.registerEditorExtension(icons);
 	};
 })();
+
+/* ===== 马自立 本地补丁：点关键词 = 打开这个关键词的查询页。更新插件会丢，要把这一段接回末尾 =====
+ * 编辑器里单击 TODO / DOING / DONE… 不再切换状态，而是在新标签打开「任务查询/<关键词>.md」：
+ * 全库所有这个关键词开头的条目，按日记日期（不是日记的按建立时间）从近到远排，点一条跳到原处。
+ * 页面是 Dataview：笔记里只有一行 dv.view("任务查询/kw-query")，查询逻辑在 任务查询/kw-query.js。
+ * 点击不再切换状态（切状态用快捷键）；右键菜单不受影响。
+ */
+(() => {
+	const FOLDER = "任务查询";
+	const body = (kw) => `---\nkw: ${kw}\ncssclasses: [kw-query]\n---\n\`\`\`dataviewjs\nawait dv.view("${FOLDER}/kw-query", { kw: dv.current().kw })\n\`\`\`\n`;
+	const onload1 = as.prototype.onload;
+	as.prototype.onload = async function () {
+		await onload1.call(this);
+		const app = this.app;
+		const open = async (kw) => {
+			const path = `${FOLDER}/${kw}.md`;
+			let f = app.vault.getAbstractFileByPath(path);
+			if (!f) {
+				if (!app.vault.getAbstractFileByPath(FOLDER)) await app.vault.createFolder(FOLDER);
+				f = await app.vault.create(path, body(kw));
+			}
+			const shown = app.workspace.getLeavesOfType("markdown").find((l) => l.view?.file?.path === path);
+			if (shown) { app.workspace.setActiveLeaf(shown, { focus: true }); shown.view.previewMode?.rerender?.(true); return; }
+			await app.workspace.getLeaf("tab").openFile(f, { state: { mode: "preview" }, active: true });
+		};
+		const onClick = (e) => {
+			if (e.button !== 0) return;
+			const el = e.target?.closest?.(".todoseq-keyword-formatted");
+			if (!el || !el.closest(".cm-editor")) return;
+			const kw = el.getAttribute("data-task-keyword");
+			if (!kw) return;
+			e.preventDefault(); e.stopImmediatePropagation();
+			open(kw.toUpperCase()).catch((err) => console.error("TODOseq 关键词查询：", err));
+		};
+		window.addEventListener("click", onClick, true);
+		this.register(() => window.removeEventListener("click", onClick, true));
+	};
+})();

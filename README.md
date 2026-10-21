@@ -21,13 +21,13 @@
 
 ## 先看这几个
 
-- **编辑体验 Logseq 化**（[`esc-select-block`](esc-select-block)）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换（⌘\ 在无序 → 有序 → 段落之间循环）。
+- **Emacs Logseq Inspired Outline**（独立仓库 [MatsuriMW/emacs-logseq-inspired-outline](https://github.com/MatsuriMW/emacs-logseq-inspired-outline)，原「编辑体验 Logseq 化」）★★★：如果你从 Logseq 搬过来，最想念的「Esc 选中整块、↑↓ 在块之间跳」在这里。还有选中文字后输入括号会把文字包起来（连按两次 `[` 就是双链），以及块在无序列表、有序列表（含论文式 4.1、a. b. c.）和普通段落之间一键转换（⌘\ 在无序 → 有序 → 段落之间循环）。
 - **Roam Backlinks**（独立仓库 [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks)，原 Backlinks and Export）★★★：在 Obsidian 里获得和 Logseq、Roam Research 一致的反链编辑体验。反链按块显示整段内容，点面包屑逐级展开上下文，能就地编辑，按关系紧密度排序；导出 PDF 时还能把所有提到这页的内容一起带上。正在上架 Obsidian 社区插件市场，中英文界面
-- **第二大脑**（[`second-brain`](second-brain)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
+- **第二大脑**（[`second-brain-local`](second-brain-local)）★★：本机跑的语义检索（EmbeddingGemma 向量 + BM25），写作时侧栏实时列出库里意思相近的段落；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki。整个「知识库与 AI」这一组都建在它上面。[用法和原理 →](second-brain/README.md)
 - **螺旋日程**（独立仓库 [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral)）★★：一圈螺旋就是今天剩下的时间，事件钉在时刻上，待办按顺序和预计时长填进空档，没做完的自动往后流，一眼看出今天还排不排得下。日记大纲同时是 Agent 干活的仪表盘：任务行下面有进度条和会话最后说的话，状态栏报几个在跑、几个在等你。[用法和原理 →](https://github.com/MatsuriMW/nautilus-spiral/blob/main/README.zh-CN.md)
 - **块去向**（[`done-to-top`](done-to-top)）★★：决定一个块去哪儿。日记里的任务按 DONE / DOING / TODO 自动分区；`⌥⌘S` 把光标所在的块连同子块发到别处：页面顶部、明天的日记、日历、提醒事项，或者 Claude Code。发给 Claude Code 时一块就是一个会话：选中几块并列的，同时开几个；让母块当共同背景，每个子块各开一个。会话可以开在终端窗口里，也可以放在后台的 tmux 里跑，配合螺旋日程在大纲里看进度。
 - **Telegram Companion**（独立仓库 [`telegram-companion`](https://github.com/MatsuriMW/telegram-companion)）★★★：手机上随手发给 Telegram 机器人的话直接进日记；想聊的时候，它读着你近一周的日记回你。可以给它换人设、教它你的口癖、切换背后的模型。
-- **Chrome Tab Groups**（[`chrome-tab-groups`](chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
+- **Chrome Tab Groups**（独立仓库 [MatsuriMW/obsidian-chrome-tab-groups](https://github.com/MatsuriMW/obsidian-chrome-tab-groups)）★★★：标签页一多就找不到？照 Chrome 做了分组、配色、折叠、整组拖动和同款右键菜单。
 
 ## 全部插件
 
@@ -35,20 +35,19 @@
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **编辑体验 Logseq 化**<br>[`esc-select-block`](esc-select-block) | 让列表编辑接近 Logseq：Esc 选中整块，↑↓ 在块之间移动；选中文字后输入括号、引号会把文字包起来；⌘K 插分割线；跳到母块、把几块收进一个新母块；块可以在无序列表、有序列表（1. / 4.1 / a.）和普通段落之间转换，⌘\ 一键循环切换 | ★★★ | 无（和 Bullet 一起用更顺手） |
 | **块引用增强**<br>[`block-ref-plus`](block-ref-plus) | 块引用显示被引用块的当前内容，被引用的块旁边标出被引用了几次（仿思源笔记） | ★★★ | 无 |
-| **Hover Outline**<br>[`hover-outline`](hover-outline) | 编辑区左上角的隐藏式目录（仿 Claude Code）：平时只有一列短横线，鼠标移上去展开，点一下跳过去并把那一行停在正中 | ★★★ | 无 |
 | **List Paste Merge**<br>[`list-paste-merge`](list-paste-merge) | 在列表里粘贴一段列表时不会多出一层「- 」，缩进和编号自动接上 | ★★★ | 无 |
 | **List Outdent Plain**<br>[`list-outdent-plain`](list-outdent-plain) | 在顶格列表项上再按 ⌘[，它就变成普通段落，子项跟着往前提一级 | ★★★ | 无 |
 | **任务状态快切**<br>[`task-toggle`](task-toggle) | ⌘/ 循环切换 TODO → DOING → DONE，自动写上开始和结束时间；⌘⇧/ 切换暂停、取消等状态 | ★★ | 用 Logseq 式任务关键词 |
 | **Outline Block**<br>[`outline-block`](outline-block) | 一键把一大段文字整理成层级列表并加上双链，先预览再替换 | ★★ | 本机 Claude Code（`claude` 命令行） |
 | **Chrome 书签**<br>[`chrome-bookmarks`](chrome-bookmarks) | 侧栏里一棵和 Chrome 双向同步的书签树：点一下用内置浏览器（或 Chrome）打开；在这里新建、改名、拖动、删除，Chrome 那边跟着变，反过来也一样。命令「搜索 Chrome 书签」在 Better Command Palette 里搜（要装 Palette Enhancements，没装就用自带的小面板）。在 Chrome 里新收藏的网页会按内容量自动记进笔记：单篇进待读、视频进待看、Wiki 式的进长期项目。要配合仓库里的 Chrome 扩展「Obsidian 书签桥」用，两边只走本机 127.0.0.1 通信。 |  |  |
+| **Paste Image Scale**<br>[`paste-image-scale`](paste-image-scale) | 粘贴或拖进来的图片，默认按原图宽度的 50% 显示：插好 ![[图片]] 之后自动补上 \|宽度。Retina 截图（@2x）正好回到屏幕上看到的大小。比例可调。 |  |  |
 
 ### 知识库与 AI：本地语义检索、LLM Wiki、复习和写作
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **第二大脑（自用）**<br>[`second-brain`](second-brain) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑 | ★★ | Ollama + EmbeddingGemma；Anki + AnkiConnect（可选） |
+| **第二大脑（自用）**<br>[`second-brain-local`](second-brain-local) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑 | ★★ | Ollama + EmbeddingGemma；Anki + AnkiConnect（可选） |
 | **LLM Wiki**<br>[`llm-wiki`](llm-wiki) | 仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检 | ★★ | 本机 Claude Code；配合第二大脑效果更好 |
 | **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效） | ★★ | Better Command Palette |
 | **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
@@ -69,7 +68,6 @@
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **Chrome Tab Groups**<br>[`chrome-tab-groups`](chrome-tab-groups) | Chrome 式标签页分组：命名、配色、折叠、整组拖动、移到新窗口，右键菜单也和 Chrome 一样 | ★★★ | 仅桌面端 |
 | **新标签页选项**<br>[`newtab-home`](newtab-home) | ⌘T 新标签页换成一个搜索条和一列快捷按钮，按钮可以设成打开某篇笔记、某个插件页面或执行某条命令；背景图可以自己上传 | ★★★ | 仅桌面端 |
 | **快捷键总览**<br>[`hotkey-atlas`](hotkey-atlas) | 快捷键设置页按插件分组，显示每个插件改过几个键、哪里有冲突；只在特定场景生效的按键也一并列出 | ★★★ | 无 |
 | **书签图标**<br>[`bookmark-icons`](bookmark-icons) | 书签面板里每篇笔记显示各自的彩色图标，不再是一排一样的文件图标。看板背后的数据笔记更新了、你还没打开看过时，图标上亮一个小红点（放在图形留空的那个角），打开那篇看板就灭；盯哪份数据用笔记属性 badge-watch 指定 | ★★★ | 无 |
@@ -91,6 +89,24 @@
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
 | **Breadcrumbs**<br>[`breadcrumbs`](breadcrumbs) | 没改代码，只把版本固定住，不让插件市场自动更新 | — | 无 |
+
+### 已拆成单独仓库的插件
+
+这些插件各有自己的仓库（含 Release，可用 BRAT 安装），这里不再放代码。
+
+| 插件 | 作用 | 仓库 |
+|---|---|---|
+| **Agent Deck** | Track Claude Code, Codex, WorkBuddy and DeepSeek Harness; drag sessions onto note items and items onto agents; keep agent status in the macOS menu bar. | [MatsuriMW/obsidian-agent-deck](https://github.com/MatsuriMW/obsidian-agent-deck) |
+| **Chrome Tab Groups** | Chrome 式标签页分组：命名、配色、折叠、整组拖动、移到新窗口，右键菜单也和 Chrome 一样 | [MatsuriMW/obsidian-chrome-tab-groups](https://github.com/MatsuriMW/obsidian-chrome-tab-groups) |
+| **Emacs Logseq Inspired Outline** | 受 Logseq 和 Emacs 启发的大纲编辑：Esc 选中整块，↑↓ 在块之间移动；选中文字后输入括号、引号会把文字包起来；⌘K 插分割线；⌘⌥↑ 跳到母块（光标停在母块末尾）、⌘Enter 在同级末尾新建块（有序列表接着编号）、把几块收进一个新母块；块可以在无序列表、有序列表（1. / 4.1 / a.）和普通段落之间转换，⌘\ 一键循环切换 | [MatsuriMW/emacs-logseq-inspired-outline](https://github.com/MatsuriMW/emacs-logseq-inspired-outline) |
+| **Hover Outline** | 编辑区角落的隐藏式目录（仿 Claude Code，位置可选左 / 右 × 上 / 中 / 下，默认左中）：平时只有一列短横线，鼠标移上去展开，点一下跳过去并把那一行停在正中 | [MatsuriMW/hover-outline](https://github.com/MatsuriMW/hover-outline) |
+| **List Fold Memory** | 列表怎么折叠的会被记住：折叠状态写成那一项下面的一行 %% collapsed:: true %% 注释（Logseq 块属性的位置），阅读视图天然看不见，编辑视图里整行连换行一起抹掉、光标也进不去；跟着文件走，换设备 / git / 被 AI 重写都不会错位。命令能一次全折叠、清掉所有标记还原原文 | [MatsuriMW/list-fold-memory](https://github.com/MatsuriMW/list-fold-memory) |
+| **Logseq Style Alias** | Make [[alias]] links open the page that has the alias, the way Logseq does, instead of creating an empty page. | [MatsuriMW/logseq-style-alias](https://github.com/MatsuriMW/logseq-style-alias) |
+| **Logseq Style Fold** | Remember how list items are folded by writing a Logseq-style collapsed:: true line into the note, hidden from view. The marker text is configurable. | [MatsuriMW/logseq-style-fold](https://github.com/MatsuriMW/logseq-style-fold) |
+| **Nautilus Spiral** | A spiral day planner driven by your daily note: events stay pinned, to-dos flow from now into the free gaps, and time spent in AI agent sessions can be logged back as DOING and PAUSED tasks. Interface in Chinese. | [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral) |
+| **Roam Backlinks** | Edit backlinks in place, block by block, just like in Logseq and Roam Research, with breadcrumbs that expand context, relevance sorting, co-mention filters and PDF export with backlinks. | [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks) |
+| **Telegram Companion** | Capture Telegram messages into your daily note, and chat with a bot that has read your recent notes. It keeps a profile note about you and works with the model you choose. | [MatsuriMW/telegram-companion](https://github.com/MatsuriMW/telegram-companion) |
+| **Token Receipt** | Turn a day of Claude Code, Codex and WorkBuddy token usage into a shop receipt: tokens by model, cost at API prices, plan limits. Watch it print, pick a scene, then copy it or save it as an image or animated SVG. Reads local session logs only. | [MatsuriMW/token-receipt](https://github.com/MatsuriMW/token-receipt) |
 
 ## 安装
 

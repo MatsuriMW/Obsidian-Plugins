@@ -31,7 +31,7 @@ const CONTEXT = {
 		{ keys: ["Mod+点击"], name: "面包屑：跳到原文", when: "反链面包屑上" },
 		{ keys: ["Shift+点击"], name: "在右侧栏叠放打开（链接 / 块 / 面包屑 / 文件标题）", when: "反链面板里" },
 	],
-	"second-brain": [
+	"second-brain-local": [
 		{ keys: ["右键"], name: "不再作为卡片（去掉 #card / 挖空标记，可撤销）", when: "每日回顾的随机漫步卡片上" },
 		{ keys: ["Mod+点击"], name: "打开原文并定位高亮（那篇已开着就切过去，不另开标签）", when: "每日回顾的卡片 / 面包屑上（单点不跳）" },
 		{ keys: ["点击"], name: "选中这张卡片，好用键盘作答", when: "每日回顾的随机漫步卡片上" },
@@ -41,7 +41,7 @@ const CONTEXT = {
 		{ keys: ["Alt+Mod+ArrowRight"], name: "聚焦：只看选中的这一张，滑到面板 35% 高处（键位跟着 Bullet 的 Zoom into list）", when: "每日回顾面板是当前焦点时" },
 		{ keys: ["Alt+Mod+ArrowLeft", "Escape"], name: "退出聚焦，滑回列表（键位跟着 Bullet 的 Zoom out）", when: "每日回顾聚焦时" },
 	],
-	"esc-select-block": [
+	"emacs-logseq-inspired-outline": [
 		{ keys: ["Escape"], name: "选中光标所在的整个列表块（再按回到原来的光标）", when: "编辑器里" },
 		{ keys: ["ArrowUp", "ArrowDown"], name: "在块之间切换", when: "已选中整块时" },
 		{ keys: ["Shift+ArrowUp", "Shift+ArrowDown"], name: "扩选到上 / 下一块", when: "已选中整块时" },
@@ -49,6 +49,8 @@ const CONTEXT = {
 		{ keys: ["Enter"], name: "回到编辑（光标在块首行末尾）", when: "已选中整块时" },
 		{ keys: ["[", "（", "【", "「"], name: "选中文字后输入成对符号 = 包裹", when: "有选中文字时" },
 		{ keys: ["Enter"], name: "确认包裹：光标跳到右半边符号后面，不换行", when: "选中的文字被成对符号包着时" },
+		{ keys: ["Mod+Enter"], name: "在同级末尾新建块（Bike 的 create at the same level，有序列表接着编号）", when: "光标在列表里" },
+		{ keys: ["Mod+Alt+ArrowUp"], name: "跳到母块，光标停在母块末尾（连按一层层往上）", when: "光标在列表里" },
 	],
 	"palette-split-open": [
 		{ keys: ["Mod+Alt+Enter"], name: "在右侧拆分打开（最多 3 栏）", when: "⌘O 文件搜索面板里" },

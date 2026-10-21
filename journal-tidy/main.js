@@ -6,6 +6,8 @@
  * 另有一件自己在后台做的事：你在 Claude 桌面 app 里归档一个会话，今天的日记里记一笔（见文件后面「归档记一笔」）。
  *
  * 1. 任务分区：顶格任务块（连同子块）按状态排成 DONE → DOING → TODO → 没状态的（原样在最下面），区之间用「- ---」隔开。
+ *    主线：块里有 [#A] 任务的顶格块是主线块（规则在块去向 core 的 isMainBlock），一天最多 3 块，按先后取前三块，多出来的 [#A] 降成 [#B]。
+ *    还没开始的主线块单独一区，放在 DOING 和 TODO 之间：DONE → DOING → 🎯 主线 → TODO；在做的、做完的照旧在 DOING / DONE 区。完成率由螺旋日程追踪。
  *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
  *    顶格只写「- [[信息增量]]」的那一块归 TODO 区，排在 TODO 区最后（问题汇总、摘录都不碰它）。
  *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
@@ -36,11 +38,21 @@
  * 6. 念头记号：挂着 TODO 的条目里，口述的想法、疑问、还没想清楚做不做的事不是任务，行尾挂「#thoughts」（TODO 留着不动）。
  *    进阶整理时由 Claude 判断（拿不准算任务），也可以用命令「把光标所在的行标成念头 / 取消」手动标。
  *
- * 7. 藏起搬迁记号：挪过来的条目行尾「← [[2026_10_15]]」改成注释「%%← 2026_10_15%%」，看不见、不算反链，别的插件照样认得。基础整理就做。
+ * 7. 藏起搬迁记号：挪过来的条目行尾「← [[2026_10_15]]」改成注释「%%← 2026_10_15%%」，不算反链，别的插件照样认得；
+ *    被写到了行中间的（光标停在它后面接着打了字）挪回行尾。基础整理就做。
+ *    编辑时这种注释也看不见（阅读视图本来就不显示）：光标跳过它、停在它后面，退格删的是它前面的字，不会把它删掉（见「编辑器里藏起搬迁记号」）。
+ *
+ * 9. 折叠标记：列表折叠记忆插件在折着的项下面写的「%% collapsed:: true %%」跟着它的母项走——分区、补字段都不把它和母项拆开；
+ *    基础整理时，跟母项隔开了的挪回母项正下方，母项已经没有子项的、同一项下面重复的删掉。
+ *    整理完收起 DONE 区时不把这次收起记成标记，你自己折过的项照样折着。
  *
  * 每次改动前会备份原文，「撤销上一次日记整理」可以恢复。
  */
 const { Plugin, Modal, Notice, Setting, TFile, FuzzySuggestModal, PluginSettingTab, moment } = require("obsidian");
+const { EditorState, StateEffect, RangeSetBuilder, findClusterBreak } = require("@codemirror/state");
+const { EditorView, Decoration, ViewPlugin } = require("@codemirror/view");
+let cmLang = null;
+try { cmLang = require("@codemirror/language"); } catch (e) { /* 认不出代码块时退回数反引号 */ }
 const { spawn } = require("child_process");
 const os = require("os");
 const path = require("path");
@@ -55,6 +67,7 @@ const DEFAULTS = {
     fixNumbered: true,
     cleanShare: true,
     hideFrom: true,
+    hideFromInEditor: true,
     answerQuestions: true,
     fillFields: true,
     groupMachine: true,
@@ -79,6 +92,7 @@ const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DO
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
 const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 TODO 区最后
+const FOLD_MARK_RE = /^[ \t]*%%[ \t]*collapsed::[ \t]*true[ \t]*%%[ \t]*$/;   // 列表折叠记忆的折叠标记：属于它正上方那一项
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 
@@ -136,13 +150,67 @@ function moveTodos(text) {
 // 「← [[2026_10_15]]」→「%%← 2026_10_15%%」：挪过来的条目行尾记的来源日记改成注释，编辑、阅读时都不显示，也不算反链。
 // 块去向（防重搬）、螺旋日程（⏱ 算哪天）、🐢 拖延提醒（拖了几天）都认这种写法。代码块里的不动
 const FROM_MARK_RE = /[ \t]*←[ \t]*\[\[(\d{4}_\d{2}_\d{2})\]\]/g;
+const HIDDEN_FROM_RE = /[ \t]*%%[ \t]*←[ \t]*\d{4}_\d{2}_\d{2}[ \t]*%%/g;   // 已经藏成注释的（连同前面的空白）
+// 这一处是不是在行内代码里：前面的反引号是单数
+const inInlineCode = (line, at) => ((line.slice(0, at).match(/`/g) || []).length % 2) === 1;
 function hideFromMarks(text) {
-    let count = 0, inFence = false;
+    let count = 0, tailed = 0, inFence = false;
     const lines = text.split("\n").map((l) => {
         if (/^[ \t]*(```|~~~)/.test(l)) { inFence = !inFence; return l; }
-        return inFence ? l : l.replace(FROM_MARK_RE, (m, d) => { count++; return ` %%← ${d}%%`; });
+        if (inFence) return l;
+        l = l.replace(FROM_MARK_RE, (m, d) => { count++; return ` %%← ${d}%%`; });
+        // 藏起来的记号被写到了行中间（光标停在它后面接着打了字）：挪回行尾，块 ID 还留在最后。行内代码里的不算
+        const marks = [...l.matchAll(HIDDEN_FROM_RE)];
+        if (!marks.length || marks.some((m) => inInlineCode(l, m.index))) return l;
+        const m = l.replace(HIDDEN_FROM_RE, "").match(/^(.*?)([ \t]\^[A-Za-z0-9-]+)?[ \t]*$/);
+        const fixed = m[1].replace(/[ \t]+$/, "") + marks.map((x) => " " + x[0].trim()).join("") + (m[2] || "");
+        if (fixed !== l.replace(/[ \t]+$/, "")) { tailed++; return fixed; }
+        return l;
     });
-    return { text: lines.join("\n"), count };
+    return { text: lines.join("\n"), count, tailed };
+}
+
+// 折叠标记（列表折叠记忆写的「%% collapsed:: true %%」）只认紧挨在母项正下方的那一行。
+// 跟母项隔开了的（中间被插了字段、子项）挪回母项正下方；母项已经没有列表子项的、同一项下面重复的删掉。代码块、callout 里的不动
+function repairFoldMarks(text) {
+    const lines = text.split("\n");
+    const code = [];
+    let fence = null;
+    lines.forEach((l, i) => {
+        const f = l.match(/^[ \t]*(`{3,}|~{3,})/);
+        if (f) { if (!fence) fence = f[1]; else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null; code[i] = true; return; }
+        code[i] = !!fence;
+    });
+    // 这一项下面有没有列表子项（它的缩进范围里至少有一条列表项）
+    const hasKids = (j) => {
+        const ind = indentOf(lines[j]);
+        for (let k = j + 1; k < lines.length; k++) {
+            if (isBlank(lines[k]) || FOLD_MARK_RE.test(lines[k])) continue;
+            if (indentOf(lines[k]) <= ind) return false;
+            if (CHILD_ITEM_RE.test(lines[k])) return true;
+        }
+        return false;
+    };
+    const drop = new Set(), after = new Map(), owned = new Set();
+    let removed = 0, moved = 0;
+    for (let i = 0; i < lines.length; i++) {
+        if (code[i] || !FOLD_MARK_RE.test(lines[i])) continue;
+        // 母项：往上第一条缩进比标记浅的行
+        const ind = indentOf(lines[i]);
+        let j = i - 1;
+        while (j >= 0 && (isBlank(lines[j]) || FOLD_MARK_RE.test(lines[j]) || indentOf(lines[j]) >= ind)) j--;
+        if (j < 0 || code[j] || /^[ \t]*>/.test(lines[j]) || !CHILD_ITEM_RE.test(lines[j]) || !hasKids(j) || owned.has(j)) { drop.add(i); removed++; continue; }
+        owned.add(j);
+        if (i !== j + 1) { drop.add(i); after.set(j, lines[i]); moved++; }
+    }
+    if (!drop.size) return { text, removed, moved };
+    const out = [];
+    lines.forEach((l, i) => {
+        if (drop.has(i)) return;
+        out.push(l);
+        if (after.has(i)) out.push(after.get(i));
+    });
+    return { text: out.join("\n"), removed, moved };
 }
 // 行尾的来源记号（明的、藏起来的都算，可能有好几个）
 const FROM_TAIL_RE = /(?:\s*(?:%%\s*)?←\s*(?:\[\[[^\]]*\]\]|\d{4}_\d{2}_\d{2})(?:\s*%%)?)+\s*$/;
@@ -255,6 +323,7 @@ function fillSupertagFields(text, defsOf) {
         const miss = defs.filter(d => !have.has(d.key));
         if (!miss.length) continue;
         items++;
+        if (FOLD_MARK_RE.test(lines[i + 1] || "")) out.push(lines[++i]);   // 折叠标记得紧挨着母项：字段插在它下面
         for (const d of miss) { out.push(`${m[1]}${unit}- ${d.key}:: ${d.def}`.replace(/\s+$/, " ")); added++; }
     }
     return { text: out.join("\n"), added, items };
@@ -380,7 +449,7 @@ function zoneInner(z, lines) {
     for (let i = 1; i < lines.length; i++) {
         const l = lines[i];
         if (FENCE_RE.test(l)) return lines;          // 带代码块的不动
-        if (isBlank(l) || ID_LINE_RE.test(l)) continue;   // 块 ID 那一行顶格，不算缩进层级
+        if (isBlank(l) || ID_LINE_RE.test(l) || FOLD_MARK_RE.test(l)) continue;   // 块 ID 那一行顶格、折叠标记属于上一行，都不算缩进层级
         const w = indentWidth(l);
         if (w1 < 0 || w < w1) w1 = w;
     }
@@ -388,8 +457,8 @@ function zoneInner(z, lines) {
     const lead = [], groups = [];                    // lead：块首行后面、第一个子项之前的空行
     for (let i = 1; i < lines.length; i++) {
         const l = lines[i];
-        // 空行、块 ID 那一行跟着上面的子项走
-        if (isBlank(l) || ID_LINE_RE.test(l)) { (groups.length ? groups[groups.length - 1] : lead).push(l); continue; }
+        // 空行、块 ID 那一行、折叠标记跟着上面那一项走（块首行下面的折叠标记留在块首行下面）
+        if (isBlank(l) || ID_LINE_RE.test(l) || FOLD_MARK_RE.test(l)) { (groups.length ? groups[groups.length - 1] : lead).push(l); continue; }
         if (indentWidth(l) === w1) groups.push([l]);
         else if (groups.length) groups[groups.length - 1].push(l);
     }
@@ -458,7 +527,7 @@ function linkCluster(kids, items) {
 function zoneOrganize(z, text) {
     const { parse, doneZoneEnd, normalizeKeyword, zoneOf, hasPrioShort, isCardBlock, trimBlock, isLinkBlock, sortZone, SEP } = z;
     const { head, blocks, tail } = parse(text);
-    const zones = { DONE: [], DOING: [], TODO: [] };
+    const zones = { DONE: [], DOING: [], MAIN: [], TODO: [] };
     const links = [], rest = [];
     const donePlain = [], doneRead = [], read = [], doneReadKids = [], readKids = [];
     let pin = null;   // 「- [[信息增量]]」那一块（TODO 区里）
@@ -469,6 +538,14 @@ function zoneOrganize(z, text) {
     // 一篇没分区的普通笔记不去动它，免得平白插进去几条分割线
     const zoned = blocks.some((b) => (b.zone && !b.pin) || b.sep);
     if (!zoned) for (const b of blocks) if (b.pin) { b.pin = false; b.zone = null; }   // 没分区的笔记：「- [[信息增量]]」也原样不动
+    // 主线块（块里有 [#A] 的任务）：按先后取前 MAIN_MAX 块，多出来的降成 [#B]。做完的、在做的也占名额
+    let mainN = 0, demoted = 0;
+    if (zoned && z.isMainBlock) for (const b of blocks) {
+        if (b.sep || b.pin || !z.isMainBlock(b.lines)) continue;
+        if (mainN < z.MAIN_MAX) { mainN++; b.main = true; continue; }
+        b.lines = z.demoteMain(b.lines);
+        demoted++;
+    }
     for (const b of blocks) {
         if (!b.sep && (!b.zone || hasPrioShort(b.lines[0]))) {
             // 小写关键字、优先级简写（todo a / TODO a）先规范，再重新判断
@@ -484,6 +561,7 @@ function zoneOrganize(z, text) {
         if (b.pin && pin) pin.push(...trimBlock(b.lines).slice(1));   // 第二块「- [[信息增量]]」：子块并进第一块
         else if (b.pin) zones.TODO.push((pin = trimBlock(b.lines)));
         else if (zoned && LINK_HEAD_RE.test(b.lines[0])) (b.inDone ? doneReadKids : readKids).push(...trimBlock(b.lines).slice(1));   // 已有的「🔗 链接」母块：子项并进来
+        else if (b.main && (b.zone === "TODO" || (!b.zone && !b.inDone))) zones.MAIN.push(trimBlock(b.lines));   // 还没开始的主线块：DOING 和 TODO 之间的主线区（首行没状态、子项里有 A 的母块也算）
         else if (b.zone === "DONE" && zoneOf(b.lines[0]) !== "DONE") donePlain.push(trimBlock(b.lines));   // 闪卡（首行没写 DONE 类关键字）跟普通条目一组
         else if (b.zone) zones[b.zone].push(trimBlock(b.lines));
         else if (b.inDone) (zoned && isReadLink(z, b.lines) ? doneRead : donePlain).push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
@@ -497,8 +575,9 @@ function zoneOrganize(z, text) {
     const extra = [[...links.flat(), ...readBlock], rest.flatMap((b) => b.lines)].filter((ls) => ls.length);   // 链接区：任务区（TODO）下面、其它内容上面
     if (zoned) {
         // 日记的固定三区：DONE 栏 | DOING 区 | TODO 区（信息增量在它最后），后面还有内容的话，空着的区也留着它那条分隔线，
-        // 所以 TODO 区永远在第二条「- ---」下面（模板 Templates/日记.md 就是这两条分隔线）
-        const slots = ["DONE", "DOING", "TODO"].map((z) => sortZone(z, zones[z]).flat());
+        // 所以 TODO 区永远在第二条「- ---」下面（模板 Templates/日记.md 就是这两条分隔线）。
+        // 有主线块时 DOING 和 TODO 之间多一个主线区，TODO 区落到第三条下面；没有就不留这一区
+        const slots = ["DONE", "DOING", ...(zones.MAIN.length ? ["MAIN"] : []), "TODO"].map((n) => sortZone(n === "MAIN" ? "TODO" : n, zones[n]).flat());
         slots[0].push(...donePlain.flat(), ...linkCluster(doneReadKids, doneRead));
         slots.forEach((ls, k) => {
             out.push(...ls);
@@ -506,7 +585,7 @@ function zoneOrganize(z, text) {
         });
     }
     extra.forEach((ls, i) => { if (i) out.push(SEP); out.push(...ls); });
-    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, READ: read.length + doneRead.length, inner };
+    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, MAIN: zones.MAIN.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, READ: read.length + doneRead.length, inner, mainN, demoted };
     return { text: head.concat(out, tail).join("\n"), counts };
 }
 
@@ -687,10 +766,101 @@ async function scanDesktopSessions(cache) {
 // 会话标题要能原样写成一行任务：去掉会被当成时间、格式标记、挪动标记的写法
 const safeTitle = (s) => String(s || "").replace(/[\r\n\[\]`←*=~「」]/g, " ").replace(/(\d)[:：](\d)/g, "$1.$2").replace(/\s+/g, " ").trim().slice(0, 60) || "没起名的会话";
 
+// ---------------- 编辑器里藏起搬迁记号 ----------------
+// 「%%← 2026_10_15%%」连同前面的空白一起替换成空，实时预览、源码模式里都看不见。它是一个原子：
+//   · 光标落在它前头（视觉上跟落在它后头是同一个位置）就挪到它后头，所以行尾回车、Bullet 的回车都不会把它带到新的一行；
+//     从它后头往左走的那一下直接跨过它，落到前一个字前面
+//   · 退格本来会把整段原子一口吞掉：改成删它前面的那个字
+//   · 在它后头接着打的字会排在它后面，看起来一样；下次基础整理时它被挪回行尾
+// 行内代码、代码块里的不藏
+function fromMarksIn(state, line) {
+    const out = [];
+    for (const m of line.text.matchAll(HIDDEN_FROM_RE)) {
+        const at = m.index + m[0].indexOf("%%");
+        let code = false;
+        if (cmLang && cmLang.syntaxTree) {
+            try {
+                const node = cmLang.syntaxTree(state).resolveInner(line.from + at + 1, 1);
+                code = /code/i.test(node.type.name);
+            } catch (e) { code = false; }
+        }
+        if (code || inInlineCode(line.text, at)) continue;
+        out.push([line.from + m.index, line.from + m.index + m[0].length]);
+    }
+    return out;
+}
+
+function fromMarkExtension(plugin) {
+    const HIDE = Decoration.replace({});
+    const build = (view) => {
+        if (!plugin.settings.hideFromInEditor) return Decoration.none;
+        const b = new RangeSetBuilder();
+        let last = -1;
+        for (const { from, to } of view.visibleRanges) {
+            for (let pos = from; pos <= to;) {
+                const line = view.state.doc.lineAt(pos);
+                if (line.number > last) {
+                    last = line.number;
+                    if (line.text.includes("%%")) for (const [a, z] of fromMarksIn(view.state, line)) b.add(a, z, HIDE);
+                }
+                pos = line.to + 1;
+            }
+        }
+        return b.finish();
+    };
+    const marks = ViewPlugin.fromClass(class {
+        constructor(view) { this.decorations = build(view); }
+        update(u) {
+            if (u.docChanged || u.viewportChanged || u.transactions.some((tr) => tr.effects.some((e) => e.is(plugin.refreshFx)))) this.decorations = build(u.view);
+        }
+    }, {
+        decorations: (v) => v.decorations,
+        provide: (p) => EditorView.atomicRanges.of((view) => (view.plugin(p) ? view.plugin(p).decorations : Decoration.none)),
+    });
+    const filter = EditorState.transactionFilter.of((tr) => {
+        if (!plugin.settings.hideFromInEditor) return tr;
+        const st = tr.startState;
+        // 删字删进了藏起来的记号里（Obsidian 的退格一次删一个字符，不认原子，会把「%%」删掉一个，记号就坏了露出来）：
+        // 退格改成删它前面那个字，往后删改成删它后面那个字 / 接上下一行。选中一段连记号一起删的照常删
+        if (tr.docChanged && tr.isUserEvent("delete") && st.selection.ranges.length === 1 && st.selection.main.empty) {
+            let one = null, n = 0;
+            tr.changes.iterChanges((fA, tA, fB, tB, ins) => { n++; one = { fA, tA, ins }; });
+            if (n !== 1 || one.ins.length || one.tA <= one.fA) return tr;
+            const line = st.doc.lineAt(one.fA);
+            const hit = fromMarksIn(st, line).find(([a, z]) => one.fA >= a && one.tA <= z);
+            if (!hit) return tr;
+            const [a, z] = hit;
+            if (tr.isUserEvent("delete.forward")) {
+                if (z >= st.doc.length) return {};
+                const to = z < line.to ? line.from + findClusterBreak(line.text, z - line.from, true) : z + 1;
+                return { changes: { from: z, to }, selection: { anchor: z }, userEvent: "delete.forward", scrollIntoView: true };
+            }
+            if (a <= line.from) return {};   // 记号前面没有字了：什么都不删
+            const from = line.from + findClusterBreak(line.text, a - line.from, false);
+            return { changes: { from, to: a }, selection: { anchor: z - (a - from) }, userEvent: "delete.backward", scrollIntoView: true };
+        }
+        // 光标停在记号前头：挪到它后头；从后头往左走的那一下跨过它和它前面的一个字
+        if (!tr.selection || tr.docChanged) return tr;
+        const sel = tr.selection;
+        if (sel.ranges.length !== 1 || !sel.main.empty) return tr;
+        const head = sel.main.head, line = st.doc.lineAt(head);
+        if (!line.text.includes("%%")) return tr;
+        const hit = fromMarksIn(st, line).find(([a, z]) => a === head && z > a);
+        if (!hit) return tr;
+        const prev = st.selection.main.head;
+        let pos = hit[1];
+        if (prev === hit[1]) pos = hit[0] > line.from ? line.from + findClusterBreak(line.text, hit[0] - line.from, false) : hit[0];
+        return [tr, { selection: { anchor: pos }, sequential: true }];
+    });
+    return [marks, filter];
+}
+
 // ---------------- 插件 ----------------
 module.exports = class JournalTidy extends Plugin {
     async onload() {
         this.settings = Object.assign({}, DEFAULTS, await this.loadData());
+        this.refreshFx = StateEffect.define();   // 设置改了：编辑器里重画
+        this.registerEditorExtension(fromMarkExtension(this));
         this.addCommand({ id: "open", name: "整理日记…（选文件、选方式）", hotkeys: [{ modifiers: ["Mod", "Shift"], key: "J" }], callback: () => new TidyModal(this).open() });
         for (const mode of ["basic", "deep"]) {
             const id = mode === "basic" ? "" : "-deep";
@@ -815,7 +985,7 @@ module.exports = class JournalTidy extends Plugin {
         return ["明天", "后天", "大后天"].map((w, i) => (n[i + 1] ? `${w} ${n[i + 1]} 条` : "")).filter(Boolean).join("、");
     }
 
-    // 只把 DONE 栏（正文第一条「- ---」之前）和 DONE 块里带子项的顶格块折起来，其它全部展开
+    // 只把 DONE 栏（正文第一条「- ---」之前）和 DONE 块里带子项的顶格块折起来，其它展开（带折叠标记的项除外）
     foldView(z, view) {
         const mode = view && view.currentMode;
         if (!mode || typeof mode.applyFoldInfo !== "function" || !view.editor) return false;
@@ -836,7 +1006,14 @@ module.exports = class JournalTidy extends Plugin {
             while (n > 1 && isBlank(ls[n - 1])) n--;
             if (n > 1) folds.push({ from: b.start, to: b.start + n - 1 });
         });
-        mode.applyFoldInfo({ folds, lines: view.editor.lineCount() });
+        // 列表折叠记忆开着时：这次收起 DONE 区不算你的操作，不写成折叠标记；
+        // applyFoldInfo 会把别的折叠全展开，所以接着让它按标记把你自己折过的项补折回去
+        const lfm = this.app.plugins.plugins["list-fold-memory"];
+        const apply = () => mode.applyFoldInfo({ folds, lines: view.editor.lineCount() });
+        if (lfm && typeof lfm.quietly === "function") {
+            lfm.quietly(apply);
+            if (view.editor.cm) lfm.quietly(() => lfm.applyFolds(view.editor.cm));
+        } else apply();
         return true;
     }
 
@@ -882,6 +1059,13 @@ module.exports = class JournalTidy extends Plugin {
                     if (r.added) report.push(`${r.items} 处 SuperTag（如 [[菜谱]]）下面补了 ${r.added} 个字段，记得去填`);
                 }
             }
+            // 折叠标记归位（纯本地）：放在分区前面，分区时它已经紧挨着自己的母项，跟着母项一起挪
+            {
+                let r = null;
+                await this.app.vault.process(file, (data) => { r = repairFoldMarks(data); return r.text; });
+                if (r.moved) report.push(`${r.moved} 个折叠标记挪回了母项下面`);
+                if (r.removed) report.push(`清掉 ${r.removed} 个失效的折叠标记（母项已经没有子项）`);
+            }
             // 1. 任务分区（纯本地，马上完成）
             if (opt.moveTodos) {
                 const z = this.zoneCore();
@@ -890,7 +1074,9 @@ module.exports = class JournalTidy extends Plugin {
                     const moved = await this.moveDayItems(z, file, await this.app.vault.read(file));
                     let c = null, changed = false;
                     await this.app.vault.process(file, (data) => { const r = zoneOrganize(z, moved.length ? z.dropBlocks(data, moved.map(m => m.orig)) : data); c = r.counts; changed = r.text !== data; return r.text; });
-                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING} · TODO ${c.TODO}` + (c.LINK ? ` · 链接 ${c.LINK}` : "") + (c.READ ? ` · 新收起的链接 ${c.READ}` : "") + (c.inner ? `；块内归位 ${c.inner} 处` : "") : "任务分区本来就是整理好的");
+                    report.push(changed ? `任务已分区：DONE ${c.DONE} · DOING ${c.DOING}` + (c.MAIN ? ` · 🎯 主线 ${c.MAIN}` : "") + ` · TODO ${c.TODO}` + (c.LINK ? ` · 链接 ${c.LINK}` : "") + (c.READ ? ` · 新收起的链接 ${c.READ}` : "") + (c.inner ? `；块内归位 ${c.inner} 处` : "") : "任务分区本来就是整理好的");
+                    if (c.demoted) report.push(`主线最多 3 块：多出来的 ${c.demoted} 块里的 [#A] 降成了 [#B]（撤销上一次日记整理可以恢复）`);
+                    else if (c.mainN === 0 && z.isMainBlock && file.basename === this.todayName()) report.push("今天还没有主线：给最要紧的一到三件写上 [#A]（todo a）");
                     if (moved.length) report.push(`搬到以后的日记：${this.movedSummary(moved)}`);
                 } else {
                     let moved = 0;
@@ -900,9 +1086,10 @@ module.exports = class JournalTidy extends Plugin {
             }
             // 藏起搬迁记号（纯本地）：放在分区之后，当场搬到别的日记的条目也是这时候才记上
             if (opt.hideFrom) {
-                let n = 0;
-                await this.app.vault.process(file, (data) => { const r = hideFromMarks(data); n = r.count; return r.text; });
+                let n = 0, t = 0;
+                await this.app.vault.process(file, (data) => { const r = hideFromMarks(data); n = r.count; t = r.tailed; return r.text; });
                 if (n) report.push(`${n} 处「← [[日期]]」藏成了注释`);
+                if (t) report.push(`${t} 处搬迁记号挪回了行尾`);
             }
             // 2. 进阶整理：问题回答、机器行按主题归类、摘录记号。两次问 Claude（联网查问题 / 归类判断）同时发出去，回来再依次写
             if (opt.answerQuestions || opt.groupMachine || opt.markExcerpts || opt.markThoughts) {
@@ -1222,9 +1409,14 @@ class TidySettings extends PluginSettingTab {
         text("机器行超过几条才归类", "进阶整理时，全篇 🤖 开头的机器行超过这个数，才把做完的按主题收起来", "machineThreshold", true);
         text("摘录的记号", "挂在摘录那一块顶格行的末尾。改了以后，以前标的旧记号不会跟着换", "excerptTag");
         text("念头的记号", "挂在念头那一行的末尾（TODO 留着不动）", "thoughtTag");
+        new Setting(containerEl).setName("编辑时藏起搬迁记号").setDesc("「%%← 2026_10_15%%」这种注释在实时预览、源码模式里也看不见（阅读视图本来就不显示）。光标跳过它，退格不会把它删掉；行内代码里的照常显示")
+            .addToggle(t => t.setValue(s.hideFromInEditor !== false).onChange(async v => {
+                s.hideFromInEditor = v; await this.plugin.save();
+                this.app.workspace.iterateAllLeaves((leaf) => { const cm = leaf.view && leaf.view.editor && leaf.view.editor.cm; if (cm) cm.dispatch({ effects: this.plugin.refreshFx.of(null) }); });
+            }));
         new Setting(containerEl).setName("归档记一笔").setDesc("在 Claude 桌面 app 里归档一个会话，今天的日记里记一行「DONE 时刻 🤖 归档「标题」」。螺旋日程自动记日记已经给它记过一行的，由螺旋日程把那一行标成 DONE，这里不重复记")
             .addToggle(t => t.setValue(s.archiveLog !== false).onChange(async v => { s.archiveLog = v; await this.plugin.save(); }));
     }
 }
 
-module.exports.__test = { cleanShareText, cleanUrl, isReadLink, linkCluster, zoneOrganize, hideFromMarks, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
+module.exports.__test = { cleanShareText, cleanUrl, isReadLink, linkCluster, zoneOrganize, zoneInner, hideFromMarks, repairFoldMarks, fillSupertagFields, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };

@@ -4,10 +4,11 @@
 //   · 键位和 Obsidian 自带快速切换器的「在右侧打开」一样
 //   · 没有搜索结果时什么都不做（和 ⇧↵ 一样），不会把输入框的字当成新文件名去建文件；新建只用 ⌘↵
 //   · 打开逻辑借面板自己的：调用期间把 workspace.openLinkText 的 newLeaf 换成 "split"（默认就是向右拆分）
+// ⇧↵（面板的「Open file in new pane」）改成在右侧栏打开：借 roam-backlinks 的右侧栏叠放，和 Shift 点链接一样
 // 文件名没有匹配时，改做全库内容搜索（相当于把 ⌘⇧F 并进来）：
 //   · 输入按空格拆成几个词，笔记正文里每个词都出现才算命中；含全部词的那一行做摘要，词高亮
 //   · 排序：有一行同时含全部词的在前，再按出现次数，再按日记日期从新到旧
-//   · 结果就是面板里的普通条目：↵ 打开并跳到那一行，⇧↵ 新标签页，⌘⌥↵ 右侧拆分；最后一条「在搜索面板中查看全部」打开 Obsidian 自带的全局搜索
+//   · 结果就是面板里的普通条目：↵ 打开并跳到那一行，⇧↵ 右侧栏，⌘⌥↵ 右侧拆分；最后一条「在搜索面板中查看全部」打开 Obsidian 自带的全局搜索
 //   · 全文按修改时间缓存在内存里（全库约 13 MB），启动后空闲时先读一遍，之后只读改过的文件
 // Tab 递进加一层全文搜索（文件名有匹配时也能搜正文）：
 //   · 第一次按 Tab：文件名结果不动，正文命中接在下面（已经在文件名结果里的笔记不重复列）；之后继续改输入，这一层一直开着，直到面板关掉
@@ -41,6 +42,7 @@ const { Plugin, Modal, MarkdownView, Notice, Setting, setIcon, getAllTags } = re
 
 const PALETTE_CLS = "better-command-palette";
 const HINT = "Open in split view";
+const SIDEBAR_HINT = "Open in right sidebar";
 const CS_HINT = "全文搜索，再按打开搜索面板";
 const MAX_COLUMNS = 3;
 const CONTENT_LIMIT = 50;
@@ -364,6 +366,8 @@ module.exports = class PaletteSplitOpen extends Plugin {
 						box.insertBefore(sc, tab.nextSibling);
 					}
 				}
+				// ⇧↵ 改成在右侧栏打开，提示跟着改名
+				if (box && palette.__scope !== "chrome") box.querySelectorAll(".prompt-instruction span").forEach((s) => { if (s.textContent === "Open file in new pane") s.textContent = SIDEBAR_HINT; });
 			}
 			plugin.renderScope(this);
 			return r;
@@ -622,9 +626,12 @@ module.exports = class PaletteSplitOpen extends Plugin {
 		adapter.onChooseSuggestion = function (item, evt) {
 			// Chrome 书签范围：结果不是笔记，全部自己接。⌘↵ 面板传过来的是 null（本来是「用输入的字新建笔记」），这里改成打开选中的那条
 			if (palette.__scope === "chrome") return plugin.openBookmark(item || (palette.currentSuggestions || [])[palette.chooser?.selectedItem ?? 0], evt);
-			if (item && !item.__cs && palette.__scope === "bookmarks" && plugin.openBoard(item, evt)) return;
-			if (!item || !item.__cs) return origChoose.call(this, item, evt);
-			return plugin.openHit(palette, item, evt);
+			const choose = () => {
+				if (item && !item.__cs && palette.__scope === "bookmarks" && plugin.openBoard(item, evt)) return;
+				if (!item || !item.__cs) return origChoose.call(this, item, evt);
+				return plugin.openHit(palette, item, evt);
+			};
+			return item && plugin.wantsSidebar(palette, evt) ? plugin.openInSidebar(choose) : choose();
 		};
 	}
 
@@ -1179,6 +1186,40 @@ module.exports = class PaletteSplitOpen extends Plugin {
 	openGlobalSearch(q) {
 		const gs = this.app.internalPlugins.getPluginById("global-search");
 		if (gs && gs.instance) gs.instance.openGlobalSearch(q);
+	}
+
+	// 面板原来的「Open file in new pane」修饰键（默认 ⇧）单独按着 ↵ / 点：改成在右侧栏打开
+	wantsSidebar(palette, evt) {
+		if (!evt) return false;
+		const mod = palette.plugin && palette.plugin.settings && palette.plugin.settings.openInNewTabMod;
+		return mod === "Shift" ? evt.shiftKey && !evt.metaKey && !evt.ctrlKey && !evt.altKey
+			: (evt.metaKey || evt.ctrlKey) && !evt.shiftKey && !evt.altKey;
+	}
+
+	// 和 openInSplit 一样借面板自己的打开逻辑：调用期间把 openLinkText 的「新标签页」换成右侧栏。
+	// 右侧栏用 roam-backlinks 的叠放（和 Shift 点链接一样，接在上一块下面，列表块会聚焦进去）；没装就在右侧栏开个新标签
+	async openInSidebar(choose) {
+		const ws = this.app.workspace;
+		const own = Object.prototype.hasOwnProperty.call(ws, "openLinkText");
+		const prev = ws.openLinkText;
+		const app = this.app;
+		ws.openLinkText = async function (linktext, sourcePath, newLeaf, state) {
+			if (!newLeaf) return prev.call(this, linktext, sourcePath, newLeaf, state);
+			const file = app.metadataCache.getFirstLinkpathDest(linktext.split("#")[0], sourcePath || "");
+			const line = state && state.eState && typeof state.eState.line === "number" ? state.eState.line : -1;
+			const rb = app.plugins.plugins["roam-backlinks"];
+			if (file && rb && rb.openStackedFile) return rb.openStackedFile(file, line);
+			if (ws.rightSplit && ws.rightSplit.collapsed) ws.rightSplit.expand();
+			const leaf = ws.getRightLeaf(false);
+			await leaf.openLinkText(linktext, sourcePath, state);
+			ws.revealLeaf(leaf);
+			ws.setActiveLeaf(leaf, { focus: true });
+		};
+		try {
+			await choose();
+		} finally {
+			if (own) ws.openLinkText = prev; else delete ws.openLinkText;
+		}
 	}
 
 	async openInSplit(palette, item, evt) {

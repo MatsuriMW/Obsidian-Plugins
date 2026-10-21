@@ -314,7 +314,7 @@ module.exports = class NautilusNotify extends Plugin {
 
   // ---------- 🃏 闪卡到期（借第二大脑插件的 AnkiConnect；Anki 没开就不发） ----------
   async pushCards() {
-    const sb = this.app.plugins.plugins["second-brain"];
+    const sb = this.app.plugins.plugins["second-brain-local"];
     if (!sb?.anki) return;
     let n;
     try { n = (await sb.anki("findCards", { query: "is:due -is:suspended -is:buried" })).length; } catch (e) { console.warn("[nautilus-notify] Anki 没连上，今天不发闪卡提醒", e); return; }

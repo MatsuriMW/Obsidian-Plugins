@@ -5,8 +5,10 @@
 //   · 库周报：每周第一次打开时生成 计划与总结/库周报.md（新笔记、长得最多的页、候选建页词、孤岛变化）
 // 相关度 = 语义向量（本机 Ollama 的 embedding 模型，按意思找）+ BM25（中文按字的二元组切，按字面找）混合；Ollama 没开就只用 BM25。
 // 向量按块内容的哈希缓存在 ~/.cache/second-brain/vectors/（不放进库里，免得 iCloud 同步），两个库共用。
-const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, Scope, requestUrl } = require("obsidian");
-const nfs = require("fs"), npath = require("path"), nos = require("os"), ncrypto = require("crypto");
+const { Plugin, ItemView, Notice, Menu, TFile, MarkdownView, MarkdownRenderer, Modal, PluginSettingTab, Setting, Keymap, Scope, requestUrl, Platform } = require("obsidian");
+// 手机上（Obsidian 移动版）只开每日回顾：没有 Node 的 fs / path / os / crypto，也连不上本机的 Anki 和 Ollama
+const MOBILE = !!Platform?.isMobile;
+const nfs = MOBILE ? null : require("fs"), npath = MOBILE ? null : require("path"), nos = MOBILE ? null : require("os"), ncrypto = MOBILE ? null : require("crypto");
 const { EditorView } = require("@codemirror/view");
 
 const VIEW_REVIEW = "sb-daily-review";
@@ -20,6 +22,8 @@ const DEFAULTS = {
     excludeFolders: "Templates, scripts, Bases, 选题/_采访, 计划与总结/库周报.md",
     privateLinks: "宝a",
     reviewCount: 5,
+    reviewGoal: 20,           // 每天刷卡片的目标张数（揭开或作答过的卡片 / 挖空，一张算一次），每日回顾顶上的进度条
+    walkRange: "all",         // 随机漫步的卡片 / 挖空按新增时间圈范围："7d" 最近 7 天 / "30d" 最近 30 天 / "all" 全部（每日回顾标题旁边切换，记住上次选的）
     recentBoost: 3,           // 随机漫步：近一年的卡片 / 挖空 / Wiki 条目被抽到的权重是其余的几倍（1 = 不偏向）
     boostLinks: "AI, LLM, ChatGPT, Agent, Transformer, prompt, 提示词, 机器学习, 神经网络, Claude, Claude Code, Codex, DeepSeek, Gemini, OpenAI, Anthropic, AGI, embedding, vibe coding, Cursor, MCP, skill, rule, memory, context engineering, Andrej Karpathy, Karpathy",   // 随机漫步：卡片本身或它上层的母块链到这些页的，权重再乘 linkBoost（不分大小写，逗号分隔）
     linkBoost: 3,
@@ -52,10 +56,36 @@ const DEFAULTS = {
     fxAnim: true,             // 在作答按钮那儿放一小簇烟花：答对是亮色往上炸，答错是暗色往下落
     fxVolume: 55,             // 0-100
     lastAutoOpen: "",
+    goalHist: {},             // 每天刷了几张 { "YYYY-MM-DD": n }，只记这台设备的（手机的在 sync/mobile-state.json），留 60 天
+    secFold: { wiki: true, orphans: true },   // 每日回顾里折叠着的小节（点小节标题开合，记住）
+    walkMode: "main",         // 随机漫步上次选的类别：main 知识 / lang 语言 / wiki / s:<学科名>
+    // 学科：一行一门，「名称：双链, 双链 | 文件夹, 文件夹」。卡片本身或上层母块链到这些页、或在这些文件夹里，就归这门（从上往下第一个对上的）；
+    // 语言类另有规则（langPattern），不在这里。都没对上的，电脑上用本机向量按意思归到最像的一门，归不进去算「其他」
+    subjects: "AI 与编程：AI, LLM, Agent, Agent Skills, Claude Code, Claude, Codex, ChatGPT, DeepSeek, Transformer, NLP, RAG, Retrieval-Augmented Generation, prompt, 提示词, 机器学习, 神经网络, 强化学习, 马尔可夫, vibe coding, MCP, embedding, AIGC, macOS, 命令行, Swift, 第二大脑 | Concepts/人工智能, 编程与技术, 软件与数字工具\n"
+        + "投资与商业：投资, 技术分析, 商业分析, 房地产, 复利, 仓位, 货币超发, 互联网泡沫, 长期主义, 产品经理, AI产品经理, 数据驱动, 自媒体, 职业规划, 工作 | Concepts/投资, 媒体与内容\n"
+        + "心理与成长：INTJ, 自我hacking, 决策偏差, 亲密关系, 教育, Naval Ravikant, Lex Fridman | Concepts/心理学\n"
+        + "审美与生活：动效, 牛仔裤, 面料, 审美 | 审美",
     dismissedOrphans: [],
 };
 
 const M = () => window.moment();
+// 手机上单独存的设置（只这几项，写进 sync/mobile-state.json），免得和电脑一起写 data.json 被 iCloud 互相覆盖
+const DEVICE_KEYS = ["goalHist", "walkRange", "walkMode", "secFold", "lastAutoOpen"];
+const SYNC_DIR = "sync";
+// 不依赖 Node 的短哈希（FNV-1a），手机和电脑算出来一样：给卡片当键
+function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36); }
+// 学科设置 → [{ name, links: Set(小写), folders: [] }]
+function parseSubjects(text) {
+    return String(text || "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+        const m = l.match(/^([^：:]+)[：:](.*)$/);
+        if (!m) return null;
+        const [links, folders] = m[2].split("|");
+        const list = (v) => String(v || "").split(/[,，]/).map((x) => x.trim()).filter(Boolean);
+        return { name: m[1].trim(), links: new Set(list(links).map((x) => x.toLowerCase())), folders: list(folders).map((x) => x.replace(/\/$/, "")) };
+    }).filter(Boolean);
+}
+// 随机漫步的时间范围：[设置值, 按钮文字, 天数（0 = 不限）]
+const WALK_RANGES = [["7d", "7 天", 7], ["30d", "1 个月", 30], ["all", "全部", 0]];
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -270,6 +300,7 @@ async function osa(script) {
 }
 // Bike 开着这篇的话，这边写进去会被 Bike 下次自动保存覆盖掉
 async function bikeHasOpen(file) {
+    if (MOBILE) return false;
     const r = await osa(`const b = Application("Bike"); b.running() && b.documents.byName(${JSON.stringify(file.name)}).exists() ? "yes" : "no"`);
     return r === "yes";
 }
@@ -334,13 +365,63 @@ const FX = {
         this.noise(ac, 0.24, 0, v, 3800, 450, 0.8);
         this.note(ac, 180, 90, 0.18, 0.13, v * 0.8, "sine", 500);
     },
-    // 昂扬：C-E-G-C 往上走的琶音（三角波，亮一点），顶上再挂一个高八度的亮片
-    up(vol) {
+    // 昂扬：C-E-G-C 往上走的琶音（三角波，亮一点），顶上再挂一个高八度的亮片。shift = 连对时往上升几个半音，越答越高
+    up(vol, shift = 0) {
         if (!vol) return;
         const ac = this.audio(); if (!ac) return;
-        const v = 0.17 * vol;
-        for (const [f, d] of [[523.25, 0], [659.25, 0.07], [783.99, 0.14], [1046.5, 0.21]]) this.note(ac, f, f, 0.32, d, v, "triangle");
-        this.note(ac, 1568, 2093, 0.45, 0.27, v * 0.4, "sine");
+        const v = 0.17 * vol, k = Math.pow(2, Math.min(12, shift) / 12);
+        for (const [f, d] of [[523.25, 0], [659.25, 0.07], [783.99, 0.14], [1046.5, 0.21]]) this.note(ac, f * k, f * k, 0.32, d, v, "triangle");
+        this.note(ac, 1568 * k, 2093 * k, 0.45, 0.27, v * 0.4, "sine");
+    },
+    // 今天的目标达成：一个慢慢铺开的大三和弦，上面跑一串亮晶晶的高音
+    goal(vol) {
+        if (!vol) return;
+        const ac = this.audio(); if (!ac) return;
+        const v = 0.13 * vol;
+        for (const [f, d] of [[261.63, 0], [329.63, 0.05], [392, 0.1], [523.25, 0.15]]) this.note(ac, f, f, 1.3, d, v, "triangle", 2400);
+        [1046.5, 1318.5, 1568, 2093, 2637].forEach((f, i) => this.note(ac, f, f, 0.28, 0.25 + i * 0.07, v * 0.5, "sine"));
+    },
+    // 一行小字从 rect 那儿往上飘、淡出（「连对 ×5」这种）
+    float(rect, text) {
+        const el = document.body.createDiv({ cls: "sb-float", text });
+        el.style.left = rect.left + rect.width / 2 + "px"; el.style.top = rect.top + "px";
+        el.animate?.([{ transform: "translate(-50%, 0) scale(.8)", opacity: 0 }, { transform: "translate(-50%, -18px) scale(1.05)", opacity: 1, offset: 0.25 }, { transform: "translate(-50%, -46px) scale(1)", opacity: 0 }], { duration: 1100, easing: "cubic-bezier(.2,.8,.2,1)" });
+        setTimeout(() => el.remove(), 1150);
+    },
+    // 达标礼花：从 rect（进度条）上沿撒下一片彩纸，转着往下飘
+    confetti(rect) {
+        if (reducedMotion()) return;
+        const cv = document.createElement("canvas");
+        cv.className = "sb-fx";
+        const dpr = window.devicePixelRatio || 1, W = window.innerWidth, H = window.innerHeight;
+        cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
+        document.body.appendChild(cv);
+        const g = cv.getContext("2d"); g.scale(dpr, dpr);
+        const cols = ["#ffd166", "#ff9f43", "#ff6b6b", "#1dd1a1", "#48dbfb", "#a29bfe", "#3fa877"];
+        const ps = Array.from({ length: 70 }, (_, i) => ({
+            x: rect.left + Math.random() * rect.width, y: rect.top - 4,
+            vx: (Math.random() - 0.5) * 3.2, vy: -2.5 - Math.random() * 3.5,
+            w: 4 + Math.random() * 4, h: 7 + Math.random() * 5, a: Math.random() * 6.28, va: (Math.random() - 0.5) * 0.35,
+            c: cols[i % cols.length], life: 1, dec: 0.006 + Math.random() * 0.005,
+        }));
+        let last = performance.now();
+        const step = (now) => {
+            const k = Math.min(34, now - last) / 16.7; last = now;
+            g.clearRect(0, 0, W, H);
+            let alive = false;
+            for (const p of ps) {
+                if (p.life <= 0 || p.y > H + 20) continue;
+                p.vy += 0.09 * k; p.vx *= 0.99; p.vy = Math.min(p.vy, 3.2);
+                p.x += (p.vx + Math.sin(p.a) * 0.6) * k; p.y += p.vy * k; p.a += p.va * k; p.life -= p.dec * k;
+                alive = true;
+                g.save(); g.globalAlpha = Math.min(1, p.life * 1.6); g.translate(p.x, p.y); g.rotate(p.a);
+                g.fillStyle = p.c; g.fillRect(-p.w / 2, -p.h / 2 * Math.abs(Math.cos(p.a * 1.7)), p.w, p.h * Math.abs(Math.cos(p.a * 1.7)) + 1);
+                g.restore();
+            }
+            if (alive) requestAnimationFrame(step); else cv.remove();
+        };
+        requestAnimationFrame(step);
+        setTimeout(() => cv.remove(), 4500);
     },
     // 低沉：往下掉的两声，低通压掉高频，闷着走
     down(vol) {
@@ -1068,13 +1149,17 @@ class ReviewView extends ItemView {
         this.selected = null;
         this.bindFocusKeys();
         const today = M().format("YYYY-MM-DD");
-        const head = el.createDiv({ cls: "sb-head" });
+        // 标题和今天的进度条钉在面板顶上，卡片在下面滚
+        const top = el.createDiv({ cls: "sb-top" });
+        const head = top.createDiv({ cls: "sb-head" });
         head.createEl("b", { text: `🗓 每日回顾 · ${today}` });
         const btns = head.createSpan({ cls: "sb-head-btns" });
         const fz = btns.createEl("button", { text: "◎", cls: "sb-focus-btn", attr: { "aria-label": "聚焦：只看一张（⌥⌘→ 进，⌥⌘← 或 Esc 出）" } });
         fz.onclick = () => (this.focused ? this.focusOut() : this.focusIn());
         const again = btns.createEl("button", { text: "↻", attr: { "aria-label": "重新抽" } });
         again.onclick = () => { this.shift++; this.orphanShift++; this.render(); };
+        this.goalEl = top.createDiv({ cls: "sb-goal" });
+        this.updateGoal();
 
         await this.renderWalk(el, today, stale);
         if (stale()) return;
@@ -1084,11 +1169,70 @@ class ReviewView extends ItemView {
         if (stale()) return;
         await this.renderOrphans(el, today);
     }
-    section(el, title, hint) {
+    // 今天的刷卡进度：已刷 / 目标
+    updateGoal() {
+        const g = this.goalEl;
+        if (!g?.isConnected) return;
+        const done = this.plugin.goalDone(), goal = this.plugin.goalTarget();
+        g.empty();
+        g.toggleClass("is-met", done >= goal);
+        const bar = g.createDiv({ cls: "sb-goal-bar" });
+        bar.createDiv({ cls: "sb-goal-fill" }).style.width = Math.min(100, (done / goal) * 100) + "%";
+        g.createSpan({ cls: "sb-goal-text", text: done >= goal ? `✓ 今天 ${done} / ${goal} 张` : `今天 ${done} / ${goal} 张` });
+        // 最近 14 天每天刷了几张（Anki 的复习记录，手机上刷的也算）+ 连续天数；Anki 没开就不画
+        const days = this.plugin.reviewDaysCache?.map;
+        if (days) {
+            const row = this.goalEl.createDiv({ cls: "sb-streak" });
+            const today = M().format("YYYY-MM-DD");
+            const n = (d) => Math.max(days[d] || 0, this.plugin.dayCount(d));
+            for (let i = 13; i >= 0; i--) {
+                const d = M().subtract(i, "days").format("YYYY-MM-DD"), k = n(d);
+                row.createSpan({ cls: "sb-day" + (k >= goal ? " is-met" : k ? " is-some" : ""), attr: { "aria-label": `${d} · ${k} 张` } });
+            }
+            let streak = 0;
+            for (let i = n(today) ? 0 : 1; n(M().subtract(i, "days").format("YYYY-MM-DD")); i++) streak++;
+            row.createSpan({ cls: "sb-streak-text", text: streak ? `连续 ${streak} 天` : "今天开个头" });
+        } else this.plugin.reviewDays().then((ok) => { if (ok) this.updateGoal(); });
+        this.updateLeft();
+    }
+    // 刷了一张：进度条亮一下、数字跳一下
+    bumpGoal() {
+        const g = this.goalEl;
+        if (!g?.isConnected || reducedMotion()) return;
+        g.querySelector(".sb-goal-fill")?.animate?.([{ filter: "brightness(1.35)", transform: "scaleY(1.6)" }, { filter: "none", transform: "none" }], { duration: 420, easing: "cubic-bezier(.2,.8,.2,1)" });
+        g.querySelector(".sb-goal-text")?.animate?.([{ transform: "scale(1.18)" }, { transform: "none" }], { duration: 320, easing: "cubic-bezier(.2,.8,.2,1)" });
+    }
+    // 这一批还剩几张（显示着的 + 队列里的）
+    updateLeft() {
+        const el = this.leftEl;
+        if (!el?.isConnected) return;
+        const k = this.contentEl.querySelectorAll(LIVE_WALK).length + (this.walkQueue?.length || 0);
+        el.setText(k ? `这一批还剩 ${k} 张` : "");
+    }
+    // 这一批刷完了：够了今天的目标就收工；还想刷，再来 10 张
+    walkFinished(box) {
+        const p = this.plugin, done = p.goalDone(), goal = p.goalTarget();
+        const f = box.createDiv({ cls: "sb-finish" + (done >= goal ? " is-met" : "") });
+        // 打勾：一圈环先画出来，再画勾
+        if (done >= goal) f.createDiv({ cls: "sb-check" }).innerHTML = '<svg viewBox="0 0 52 52"><circle cx="26" cy="26" r="23"/><path d="M15 27 l7 7 l15 -16"/></svg>';
+        f.createDiv({ cls: "sb-finish-t", text: done >= goal ? `今天的 ${goal} 张刷完了` : "这一批刷完了" });
+        f.createDiv({ cls: "sb-hint", text: done >= goal ? "可以收工了。点「重来」的卡 Anki 会在明天以后再排给你" : "卡池里符合当前范围的卡抽完了，换个范围或类别试试" });
+        const more = f.createEl("button", { text: "再来 10 张" });
+        more.onclick = () => { this.target = Math.max(goal, done) + 10; this.targetDay = M().format("YYYY-MM-DD"); this.render(); };
+        this.updateLeft();
+    }
+    // fold = 能折叠的小节的键：点标题开合，记在设置 secFold 里
+    section(el, title, hint, fold) {
         const s = el.createDiv({ cls: "sb-sec" });
         const h = s.createDiv({ cls: "sb-sec-h" });
         h.createEl("span", { text: title });
         if (hint) h.createEl("span", { text: hint, cls: "sb-hint" });
+        if (fold) {
+            const p = this.plugin, folds = (p.settings.secFold ||= {});
+            s.addClass("is-foldable");
+            s.toggleClass("is-folded", !!folds[fold]);
+            h.onclick = async () => { folds[fold] = !folds[fold]; s.toggleClass("is-folded", folds[fold]); await p.saveSettings(); };
+        }
         return s;
     }
     card(parent, file, line, text, label) {
@@ -1107,17 +1251,28 @@ class ReviewView extends ItemView {
     // Anki 开着的话，今天到期的卡排在前面（最多占 n-1 个名额，给别的留一个），揭开后可以直接作答，结果写进 Anki
     // 三种，标题旁边切换：知识（默认，非语言类的卡片和挖空）/ 语言（语言类的卡片和挖空）/ Wiki（Wiki 条目）
     // 卡片 / 挖空里今天在 Anki 到期的排最前；先显示 n 条，答完一张就收走，从后面的队列里补一张
+    // 卡片 / 挖空还能按新增时间圈范围（设置 walkRange，记住上次选的）：最近 7 天 / 最近 30 天（都含今天）/ 全部。
+    // 新增时间就是 it.at：日记里的按日记日期，别的笔记按文件建立时间。只圈抽哪些卡，不碰 Anki 的排程
     async renderWalk(el, today, stale = () => false) {
         const p = this.plugin, n = p.settings.reviewCount;
-        const mode = ["main", "lang", "wiki"].includes(this.walkMode) ? this.walkMode : "main";
+        const subs = p.subjects();
+        const want = p.settings.walkMode;
+        const mode = ["main", "lang", "wiki"].includes(want) || (want?.startsWith("s:") && (subs.some((x) => "s:" + x.name === want) || want === "s:其他")) ? want : "main";
+        const subj = mode.startsWith("s:") ? mode.slice(2) : null;
+        const range = WALK_RANGES.some((r) => r[0] === p.settings.walkRange) ? p.settings.walkRange : "all";
+        const days = WALK_RANGES.find((r) => r[0] === range)[2];
+        const since = days ? window.moment(today, "YYYY-MM-DD").subtract(days - 1, "days").valueOf() : -Infinity;
         const pool = await p.walkPool();
         if (stale()) return;
         const lang = mode === "lang";
-        const src = mode === "wiki" ? { wiki: pool.wiki } : { card: pool.card.filter((it) => !!it.lang === lang), cloze: pool.cloze.filter((it) => !!it.lang === lang) };
+        await p.loadSnap();
+        if (stale()) return;
+        const pick = (arr) => arr.filter((it) => !!it.lang === lang && it.at >= since && (!subj || p.subjectOf(it) === subj));
+        const src = mode === "wiki" ? { wiki: pool.wiki } : { card: pick(pool.card), cloze: pick(pool.cloze) };
         let dueN = new Set();
         if (mode !== "wiki" && p.settings.ankiReview) { try { dueN = await p.ankiDueNotes(); } catch (e) { /* Anki 没开：照常随机 */ } }
         if (stale()) return;
-        const rand = rng(today + "#" + this.shift + "#" + mode);
+        const rand = rng(today + "#" + this.shift + "#" + mode + (mode === "wiki" ? "" : "#" + range));
         // 近一年记的权重乘上 recentBoost；链到 boostLinks 里那些页的（AI 相关）再乘 linkBoost。两样都占就相乘
         const yearAgo = Date.now() - 365 * 864e5, boost = Math.max(1, Number(p.settings.recentBoost) || 1);
         const hot = new Set(String(p.settings.boostLinks || "").split(/[,，\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean));
@@ -1127,19 +1282,60 @@ class ReviewView extends ItemView {
         const hint = mode === "wiki" ? `Wiki ${src.wiki.length}` : `卡片 ${src.card.length} · 挖空 ${src.cloze.length}` + (due.length ? ` · 今天到期 ${due.length}` : "");
         const s = this.section(el, "🎲 随机漫步", hint);
         s.addClass("sb-walk-sec");
+        this.leftEl = mode === "wiki" ? null : s.querySelector(".sb-sec-h").createSpan({ cls: "sb-hint sb-left" });
         const tabs = s.querySelector(".sb-sec-h > span").createSpan({ cls: "sb-walk-tabs" });
         for (const [m, label] of [["main", "知识"], ["lang", "语言"], ["wiki", "Wiki"]]) {
-            const b = tabs.createEl("button", { text: label, cls: m === mode ? "is-active" : "" });
-            b.onclick = () => { this.walkMode = m; this.render(); };
+            const b = tabs.createEl("button", { text: label, cls: m === mode || (m === "main" && subj) ? "is-active" : "" });
+            b.onclick = async () => { p.settings.walkMode = m; await p.saveSettings(); this.render(); };
+        }
+        // 按学科刷：「知识」下面一排学科，后面是这门在当前范围里的张数
+        if (mode === "main" || subj) {
+            const row = s.createDiv({ cls: "sb-subjects" });
+            const inRange = [...pool.card, ...pool.cloze].filter((it) => !it.lang && it.at >= since);
+            const count = {};
+            for (const it of inRange) { const k = p.subjectOf(it); count[k] = (count[k] || 0) + 1; }
+            const chips = [["main", "全部", inRange.length], ...subs.map((x) => ["s:" + x.name, x.name, count[x.name] || 0]), ["s:其他", "其他", count["其他"] || 0]];
+            for (const [m, label, k] of chips) {
+                if (m !== "main" && !k && m !== mode) continue;
+                const b = row.createEl("button", { cls: "sb-subject" + (m === mode ? " is-active" : "") });
+                b.createSpan({ text: label });
+                b.createSpan({ cls: "sb-subject-n", text: String(k) });
+                b.onclick = async () => { p.settings.walkMode = m; await p.saveSettings(); this.render(); };
+            }
+        }
+        // Wiki 条目的「新增时间」只是整页的建立时间，不准，Wiki 模式不给圈范围
+        if (mode !== "wiki") {
+            const rtabs = s.querySelector(".sb-sec-h > span").createSpan({ cls: "sb-walk-tabs sb-walk-range" });
+            for (const [r, label] of WALK_RANGES) {
+                const b = rtabs.createEl("button", { text: label, cls: r === range ? "is-active" : "" });
+                b.onclick = async () => { p.settings.walkRange = r; await p.saveSettings(); this.render(); };
+            }
         }
         // 排好整条队列：到期的在前，其余几类轮流
         const order = [...due], taken = new Set(due);
         const lists = shuffle(Object.keys(src), rand).map((k) => shuffle(src[k], rand).filter((x) => !taken.has(x)));
         for (let i = 0; lists.some((l) => i < l.length); i++) for (const l of lists) if (i < l.length) order.push(l[i]);
-        if (!order.length) { s.createDiv({ text: mode === "wiki" ? "没有 Wiki 条目" : lang ? "没有语言类的卡片或挖空" : "没有可抽的卡片或挖空", cls: "sb-hint" }); return; }
+        // 能作答的排前面：按快照，Anki 里还没到期的复习卡 / 学习中的卡只能看，挪到后面，别占这一批的名额
+        const snap = p.snap;
+        if (snap && mode !== "wiki") {
+            const can = (it) => { const nid = p.nidOf(it), c = nid && snap.notes[String(nid)]; return !!c && c.some((x) => snap.due.has(x) || snap.new.has(x)); };
+            const head = order.slice(0, due.length), rest = order.slice(due.length);
+            order.splice(0, order.length, ...head, ...rest.filter(can), ...rest.filter((it) => !can(it)));
+        }
+        const scope = range === "all" ? "" : `最近 ${days} 天新增的`;
+        if (!order.length) { s.createDiv({ text: mode === "wiki" ? "没有 Wiki 条目" : `没有${scope}${lang ? "语言类的卡片或挖空" : subj ? `「${subj}」的卡片或挖空` : "可抽的卡片或挖空"}`, cls: "sb-hint" }); return; }
         this.walkBox = s;
-        this.walkQueue = order.slice(n);
-        for (const it of order.slice(0, n)) this.walkCard(s, it);
+        // 卡片 / 挖空每天一批：到期的在前，补满到今天的目标（刷够了就收工，「再来 10 张」再加）。Wiki 不限
+        let batch = order;
+        if (mode !== "wiki") {
+            if (this.targetDay !== today) { this.target = 0; this.targetDay = today; }
+            const left = Math.max(0, Math.max(p.goalTarget(), this.target || 0) - p.goalDone());
+            if (!left) { this.walkQueue = []; this.walkFinished(s); return; }
+            batch = order.slice(0, left);
+        }
+        this.walkQueue = batch.slice(n);
+        for (const it of batch.slice(0, n)) this.walkCard(s, it);
+        this.updateLeft();
     }
     // 这张处理完了：收起来，后面的往上顶，从队列里补一张
     // 聚焦着的那一张不收高度：当场往上翻走，下一张同时从下面翻上来
@@ -1160,7 +1356,11 @@ class ReviewView extends ItemView {
             c.remove();
             const next = box === this.walkBox ? this.walkQueue?.shift() : null;
             if (next) this.walkCard(box, next);
-            else if (box && !box.querySelector(".sb-walk")) box.createDiv({ text: "做完了，↻ 再来一批", cls: "sb-hint" });
+            else if (box && !box.querySelector(".sb-walk")) {
+                if (box === this.walkBox && this.leftEl) this.walkFinished(box);
+                else box.createDiv({ text: "做完了，↻ 再来一批", cls: "sb-hint" });
+            }
+            this.updateLeft();
             // 用键盘作答时：选中顶上来的那张，接着按 Space / 1-4
             if (wasSel || inFocus) {
                 const rest = box ? [...box.querySelectorAll(LIVE_WALK)] : [];
@@ -1177,7 +1377,7 @@ class ReviewView extends ItemView {
         const meta = c.createDiv({ cls: "sb-meta" });
         const jd = journalDate(it.file.basename);
         const where = jd ? jd.format("YYYY-MM-DD") : it.file.basename.replace(/（wiki）$/, "");
-        meta.createEl("span", { text: `${{ card: "🃏 卡片", cloze: "✂️ 挖空", wiki: "📚 Wiki" }[it.kind]} · ${where}` });
+        meta.createEl("span", { text: `${{ card: "🃏 卡片", cloze: "✂️ 挖空", wiki: "📚 Wiki" }[it.kind]} · ${where}` + (it.kind !== "wiki" && !it.lang ? ` · ${p.subjectOf(it)}` : "") + (it.again ? " · 🔁 再想一次" : "") });
         // 母块：包着这张卡的各层，从外到内；⌘ 点哪一层跳到哪一层
         if (it.ctx?.length) {
             const bc = c.createDiv({ cls: "sb-crumbs" });
@@ -1204,7 +1404,8 @@ class ReviewView extends ItemView {
             : it.kind === "cloze" ? clozeMask(md, target)
             : full;
         const show = (m) => { body.empty(); MarkdownRenderer.render(this.app, m, body, it.file.path, this); };
-        const st = { revealed: false, card: null, reviewable: false, done: () => this.dismissWalk(c) };
+        // 「重来」后排回来的那张不再算进今天的张数
+        const st = { revealed: false, card: null, reviewable: false, it, goal: !!it.again, done: () => this.dismissWalk(c) };
         show(hiddenOf(null));
         const row = c.createDiv({ cls: "sb-actions" });
         const anki = it.kind === "wiki" || !p.settings.ankiReview ? null : c.createDiv({ cls: "sb-anki", text: "…" });
@@ -1239,6 +1440,7 @@ class ReviewView extends ItemView {
         el.empty(); el.removeClass("is-off");
         const nid = p.nidOf(it);
         if (!nid) { el.setText("没同步到 Anki"); el.addClass("is-off"); return; }
+        if (MOBILE) return this.fillSnap(nid, el, row, st);
         let cards;
         try {
             const ids = await p.anki("findCards", { query: `nid:${nid}` });
@@ -1264,7 +1466,22 @@ class ReviewView extends ItemView {
         if (cards.length > 1 && it.kind === "cloze") { st.target = card.ord + 1; onTarget(); }
         const label = await p.ankiState(card);
         el.setText(label);
-        st.reviewable = card.queue === 0 || (card.queue > 0 && card._due);
+        // 「重来」后排回来的那张在 Anki 里是学习中（几分钟后才到期），这里提前作答，相当于 Anki 的「提前学习」
+        st.reviewable = card.queue === 0 || (card.queue > 0 && card._due) || (!!st.it?.again && (card.queue === 1 || card.queue === 3));
+        if (!st.reviewable) el.addClass("is-off");
+        if (st.reviewable && st.revealed) { row.empty(); this.answerButtons(row, el, st); }
+    }
+    // 手机上：卡片状态取电脑存下的快照（sync/anki-snapshot.json），作答记进 sync/mobile-answers.json，电脑开着 Anki 时补写进去
+    fillSnap(nid, el, row, st) {
+        const p = this.plugin, snap = p.snap;
+        if (!snap) { el.setText("还没有电脑同步过来的 Anki 状态"); el.addClass("is-off"); return; }
+        const cids = snap.notes[String(nid)];
+        if (!cids?.length) { el.setText("Anki 里没这张卡"); el.addClass("is-off"); return; }
+        const due = cids.find((c) => snap.due.has(c)), nw = cids.find((c) => snap.new.has(c)), lr = cids.find((c) => snap.learn.has(c));
+        st.card = { cardId: due || nw || lr || cids[0] };
+        const done = !st.it?.again && p.answeredOnPhone(cids);
+        el.setText(done ? "✓ 这台手机上答过了" : due ? "今天到期" : nw ? "新卡" : lr ? "学习中" : "还没到期");
+        st.reviewable = !done && (!!(due || nw) || (!!st.it?.again && !!lr));
         if (!st.reviewable) el.addClass("is-off");
         if (st.reviewable && st.revealed) { row.empty(); this.answerButtons(row, el, st); }
     }
@@ -1277,22 +1494,33 @@ class ReviewView extends ItemView {
                 const rect = b.getBoundingClientRect();   // 先取位置：按钮马上要被清掉，烟花得知道在哪儿炸
                 row.querySelectorAll("button").forEach((x) => (x.disabled = true));
                 try {
-                    const ok = await p.anki("answerCards", { answers: [{ cardId: st.card.cardId, ease, duration: Number(p.settings.ankiSeconds) || 0 }] });
-                    if (!ok?.[0]) throw new Error("Anki 没接受这次作答");
-                    const [after] = await p.anki("cardsInfo", { cards: [st.card.cardId] });
-                    p.dueCache = null;
-                    p.scheduleAnkiSync();
+                    let after = null;
+                    if (MOBILE) await p.queueMobileAnswer(st.card.cardId, ease);
+                    else {
+                        const ok = await p.anki("answerCards", { answers: [{ cardId: st.card.cardId, ease, duration: Number(p.settings.ankiSeconds) || 0 }] });
+                        if (!ok?.[0]) throw new Error("Anki 没接受这次作答");
+                        [after] = await p.anki("cardsInfo", { cards: [st.card.cardId] });
+                        p.dueCache = null;
+                        p.scheduleAnkiSync();
+                    }
                     p.reviewTick(st, "answer", ease);
+                    // 答「重来」：隔三张再出来一次，趁热再想一遍（只再来一次）
+                    if (ease === 1 && st.it && !st.it.again && this.walkQueue) {
+                        this.walkQueue.splice(Math.min(3, this.walkQueue.length), 0, { ...st.it, again: true });
+                        this.updateLeft();
+                    }
                     row.empty();
                     el.removeClass("is-off"); el.addClass("is-done");
-                    el.setText(after.queue === 2 ? `✓ ${after.interval} 天后` : "✓ 一会儿再来");
-                    // 答对了放小烟花 + 昂扬的提示音；答错了不用烟花，只给一记低沉的
+                    el.setText(MOBILE ? (ease === 1 ? "✓ 记下了 · 一会儿再来" : "✓ 记下了，电脑开着 Anki 时补进去") : after.queue === 2 ? `✓ ${after.interval} 天后` : "✓ 一会儿再来");
+                    // 答对了放小烟花 + 昂扬的提示音；答错了不用烟花，只给一记低沉的。连着答对，提示音一次比一次高，三连起飘一个「连对 ×N」
                     const good = ease >= 3;
+                    this.combo = good ? (this.combo || 0) + 1 : ease === 1 ? 0 : this.combo || 0;
                     if (p.settings.fxAnim) FX.burst(rect, good);
-                    if (p.settings.fxSound) good ? FX.up(fxVol(p.settings)) : FX.down(fxVol(p.settings));
+                    if (p.settings.fxSound) good ? FX.up(fxVol(p.settings), (this.combo - 1) * 2) : FX.down(fxVol(p.settings));
+                    if (good && this.combo >= 3 && p.settings.fxAnim) FX.float(rect, `连对 ×${this.combo}`);
                     setTimeout(() => st.done?.(), 900);   // 让人看一眼结果，再收走
                     // 核对用时有没有记上：AnkiConnect 从 AnkiWeb 自动更新后，本地补丁会被覆盖，用时又变回约 0 秒
-                    if (Number(p.settings.ankiSeconds) > 0) {
+                    if (!MOBILE && Number(p.settings.ankiSeconds) > 0) {
                         try {
                             const rv = (await p.anki("getReviewsOfCards", { cards: [st.card.cardId] }))?.[String(st.card.cardId)] || [];
                             const last = rv.reduce((m, x) => (!m || x.id > m.id ? x : m), null);
@@ -1310,7 +1538,7 @@ class ReviewView extends ItemView {
     async renderWiki(el, today, stale = () => false) {
         const items = await this.plugin.wikiReviewItems();
         if (!items.length || stale()) return;
-        const s = this.section(el, "📚 Wiki 回看");
+        const s = this.section(el, "📚 Wiki 回看", "", "wiki");
         const rand = rng(today + "#w" + this.shift);
         for (const it of shuffle(items, rand).slice(0, 2)) this.card(s, it.file, it.line, it.text, `📚 ${it.page} · ${it.kind}`);
     }
@@ -1318,7 +1546,7 @@ class ReviewView extends ItemView {
     async renderOrphans(el, today) {
         const n = this.plugin.settings.orphanCount;
         const orphans = this.plugin.orphans();
-        const s = this.section(el, "🏝 孤岛笔记", `${orphans.length} 篇`);
+        const s = this.section(el, "🏝 孤岛笔记", `${orphans.length} 篇`, "orphans");
         const rand = rng(today + "#o" + this.orphanShift);
         for (const f of shuffle(orphans, rand).slice(0, n)) {
             const fm = this.app.metadataCache.getFileCache(f)?.frontmatter || {};
@@ -1327,6 +1555,7 @@ class ReviewView extends ItemView {
             const c = this.card(s, f, 0, fm.def ? String(fm.def) : body.slice(0, 200) || "（空页）", `📄 ${f.basename}`);
             const row = c.createDiv({ cls: "sb-actions" });
             const rel = row.createEl("button", { text: "🧭 找相关" });
+            if (MOBILE) rel.hide();
             const dis = row.createEl("button", { text: "不再提醒" });
             const out = c.createDiv({ cls: "sb-rel" });
             rel.onclick = async (evt) => { evt.stopPropagation(); await this.suggestLinks(f, fm, body, out); };
@@ -1506,6 +1735,13 @@ class RelatedView extends ItemView {
 module.exports = class SecondBrain extends Plugin {
     async onload() {
         this.settings = Object.assign({}, DEFAULTS, await this.loadData());
+        // 旧版只记今天：搬进按天的记录
+        if (this.settings.goalDay && this.settings.goalDone) {
+            const h = (this.settings.goalHist ||= {});
+            h[this.settings.goalDay] = Math.max(h[this.settings.goalDay] || 0, this.settings.goalDone);
+        }
+        delete this.settings.goalDay; delete this.settings.goalDone;
+        if (MOBILE) return this.onloadMobile();
         this.index = null;
         this.writing = false;
         this.registerView(VIEW_REVIEW, (leaf) => new ReviewView(leaf, this));
@@ -1547,13 +1783,183 @@ module.exports = class SecondBrain extends Plugin {
             }
             if (this.settings.autoWeeklyReport) setTimeout(() => this.weeklyReport(false), 20000);
         });
+        // 给手机准备 Anki 快照、补写手机上的作答、给没挂学科双链的卡按意思归学科：启动 30 秒后一次，之后每 30 分钟
+        this.app.workspace.onLayoutReady(() => setTimeout(() => this.syncPhone(), 30000));
+        this.registerInterval(window.setInterval(() => this.syncPhone(), 30 * 60 * 1000));
+        this.addCommand({ id: "sync-phone", name: "同步手机刷卡（更新 Anki 快照、补写手机上的作答）", callback: () => this.syncPhone(true) });
+    }
+    // 手机上：只有每日回顾
+    async onloadMobile() {
+        const own = await this.readSync("mobile-state.json");
+        this.settings.goalHist = {};
+        for (const k of DEVICE_KEYS) if (own && own[k] !== undefined) this.settings[k] = own[k];
+        this.registerView(VIEW_REVIEW, (leaf) => new ReviewView(leaf, this));
+        if (this.settings.enableReview) this.addRibbonIcon("history", "每日回顾", () => this.openReview(true));
+        this.addCommand({ id: "open-review", name: "打开每日回顾", callback: () => this.openReview(true) });
     }
     onunload() {
+        if (MOBILE) { if (this.reviewTimer) this.flushReview(); return; }
         document.body.removeClass("sb-writing"); clearTimeout(this.lookupTimer);
         if (this.syncTimer) this.ankiSync();   // 还有没同步的作答：关掉 / 重载前补一次（不等结果）
         if (this.reviewTimer) this.flushReview();   // 这一轮复习还没记进日记：补记
     }
-    async saveSettings() { await this.saveData(this.settings); }
+    async saveSettings() {
+        if (MOBILE) return this.writeSync("mobile-state.json", Object.fromEntries(DEVICE_KEYS.map((k) => [k, this.settings[k]])));
+        await this.saveData(this.settings);
+    }
+    // ----- 手机 ⇄ 电脑：插件目录下的 sync/ 跟着库走 iCloud。每个文件只有一边写，不会互相覆盖 -----
+    //   anki-snapshot.json  电脑写：每张笔记的卡号、今天到期 / 新卡 / 学习中的卡、每天复习数、按意思归的学科
+    //   mobile-answers.json 手机写：手机上的作答；desktop-applied.json 电脑写：已经补进 Anki 的那些
+    //   mobile-state.json   手机写：手机自己的设置和刷卡数
+    syncPath(name) { return `${this.manifest.dir}/${SYNC_DIR}/${name}`; }
+    async readSync(name) {
+        try { const a = this.app.vault.adapter, f = this.syncPath(name); return (await a.exists(f)) ? JSON.parse(await a.read(f)) : null; }
+        catch (e) { console.warn("[second-brain] 读不了", name, e); return null; }
+    }
+    async writeSync(name, data) {
+        const a = this.app.vault.adapter, dir = `${this.manifest.dir}/${SYNC_DIR}`;
+        if (!(await a.exists(dir))) await a.mkdir(dir);
+        await a.write(this.syncPath(name), JSON.stringify(data));
+    }
+    // 读快照（30 秒内复用），整理成好查的集合
+    async loadSnap() {
+        if (this.snapAt && Date.now() - this.snapAt < 30000) return this.snap;
+        this.snapAt = Date.now();
+        const raw = await this.readSync("anki-snapshot.json");
+        // 另一台设备的刷卡数：电脑上读手机的 mobile-state.json；手机上读电脑的 data.json
+        this.other = MOBILE ? await this.loadData().catch(() => null) : await this.readSync("mobile-state.json");
+        if (MOBILE) {
+            this.mobileAnswers = (await this.readSync("mobile-answers.json")) || [];
+            this.dueCache = null;
+        }
+        if (!raw) return (this.snap = null);
+        this.snap = { ...raw, due: new Set(raw.due || []), new: new Set(raw.new || []), learn: new Set(raw.learn || []), notes: raw.notes || {}, subj: raw.subj || {} };
+        return this.snap;
+    }
+    // 手机上：这几张卡在快照之后已经在手机上答过
+    answeredOnPhone(cids) { const at = this.snap?.at || 0; return (this.mobileAnswers || []).some((x) => x.at > at && cids.includes(x.cid)); }
+    async queueMobileAnswer(cid, ease) {
+        const applied = new Set((await this.readSync("desktop-applied.json")) || []);
+        const list = ((await this.readSync("mobile-answers.json")) || []).filter((x) => !applied.has(x.id));
+        list.push({ id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`, cid, ease, at: Date.now() });
+        this.mobileAnswers = list;
+        await this.writeSync("mobile-answers.json", list);
+    }
+    // 电脑上：补写手机上的作答 → 更新快照 → 给新卡按意思归学科
+    async syncPhone(loud) {
+        if (MOBILE || this.syncingPhone || !this.settings.ankiReview) return;
+        this.syncingPhone = true;
+        try {
+            const n = await this.applyMobileAnswers();
+            await this.writeSnapshot();
+            await this.classifySubjects().catch((e) => console.warn("[second-brain] 归学科", e));
+            if (loud || n) new Notice(n ? `已把手机上的 ${n} 次作答补进 Anki` : "手机刷卡：Anki 快照已更新");
+        } catch (e) { if (loud) new Notice("手机刷卡同步没成功：" + (e.message || e)); }
+        finally { this.syncingPhone = false; }
+    }
+    async applyMobileAnswers() {
+        const list = (await this.readSync("mobile-answers.json")) || [];
+        const applied = (await this.readSync("desktop-applied.json")) || [];
+        const done = new Set(applied);
+        const todo = list.filter((x) => !done.has(x.id)).sort((a, b) => a.at - b.at);
+        if (!todo.length) return 0;
+        const sec = Number(this.settings.ankiSeconds) || 0;
+        // 一张一张按手机上的先后补：同一张卡「重来」后又答了一次，要按顺序进 Anki
+        let n = 0;
+        for (const x of todo) {
+            try { const ok = await this.anki("answerCards", { answers: [{ cardId: x.cid, ease: x.ease, duration: sec }] }); if (ok?.[0]) n++; else console.warn("[second-brain] Anki 没接受手机上的这次作答（卡可能删了）", x); }
+            catch (e) { console.warn("[second-brain] 补写手机作答", x, e); }
+            applied.push(x.id);
+        }
+        await this.writeSync("desktop-applied.json", applied.slice(-2000));
+        this.dueCache = null;
+        this.scheduleAnkiSync();
+        return n;
+    }
+    async writeSnapshot() {
+        const old = (await this.readSync("anki-snapshot.json")) || {};
+        const pool = await this.walkPool();
+        const notes = old.notes || {};
+        const nids = [...new Set([...pool.card, ...pool.cloze].map((it) => this.nidOf(it)).filter(Boolean).map(String))];
+        const miss = nids.filter((n) => !notes[n]).map(Number);
+        // 笔记 → 卡号只在第一次 / 新卡时查（notesInfo 带字段，一批 200 条）
+        for (let i = 0; i < miss.length; i += 200) {
+            const info = await this.anki("notesInfo", { notes: miss.slice(i, i + 200) });
+            for (const x of info || []) if (x?.noteId) notes[String(x.noteId)] = x.cards || [];
+        }
+        const [due, nw, learn] = await Promise.all(["is:due -is:suspended -is:buried", "is:new -is:suspended -is:buried", "is:learn -is:suspended -is:buried"].map((q) => this.anki("findCards", { query: q })));
+        let byDay = {};
+        try { byDay = Object.fromEntries((await this.anki("getNumCardsReviewedByDay")).slice(0, 60)); } catch (e) { /* 旧版 AnkiConnect 没有 */ }
+        await this.writeSync("anki-snapshot.json", { v: 1, at: Date.now(), notes, due, new: nw, learn, byDay, subj: old.subj || {}, subjSig: old.subjSig || "" });
+        this.snapAt = 0;
+    }
+    // ----- 学科 -----
+    subjects() {
+        if (this._subsText !== this.settings.subjects) { this._subsText = this.settings.subjects; this._subs = parseSubjects(this.settings.subjects); }
+        return this._subs;
+    }
+    // 按双链 / 文件夹对上的学科；对不上返回 null
+    ruleSubject(it) {
+        for (const x of this.subjects()) {
+            if (it.links?.some((n) => x.links.has(n))) return x.name;
+            if (x.folders.some((d) => it.file.path.startsWith(d + "/"))) return x.name;
+        }
+        return null;
+    }
+    subjectKey(it) { return fnv(cardText(it.text)); }
+    subjectOf(it) {
+        if (it._subjFor === this.settings.subjects && it._subjSnap === this.snap) return it._subj;
+        let s = this.ruleSubject(it);
+        if (!s && this.snap?.subjSig === fnv(this.settings.subjects)) s = this.snap.subj[this.subjectKey(it)] || null;
+        it._subj = s || "其他"; it._subjFor = this.settings.subjects; it._subjSnap = this.snap;
+        return it._subj;
+    }
+    // 没挂上学科双链、也不在学科文件夹里的卡：用本机向量找 7 张最像的已归类的卡投票，最像的那张不够像（余弦 < 0.62）就算「其他」
+    // 结果按卡片文字的哈希存进快照，手机直接读；学科设置一改，全部重算
+    async classifySubjects() {
+        if (!this.settings.semantic || !this.subjects().length) return;
+        const snap = (await this.readSync("anki-snapshot.json")) || null;
+        if (!snap) return;
+        const sig = fnv(this.settings.subjects);
+        if (snap.subjSig !== sig) { snap.subj = {}; snap.subjSig = sig; }
+        const pool = await this.walkPool();
+        const items = [...pool.card, ...pool.cloze].filter((it) => !it.lang);
+        const labeled = items.filter((it) => this.ruleSubject(it));
+        const todo = items.filter((it) => !this.ruleSubject(it) && !(this.subjectKey(it) in snap.subj));
+        if (!todo.length || !labeled.length) return;
+        const textOf = (it) => (it.ctx.map((c) => c.text).join(" › ") + "\n" + plain(cardText(it.text))).slice(0, 1200);
+        const store = (this.cardVecs ||= new VectorStore(this.settings.embedModel + "-cards", this.settings.embedDims || 768));
+        const vecOf = async (list) => {
+            const hs = list.map((it) => hashOf(textOf(it)));
+            const need = [...new Set(hs.filter((h) => store.idx(h) < 0))];
+            const byH = new Map(list.map((it, i) => [hs[i], it]));
+            for (let i = 0; i < need.length; i += 32) {
+                const batch = need.slice(i, i + 32);
+                const vs = await this.embedTexts(batch.map((h) => textOf(byH.get(h))), false);
+                store.addMany(batch.map((h, k) => ({ h, vec: vs[k] })));
+            }
+            return store.vecsOf(hs.map((h) => store.idx(h)));
+        };
+        const L = await vecOf(labeled), U = await vecOf(todo);
+        const lab = labeled.map((it) => this.ruleSubject(it));
+        const dims = store.dims;
+        U.forEach((u, i) => {
+            const key = this.subjectKey(todo[i]);
+            if (!u) return;
+            const top = [];
+            for (let j = 0; j < L.length; j++) {
+                const v = L[j]; if (!v) continue;
+                let d = 0; for (let k = 0; k < dims; k++) d += u[k] * v[k];
+                if (top.length < 7 || d > top[top.length - 1][0]) { top.push([d, lab[j]]); top.sort((a, b) => b[0] - a[0]); if (top.length > 7) top.pop(); }
+            }
+            if (!top.length || top[0][0] < 0.62) { snap.subj[key] = ""; return; }
+            const vote = {};
+            for (const [d, name] of top) vote[name] = (vote[name] || 0) + d;
+            snap.subj[key] = Object.entries(vote).sort((a, b) => b[1] - a[1])[0][0];
+        });
+        await this.writeSync("anki-snapshot.json", snap);
+        this.snapAt = 0;
+    }
     // 外部素材库：设置里每行「库名|绝对路径」
     extraVaults() {
         return String(this.settings.extraVaults || "").split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
@@ -1806,6 +2212,7 @@ module.exports = class SecondBrain extends Plugin {
     // 插在今天日记属性区后面的第一行。10 分钟内又接着复习，就延长上一行，不另起
     // st：这张卡的状态；kind = look（揭开）/ answer（作答）。先揭开再作答的卡只算一次作答
     reviewTick(st, kind, ease) {
+        if (!st.goal) { st.goal = true; this.goalTick(); }
         if (!this.settings.reviewLog) return;
         const s = (this.reviewSession ||= { start: Date.now(), end: Date.now(), answer: 0, again: 0, look: 0 });
         if (kind === "look" && !st.counted) { s.look++; st.counted = "look"; }
@@ -1818,7 +2225,45 @@ module.exports = class SecondBrain extends Plugin {
         clearTimeout(this.reviewTimer);
         this.reviewTimer = setTimeout(() => this.flushReview(), 3 * 60 * 1000);
     }
+    // 每日目标：一张卡第一次揭开或作答时 +1，跨天清零
+    goalTarget() { return Math.max(1, Number(this.settings.reviewGoal) || 20); }
+    // 最近 14 天每天在 Anki 里复习了几张（5 分钟内复用）；Anki 没开返回 false
+    async reviewDays() {
+        const c = this.reviewDaysCache;
+        if (c && Date.now() - c.at < 5 * 60 * 1000) return !!c.map;
+        if (this.reviewDaysLoading) return false;
+        this.reviewDaysLoading = true;
+        try {
+            if (MOBILE) { await this.loadSnap(); this.reviewDaysCache = { at: Date.now(), map: this.snap?.byDay || {} }; return true; }
+            this.reviewDaysCache = { at: Date.now(), map: Object.fromEntries(await this.anki("getNumCardsReviewedByDay")) }; return true;
+        }
+        catch (e) { this.reviewDaysCache = { at: Date.now(), map: null }; return false; }
+        finally { this.reviewDaysLoading = false; }
+    }
+    // 某天刷了几张：这台设备的 + 另一台（手机 / 电脑）的
+    dayCount(d) { return (this.settings.goalHist?.[d] || 0) + (this.other?.goalHist?.[d] || 0); }
+    goalDone() { return this.dayCount(M().format("YYYY-MM-DD")); }
+    goalTick() {
+        const s = this.settings, day = M().format("YYYY-MM-DD");
+        const goal = this.goalTarget();
+        const before = this.goalDone();
+        const h = (s.goalHist ||= {});
+        h[day] = (h[day] || 0) + 1;
+        const cut = M().subtract(60, "days").format("YYYY-MM-DD");
+        for (const d of Object.keys(h)) if (d < cut) delete h[d];
+        this.saveSettings();
+        const views = this.app.workspace.getLeavesOfType(VIEW_REVIEW).map((l) => l.view).filter((v) => v instanceof ReviewView);
+        for (const v of views) { v.updateGoal(); v.bumpGoal(); }
+        if (before < goal && before + 1 >= goal) {
+            // 达标：礼花从进度条上撒下来 + 一声和弦
+            const bar = views.map((v) => v.goalEl).find((g) => g?.isConnected);
+            if (this.settings.fxAnim && bar) setTimeout(() => FX.confetti(bar.getBoundingClientRect()), 250);
+            if (this.settings.fxSound) setTimeout(() => FX.goal(fxVol(this.settings)), 250);
+            new Notice(`今天的 ${goal} 张刷完了 🎉`);
+        }
+    }
     reviewClosed() {
+        if (!MOBILE) this.syncPhone();
         if (this.syncTimer) this.ankiSync();
         if (this.reviewTimer) this.flushReview();
     }
@@ -1868,7 +2313,7 @@ module.exports = class SecondBrain extends Plugin {
     // ----- Anki（AnkiConnect）-----
     // 答完卡自动同步：最后一次作答 3 分钟后让 Anki 同步一次，连着答不会每张都同步
     scheduleAnkiSync() {
-        if (!this.settings.ankiAutoSync) return;
+        if (MOBILE || !this.settings.ankiAutoSync) return;
         clearTimeout(this.syncTimer);
         this.syncTimer = setTimeout(() => this.ankiSync(), 3 * 60 * 1000);
     }
@@ -1909,6 +2354,11 @@ module.exports = class SecondBrain extends Plugin {
     }
     // 今天到期的卡所属的笔记（两分钟内复用）
     async ankiDueNotes() {
+        if (MOBILE) {
+            const snap = await this.loadSnap(), out = new Set();
+            if (snap) for (const [nid, cids] of Object.entries(snap.notes)) if (cids.some((c) => snap.due.has(c)) && !this.answeredOnPhone(cids)) out.add(Number(nid));
+            return out;
+        }
         if (this.dueCache && Date.now() - this.dueCache.at < 2 * 60 * 1000) return this.dueCache.notes;
         const ids = await this.anki("findCards", { query: "is:due -is:suspended -is:buried" });
         const info = ids.length ? await this.anki("cardsInfo", { cards: ids }) : [];
@@ -2096,7 +2546,7 @@ module.exports = class SecondBrain extends Plugin {
     }
     async openReview(reveal) {
         let leaf = this.app.workspace.getLeavesOfType(VIEW_REVIEW)[0];
-        if (!leaf) { leaf = this.app.workspace.getRightLeaf(false); await leaf.setViewState({ type: VIEW_REVIEW, active: reveal }); }
+        if (!leaf) { leaf = MOBILE ? this.app.workspace.getLeaf("tab") : this.app.workspace.getRightLeaf(false); await leaf.setViewState({ type: VIEW_REVIEW, active: reveal }); }
         else { await leaf.loadIfDeferred?.(); if (leaf.view?.render) await leaf.view.render(); }   // 后台标签是延迟加载的，先加载出来才能重画
         if (reveal) this.app.workspace.revealLeaf(leaf);
     }
@@ -2317,6 +2767,9 @@ class SBSettings extends PluginSettingTab {
         text("不参与的文件夹 / 文件", "逗号分隔", "excludeFolders");
         text("私密链接", "带这些双链的块不进回顾、不进相关笔记（逗号分隔）", "privateLinks");
         num("随机漫步条数", "reviewCount");
+        num("每天刷卡目标（张）", "reviewGoal");
+        new Setting(c).setName("学科").setDesc("一行一门：「名称：双链, 双链 | 文件夹, 文件夹」。卡片本身或上层母块链到这些页、或在这些文件夹里，就归这门（从上往下第一个对上的）。都没对上的，后台用本机向量按意思归到最像的一门（每 30 分钟，或命令「同步手机刷卡」），归不进去算「其他」。语言类按下面的语言规则，不在这里")
+            .addTextArea((t) => { t.setValue(String(s.subjects)).onChange(async (v) => { s.subjects = v; await p.saveSettings(); }); t.inputEl.rows = 6; t.inputEl.style.width = "100%"; });
         new Setting(c).setName("近一年的卡片更容易抽到").setDesc("近一年记的卡片 / 挖空 / Wiki 条目，被抽到的权重是更早那些的几倍；1 = 不偏向。日记里的按日记日期算，别的笔记按文件建立时间算")
             .addText((t) => t.setValue(String(s.recentBoost)).onChange(async (v) => { const n = parseFloat(v); if (n >= 1) { s.recentBoost = n; await p.saveSettings(); } }));
         new Setting(c).setName("这些双链的卡片更容易抽到").setDesc("卡片本身或它上层的母块链到这些页（逗号分隔，不分大小写），被抽到的权重乘下面的倍数；和「近一年」那条同时占就相乘")

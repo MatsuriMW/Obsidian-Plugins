@@ -4,16 +4,15 @@
 # 每个插件的作用、推荐度、需要什么写在 catalog.tsv
 
 ## 编辑与大纲：把 Obsidian 用得像 Logseq / Roam
-esc-select-block
 block-ref-plus
-hover-outline
+list-fold-memory
 list-paste-merge
 list-outdent-plain
 task-toggle
 outline-block
 
 ## 知识库与 AI：本地语义检索、LLM Wiki、复习和写作
-second-brain
+second-brain-local
 llm-wiki
 palette-split-open
 draft-desk
@@ -28,7 +27,6 @@ board-jump
 board-zoom
 
 ## 界面与导航
-chrome-tab-groups
 newtab-home
 hotkey-atlas
 bookmark-icons

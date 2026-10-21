@@ -1,0 +1,9 @@
+{
+	"id": "paste-image-scale",
+	"name": "Paste Image Scale",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "粘贴或拖进来的图片，默认按原图宽度的 50% 显示：插好 ![[图片]] 之后自动补上 |宽度。Retina 截图（@2x）正好回到屏幕上看到的大小。比例可调。",
+	"author": "马自立",
+	"isDesktopOnly": false
+}

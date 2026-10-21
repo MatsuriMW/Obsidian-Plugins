@@ -42,6 +42,7 @@
 .sb-walk-tabs { display: inline-flex; gap: 2px; margin-left: 6px; }
 .sb-walk-tabs button { font-size: .75em; padding: 0 7px; height: 18px; box-shadow: none; background: transparent; color: var(--text-muted); }
 .sb-walk-tabs button.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.sb-walk-range { padding-left: 6px; border-left: 1px solid var(--background-modifier-border); }
 .sb-card.is-removed { opacity: .6; cursor: default; }
 
 /* 随机漫步：母块面包屑 */
@@ -73,6 +74,40 @@
     linear-gradient(180deg, #f5f5f7, #eeeef2);
 }
 .sb-review .sb-sec-h { border-bottom-color: rgba(20, 20, 40, .07); }
+/* 标题 + 今天的进度条钉在顶上；面板有 8px 上内边距，往上抵掉，滚动时上面不漏卡片 */
+.sb-review .sb-top {
+  position: sticky; top: -8px; z-index: 2;
+  margin: -8px 0 6px; padding: 8px 0 6px;
+  background: rgba(245, 245, 247, .86);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(20, 20, 40, .06);
+}
+.sb-review .sb-top .sb-head { margin-bottom: 6px; }
+.sb-goal { display: flex; align-items: center; gap: 8px; }
+.sb-goal-bar { flex: 1; height: 6px; border-radius: 999px; background: rgba(20, 20, 40, .08); overflow: hidden; }
+.sb-goal-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #8f95d4, #7a80ba); transition: width .35s cubic-bezier(.2,.8,.2,1); }
+.sb-goal.is-met .sb-goal-fill { background: linear-gradient(90deg, #5fbf8f, #3fa877); }
+.sb-goal-text { flex: none; font-size: .85em; color: rgba(40, 40, 60, .6); font-variant-numeric: tabular-nums; }
+.sb-goal.is-met .sb-goal-text { color: #3fa877; font-weight: 600; }
+/* 最近 14 天的小方块 + 连续天数 */
+.sb-goal { flex-wrap: wrap; }
+.sb-streak { flex-basis: 100%; display: flex; align-items: center; gap: 3px; margin-top: 5px; }
+.sb-day { width: 9px; height: 9px; border-radius: 3px; background: rgba(20, 20, 40, .08); }
+.sb-day.is-some { background: #b9bde6; }
+.sb-day.is-met { background: #3fa877; }
+.sb-streak-text { margin-left: 6px; font-size: .8em; color: rgba(40, 40, 60, .55); }
+.sb-left { margin-left: auto; padding-left: 8px; font-weight: 400; }
+/* 这一批刷完了 */
+.sb-finish { text-align: center; padding: 18px 8px; }
+.sb-finish-t { font-size: 1.15em; font-weight: 650; margin-bottom: 4px; }
+.sb-finish button { margin-top: 10px; }
+/* 能折叠的小节：点标题开合 */
+.sb-sec.is-foldable > .sb-sec-h { cursor: pointer; }
+.sb-sec.is-foldable > .sb-sec-h > span:first-child::before { content: "▾ "; color: var(--text-faint); }
+.sb-sec.is-folded > .sb-sec-h > span:first-child::before { content: "▸ "; }
+.sb-sec.is-folded > :not(.sb-sec-h) { display: none; }
+/* 在中间编辑区打开时：内容宽度和 Obsidian 开了「限制行宽」的笔记一样，居中 */
+.workspace-split.mod-root .sb-review { padding-inline: max(10px, calc((100% - var(--file-line-width, 700px)) / 2)); }
 .sb-review .sb-card {
   background: linear-gradient(145deg, rgba(255, 255, 255, .88) 0%, rgba(255, 255, 255, .64) 55%, rgba(255, 255, 255, .44) 100%);
   -webkit-backdrop-filter: blur(16px) saturate(150%);
@@ -112,3 +147,28 @@
   padding: 14px 16px; font-size: 1.08em; will-change: transform, opacity;
 }
 .sb-review .sb-card.sb-flip-ghost .sb-md { max-height: 60vh; }
+
+/* 学科：知识下面一排小胶囊，后面带张数 */
+.sb-subjects { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 6px; }
+.sb-subject { display: inline-flex; align-items: center; gap: 5px; font-size: .78em; padding: 2px 9px; height: auto; border-radius: 999px; background: rgba(255, 255, 255, .55); box-shadow: 0 0 0 1px rgba(20, 20, 40, .08); color: rgba(40, 40, 60, .75); transition: background .15s ease, color .15s ease, transform .12s ease; }
+.sb-subject:hover { background: rgba(255, 255, 255, .9); }
+.sb-subject:active { transform: scale(.94); }
+.sb-subject.is-active { background: #7a80ba; color: #fff; box-shadow: none; }
+.sb-subject-n { font-variant-numeric: tabular-nums; opacity: .6; }
+/* 「连对 ×N」飘字 */
+.sb-float { position: fixed; z-index: 10000; pointer-events: none; font-weight: 700; font-size: 13px; color: #ff9f43; text-shadow: 0 1px 0 #fff, 0 0 8px rgba(255, 159, 67, .35); white-space: nowrap; transform: translate(-50%, 0); }
+/* 达标：打勾的圈先画、勾后画 */
+.sb-check { width: 52px; height: 52px; margin: 0 auto 8px; }
+.sb-check svg { width: 100%; height: 100%; fill: none; stroke: #3fa877; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.sb-check circle { stroke-dasharray: 145; stroke-dashoffset: 145; animation: sb-draw .6s cubic-bezier(.2,.8,.2,1) forwards; }
+.sb-check path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: sb-draw .35s .5s cubic-bezier(.2,.8,.2,1) forwards; }
+.sb-finish.is-met .sb-finish-t { animation: sb-rise .5s .3s both cubic-bezier(.2,.8,.2,1); }
+@keyframes sb-draw { to { stroke-dashoffset: 0; } }
+@keyframes sb-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.sb-goal-fill, .sb-goal-text { transform-origin: left center; }
+.sb-goal-text { display: inline-block; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .sb-check circle, .sb-check path { animation: none; stroke-dashoffset: 0; } }
+/* 手机：按钮做大，好按 */
+.is-mobile .sb-review .sb-actions button { font-size: .95em; padding: 8px 14px; min-height: 36px; }
+.is-mobile .sb-review .sb-subject { font-size: .85em; padding: 5px 11px; }
+.is-mobile .sb-review .sb-head-btns button { min-width: 36px; min-height: 32px; }

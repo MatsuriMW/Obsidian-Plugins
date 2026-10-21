@@ -8,9 +8,15 @@ SRC="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/马自立/.obsi
 DST="${0:A:h}"
 FILES=(main.js manifest.json styles.css)
 
+# 已经拆成单独仓库的插件（standalone.txt）不进这个仓库，免得两边各有一份
+typeset -A standalone
+for line in "${(@f)$(grep -v -e '^#' -e '^$' "$DST/standalone.txt")}"; do standalone[${line%%$'\t'*}]=${line#*$'\t'}; done
+
 mine=()
 for m in "$SRC"/*/manifest.json; do
-  grep -qE '"author": *"马自立' "$m" && mine+=("${${m:h}:t}")
+  n=${${m:h}:t}
+  (( ${+standalone[$n]} )) && continue
+  grep -qE '"author": *"马自立' "$m" && mine+=("$n")
 done
 
 # 仓库里有、但库里已经不是自己插件（或删掉了）的目录：移除
@@ -59,6 +65,20 @@ done
       typeset use=$(cat_get $n 3) star=$(cat_get $n 2) need=$(cat_get $n 4)
       echo "| **$(g $n name)**<br>[\`$n\`]($n) | ${use:-$(g $n description)} | ${star:-} | ${need:-} |"
     done
+  done
+  # 单独仓库的插件：只列链接，作用取 catalog.tsv，没写就取主库里 manifest 的 description
+  echo
+  echo "### 已拆成单独仓库的插件"
+  echo
+  echo "这些插件各有自己的仓库（含 Release，可用 BRAT 安装），这里不再放代码。"
+  echo
+  echo "| 插件 | 作用 | 仓库 |"
+  echo "|---|---|---|"
+  for n in ${(ok)standalone}; do
+    [[ -f "$SRC/$n/manifest.json" ]] || continue
+    typeset name=$(plutil -extract name raw -o - "$SRC/$n/manifest.json" 2>/dev/null) use=$(cat_get $n 3)
+    [[ -z $use ]] && use=$(plutil -extract description raw -o - "$SRC/$n/manifest.json" 2>/dev/null | sed 's/|/\\|/g')
+    echo "| **$name** | $use | [${standalone[$n]}](https://github.com/${standalone[$n]}) |"
   done
   [[ -f "$DST/README.outro.md" ]] && { echo; cat "$DST/README.outro.md"; }
 } > "$DST/README.md"
