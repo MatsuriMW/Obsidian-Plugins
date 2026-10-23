@@ -1,0 +1,10 @@
+{
+	"id": "notetweet",
+	"name": "NoteTweet",
+	"version": "9999.0.0",
+	"minAppVersion": "1.13.0",
+	"description": "Post tweets and threads to X (Twitter) directly from your notes.",
+	"author": "马自立（改自 Christian Bager Bach Houmann）",
+	"authorUrl": "https://bagerbach.com/",
+	"isDesktopOnly": false
+}

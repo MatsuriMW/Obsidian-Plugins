@@ -56,7 +56,7 @@ const DEFAULTS = {
 	claudeLink: true,               // 发出去时给会话定好会话号、起好名字，并在这一行下面记一行「🔗」（螺旋日程靠它把这一行和会话绑死）
 	claudeMaxParallel: 6,           // 选中几块并列的一起发时，一次最多开几个会话（多了不发，免得误选一大片）
 	slashOnly: false,               // 斜杠命令（Obsidian 自带的「/」）只留名字里带下面这个词的命令，别的不出现
-	slashKeyword: "块",             // 名字里（连同前面的插件名）带这个词的命令才留下
+	slashKeyword: "块",             // 名字里（连同前面的插件名）带这个词的命令才留下；几个词用逗号隔开，带其中一个就留
 	claudeRun: "terminal",          // 会话跑在哪儿：terminal = macOS「终端」的窗口；tmux = 后台的 tmux 会话（不弹窗口）；headless = claude -p（没有窗口，答完一轮就退出）
 	claudeTmuxSession: "agents",    // 跑在 tmux 里时用哪个 tmux 会话（没有就建）。想看：tmux attach -t agents
 	claudeHeadlessArgs: "",         // 无头跑的时候多带的参数，比如 --permission-mode acceptEdits（不给权限它只能读、不能改）
@@ -985,7 +985,7 @@ class SendSettings extends PluginSettingTab {
 		new Setting(containerEl).setName("斜杠命令").setHeading();
 		new Setting(containerEl).setName("斜杠命令只留带这个词的").setDesc("Obsidian 自带的斜杠命令（编辑器里打 /）默认把全部命令都列出来。打开以后只留名字里带下面这个词的命令，「发送到 Claude CLI」只要对得上你打的字就排第一个。要先在「核心插件」里开着「斜杠命令」")
 			.addToggle((t) => t.setValue(!!s.slashOnly).onChange(async (v) => { s.slashOnly = v; await this.plugin.saveData(s); this.plugin.patchSlash(); }));
-		text("留下哪个词", "命令的名字（连同前面的插件名，比如「块去向: …」）里带这个词才留下", "slashKeyword", DEFAULTS.slashKeyword);
+		text("留下哪个词", "命令的名字（连同前面的插件名，比如「块去向: …」）里带这个词才留下；几个词用逗号隔开，带其中一个就留（比如「块，Post current block」）", "slashKeyword", DEFAULTS.slashKeyword);
 		new Setting(containerEl).setName("发给 Claude CLI").setHeading();
 		text("运行的命令", "在「终端」里运行它，后面跟上这一块的内容当第一句话。换成 codex 也行", "claudeCommand", "claude");
 		text("在哪个目录里运行", "留空 = 这个库的根目录。可以写 ~/某个目录", "claudeCwd", "留空用库的根目录");
@@ -1067,10 +1067,10 @@ module.exports = class DoneToTopPlugin extends Plugin {
 			hotkeys: [{ modifiers: ["Ctrl", "Shift"], key: "t" }],
 			editorCallback: (editor) => this.moveTo(editor, "TODO"),
 		});
-		// 命令名里带「明天」：编辑器里打 /明天 就能从斜杠命令里叫出来
+		// 命令名里带「明天」和 tomorrow：编辑器里打 /明天 或 /tomorrow 就能从斜杠命令里叫出来
 		this.addCommand({
 			id: "send-block-to-tomorrow",
-			name: "发送到明天：把光标所在块（连同子项）移到明天的日记",
+			name: "发送到明天 tomorrow",
 			editorCallback: (editor, ctx) => this.sendToTomorrow(editor, ctx && ctx.file),
 		});
 		// 以下全部：光标所在行到页尾整段追加到今天 / 明天的日记（光标在分隔线上就从下一行起，分隔线留在原处）
@@ -1082,7 +1082,7 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "send-rest-to-tomorrow",
-			name: "以下全部发送到明天：光标所在行及以下的块追加到明天的日记",
+			name: "以下全部发送到明天 tomorrow",
 			hotkeys: [{ modifiers: ["Alt"], key: "3" }],
 			editorCallback: (editor, ctx) => this.sendRest(editor, ctx && ctx.file, "tomorrow"),
 		});
@@ -1399,9 +1399,9 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		const orig = sg.getSuggestions, FIRST = "done-to-top:send-block-to-claude";
 		sg.getSuggestions = (ctx) => {
 			const list = orig.call(sg, ctx);
-			const word = (this.settings.slashKeyword || DEFAULTS.slashKeyword).trim();
-			if (!this.settings.slashOnly || !word || !Array.isArray(list)) return list;
-			const kept = list.filter((x) => x && x.item && String(x.item.name || "").includes(word));
+			const words = (this.settings.slashKeyword || DEFAULTS.slashKeyword).split(/[,，]/).map((w) => w.trim()).filter(Boolean);
+			if (!this.settings.slashOnly || !words.length || !Array.isArray(list)) return list;
+			const kept = list.filter((x) => x && x.item && words.some((w) => String(x.item.name || "").includes(w)));
 			const at = kept.findIndex((x) => x.item.id === FIRST);
 			if (at > 0) kept.unshift(...kept.splice(at, 1));
 			return kept;

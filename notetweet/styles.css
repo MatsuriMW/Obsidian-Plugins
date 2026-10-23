@@ -1,0 +1,993 @@
+/* ============================================================
+   NoteTweet - compose modal
+   ============================================================ */
+.modal.nt-compose-modal {
+	width: min(40rem, 92vw);
+}
+
+.postTweetModal {
+	--nt-rail-w: 1.75rem;
+	--nt-gap: 0.75rem;
+	--nt-node: 1.375rem;
+	--nt-accent: var(--interactive-accent);
+	max-height: min(76vh, 48rem);
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 0 2px;
+}
+
+.nt-account-picker {
+	display: flex;
+	align-items: center;
+	gap: 0.625rem;
+	margin: 0.25rem 0 0.75rem;
+	font-size: var(--font-ui-small);
+}
+
+.nt-account-picker label {
+	color: var(--text-muted);
+	font-weight: var(--font-semibold);
+}
+
+.nt-account-select {
+	min-width: 10rem;
+}
+
+.nt-account-empty {
+	color: var(--text-error);
+}
+
+/* ---- Thread ---- */
+.nt-thread {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin: 0.25rem 0 0;
+}
+
+.nt-post {
+	position: relative;
+	display: grid;
+	grid-template-columns: var(--nt-rail-w) 1fr;
+	gap: 0 var(--nt-gap);
+	align-items: start;
+}
+
+.nt-thread.is-single .nt-post {
+	grid-template-columns: 1fr;
+	gap: 0;
+}
+
+.nt-thread.is-single .nt-rail {
+	display: none;
+}
+
+/* Rail: numbered node + connector, only shown for real threads */
+.nt-rail {
+	position: relative;
+	display: flex;
+	justify-content: center;
+	align-self: stretch;
+}
+
+.nt-node {
+	position: relative;
+	z-index: 1;
+	width: var(--nt-node);
+	height: var(--nt-node);
+	margin-top: 0.6rem;
+	border-radius: 50%;
+	display: grid;
+	place-items: center;
+	font-size: 0.6875rem;
+	font-weight: var(--font-bold);
+	font-variant-numeric: tabular-nums;
+	color: var(--text-faint);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.nt-rail::after {
+	content: "";
+	position: absolute;
+	top: calc(var(--nt-node) + 0.6rem);
+	bottom: -0.5rem;
+	left: 50%;
+	width: 1px;
+	transform: translateX(-50%);
+	background: var(--background-modifier-border);
+}
+
+.nt-post:last-child .nt-rail::after {
+	display: none;
+}
+
+.nt-post.is-active .nt-node {
+	color: var(--nt-accent);
+	border-color: var(--nt-accent);
+	background: color-mix(in srgb, var(--nt-accent) 10%, var(--background-primary));
+}
+
+/* ---- Card: the writing surface is the hero ---- */
+.nt-card {
+	position: relative;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+	transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.nt-post.is-active .nt-card {
+	border-color: var(--nt-accent);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--nt-accent) 12%, transparent);
+}
+
+.nt-post.is-over .nt-card {
+	border-color: var(--text-error);
+}
+
+.nt-post.is-over.is-active .nt-card {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-error) 12%, transparent);
+}
+
+.nt-editor {
+	position: relative;
+}
+
+.postTweetModal .tweetArea {
+	display: block;
+	width: 100%;
+	box-sizing: border-box;
+	border: none;
+	background: transparent;
+	color: var(--text-normal);
+	font-family: inherit;
+	font-size: 1.05rem;
+	line-height: 1.55;
+	padding: 0.75rem 0.875rem;
+	min-height: 4.5em;
+	resize: none;
+	field-sizing: content;
+}
+
+.nt-thread.is-single .tweetArea {
+	min-height: 8em;
+}
+
+.postTweetModal .tweetArea:focus {
+	outline: none;
+	box-shadow: none;
+}
+
+.postTweetModal .tweetArea::placeholder {
+	color: var(--text-faint);
+}
+
+.nt-card.has-count .tweetArea {
+	padding-bottom: 1.5rem;
+}
+
+/* Character count, tucked into the editor's bottom-right, near the limit only */
+.nt-count {
+	position: absolute;
+	right: 0.75rem;
+	bottom: 0.4375rem;
+	font-size: 0.6875rem;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-faint);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 0.1s ease;
+}
+
+.nt-count.is-shown {
+	opacity: 1;
+}
+
+.nt-count.is-over {
+	color: var(--text-error);
+	font-weight: var(--font-bold);
+}
+
+/* ---- Attachments ---- */
+.nt-attachments:not(:empty) {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	padding: 0 0.875rem 0.75rem;
+}
+
+.nt-attachment {
+	position: relative;
+	width: 4.5rem;
+	height: 4.5rem;
+	border-radius: var(--radius-s);
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+}
+
+.nt-attachment img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.nt-attachment-remove {
+	position: absolute;
+	top: 0.1875rem;
+	right: 0.1875rem;
+	width: 1.125rem;
+	height: 1.125rem;
+	display: grid;
+	place-items: center;
+	padding: 0;
+	border: none;
+	border-radius: 50%;
+	background: color-mix(in srgb, #000 62%, transparent);
+	color: #fff;
+	cursor: pointer;
+	box-shadow: none;
+	opacity: 0;
+	transition: opacity 0.1s ease;
+}
+
+.nt-attachment:hover .nt-attachment-remove {
+	opacity: 1;
+}
+
+.nt-attachment-remove .svg-icon {
+	width: 0.75rem;
+	height: 0.75rem;
+	stroke-width: 2.5;
+}
+
+/* Reorder / attach / delete controls, revealed on hover or focus */
+.nt-controls {
+	position: absolute;
+	top: 0.3125rem;
+	right: 0.3125rem;
+	display: flex;
+	gap: 1px;
+	padding: 2px;
+	border-radius: var(--radius-s);
+	background: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.07);
+	opacity: 0;
+	transition: opacity 0.1s ease;
+}
+
+.nt-post:hover .nt-controls,
+.nt-post:focus-within .nt-controls {
+	opacity: 1;
+}
+
+.nt-icon-btn {
+	width: 1.5rem;
+	height: 1.5rem;
+	display: grid;
+	place-items: center;
+	border: none;
+	border-radius: var(--radius-s);
+	background: transparent;
+	color: var(--text-muted);
+	cursor: pointer;
+	padding: 0;
+	box-shadow: none;
+}
+
+.nt-icon-btn:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.nt-icon-btn:disabled {
+	opacity: 0.3;
+	cursor: default;
+}
+
+.nt-icon-btn.nt-danger:hover:not(:disabled) {
+	color: var(--text-error);
+}
+
+.nt-icon-btn .svg-icon {
+	width: 0.9375rem;
+	height: 0.9375rem;
+}
+
+/* ---- Add post ---- */
+.nt-add {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	width: 100%;
+	margin-top: 0.5rem;
+	padding: 0.5rem 0.75rem;
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	background: transparent;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+	box-shadow: none;
+	transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.nt-add:hover {
+	color: var(--text-normal);
+	border-color: var(--background-modifier-border-hover);
+	background: var(--background-modifier-hover);
+}
+
+.nt-add-icon {
+	display: inline-flex;
+}
+
+.nt-add-icon .svg-icon {
+	width: 1rem;
+	height: 1rem;
+}
+
+/* ---- Footer ---- */
+.nt-footer {
+	position: sticky;
+	bottom: 0;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	margin-top: 1rem;
+	padding: 0.75rem 0 0.5rem;
+	border-top: 1px solid var(--background-modifier-border);
+	background: var(--background-primary);
+}
+
+.nt-footer-context {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.125rem;
+	font-size: var(--font-ui-smaller);
+}
+
+.nt-footer-status {
+	font-size: var(--font-ui-small);
+	color: var(--text-error);
+}
+
+.nt-scheduler-identity {
+	color: var(--text-faint);
+}
+
+.nt-footer-actions {
+	margin-left: auto;
+	display: flex;
+	gap: 0.5rem;
+}
+
+.nt-btn {
+	font: inherit;
+	font-size: var(--font-ui-small);
+	font-weight: var(--font-bold);
+	line-height: 1.4;
+	padding: 0.4375rem 0.875rem;
+	border: 1px solid transparent;
+	border-radius: var(--radius-s);
+	cursor: pointer;
+	box-shadow: none;
+}
+
+.nt-btn-ghost {
+	background: transparent;
+	color: var(--text-muted);
+}
+
+.nt-btn-ghost:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.nt-btn-cta {
+	background: var(--nt-accent);
+	color: var(--text-on-accent);
+}
+
+.nt-btn-cta:hover:not(:disabled) {
+	background: var(--interactive-accent-hover);
+}
+
+.nt-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.nt-node,
+	.nt-card,
+	.nt-controls,
+	.nt-count,
+	.nt-add,
+	.nt-attachment-remove {
+		transition: none;
+	}
+}
+
+/* ============================================================
+   NoteTweet - posted & scheduled lists
+   ============================================================ */
+.nt-posted-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-bottom: 1rem;
+}
+
+.scheduledTweetsContainer {
+	display: grid;
+}
+
+.scheduledTweet {
+	display: grid;
+	grid-template-columns: 1fr;
+	padding: 1em 0;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.tweetContainer {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 5px;
+	padding: 1em;
+	margin-top: 1em;
+}
+
+.nt-scheduled-when {
+	color: var(--text-muted);
+	margin: 0.5em 0;
+}
+
+/* ============================================================
+   NoteTweet - settings connection status
+   ============================================================ */
+.nt-status--ok {
+	color: var(--text-success);
+}
+
+.nt-status--err {
+	color: var(--text-error);
+}
+
+/* ============================================================
+   马自立 本地补丁：视效、动效、和 Obsidian 原生样式对齐（配 main.js 里带「本地补丁」的几处）
+   图标是 Lucide，动效照 lucide-animated 的路子；Preview 参考 X 自己的撰写框和 Typefully 的预览栏
+   ============================================================ */
+@property --nt-p {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 0;
+}
+
+.postTweetModal {
+	--nt-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+	--nt-ease: cubic-bezier(0.22, 1, 0.36, 1);
+	--nt-warn: color-mix(in srgb, var(--color-orange) 72%, var(--text-muted));
+}
+
+/* 弹窗贴着上方开（和命令面板一样），加帖子只往下长，整个弹窗不会上下跳 */
+body:not(.is-mobile) .modal-container:has(> .nt-compose-modal) {
+	align-items: flex-start;
+}
+body:not(.is-mobile) .modal.nt-compose-modal {
+	margin-top: 10vh;
+}
+
+/* ---- 头部：账号 + Write / Preview ---- */
+.nt-head {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	margin: 0.25rem 0 0.875rem;
+}
+.nt-head .nt-account-picker {
+	margin: 0;
+}
+.nt-avatar {
+	flex: none;
+	width: 1.75rem;
+	height: 1.75rem;
+	border-radius: 50%;
+	display: grid;
+	place-items: center;
+	font-size: 0.8125rem;
+	font-weight: var(--font-bold);
+	color: var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 22%, transparent);
+}
+.nt-mode {
+	position: relative;
+	margin-left: auto;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	padding: 2px;
+	border-radius: var(--radius-m);
+	background: var(--background-modifier-hover);
+}
+.nt-mode-pill {
+	position: absolute;
+	top: 2px;
+	bottom: 2px;
+	left: 2px;
+	width: calc(50% - 2px);
+	border-radius: calc(var(--radius-m) - 2px);
+	background: var(--background-primary);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--background-modifier-border);
+	transition: transform 0.35s var(--nt-spring);
+}
+.postTweetModal.is-preview .nt-mode-pill {
+	transform: translateX(100%);
+}
+.postTweetModal .nt-mode-btn {
+	position: relative;
+	z-index: 1;
+	height: auto;
+	padding: 0.25rem 0.75rem;
+	border: none;
+	background: transparent;
+	box-shadow: none;
+	font-size: var(--font-ui-smaller);
+	font-weight: var(--font-semibold);
+	color: var(--text-muted);
+	cursor: pointer;
+	transition: color 0.2s ease;
+}
+.postTweetModal .nt-mode-btn:hover {
+	background: transparent;
+	color: var(--text-normal);
+}
+.postTweetModal .nt-mode-btn.is-on {
+	color: var(--text-normal);
+}
+
+/* ---- 帖子卡片 ---- */
+.nt-thread {
+	position: relative;
+}
+.postTweetModal .tweetArea {
+	font-family: var(--font-text);
+	padding-bottom: 2rem;
+}
+.nt-card {
+	transition: border-color 0.2s ease, box-shadow 0.25s var(--nt-ease), background-color 0.2s ease;
+}
+.nt-post:not(.is-active) .nt-card:hover {
+	border-color: var(--background-modifier-border-hover);
+}
+.nt-post.is-active .nt-card {
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--nt-accent) 12%, transparent), 0 6px 18px -8px color-mix(in srgb, var(--nt-accent) 35%, transparent);
+}
+.nt-node {
+	transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, transform 0.35s var(--nt-spring);
+}
+.nt-post.is-active .nt-node {
+	transform: scale(1.12);
+}
+.nt-rail::after {
+	transition: background 0.3s ease;
+}
+.nt-post.is-active .nt-rail::after {
+	background: linear-gradient(var(--nt-accent), var(--background-modifier-border) 70%);
+}
+.nt-ghost {
+	position: absolute;
+	z-index: 0;
+	pointer-events: none;
+}
+
+/* 字数环：照 X 的圆环，写得越多转得越满；剩 30 字以内变暖色、放大、出数字；超了变红、卡片抖一下 */
+.postTweetModal .nt-count {
+	display: flex;
+	align-items: center;
+	gap: 0.375rem;
+	right: 0.625rem;
+	bottom: 0.5rem;
+	opacity: 1;
+	transition: opacity 0.2s ease, --nt-p 0.3s var(--nt-ease);
+}
+.postTweetModal .nt-count.is-empty {
+	opacity: 0;
+}
+.nt-ring {
+	--nt-ring: var(--nt-accent);
+	width: 1.125rem;
+	height: 1.125rem;
+	border-radius: 50%;
+	background: conic-gradient(var(--nt-ring) calc(var(--nt-p) * 1turn), var(--background-modifier-border) 0);
+	-webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+	mask: radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2px));
+	transition: transform 0.35s var(--nt-spring);
+}
+.nt-count.is-shown {
+	color: var(--nt-warn);
+	font-weight: var(--font-semibold);
+}
+.nt-count.is-shown .nt-ring {
+	--nt-ring: var(--nt-warn);
+	transform: scale(1.3);
+}
+.nt-count.is-over {
+	color: var(--text-error);
+}
+.nt-count.is-over .nt-ring {
+	--nt-ring: var(--text-error);
+}
+.nt-count-num:not(:empty) {
+	animation: nt-pop 0.3s var(--nt-spring) both;
+}
+
+/* ---- 图片 ---- */
+.nt-attachment {
+	width: 5.5rem;
+	height: 5.5rem;
+	transition: transform 0.25s var(--nt-spring), box-shadow 0.2s ease;
+}
+.nt-attachment:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 6px 14px -6px rgba(0, 0, 0, 0.25);
+}
+.nt-attachment img {
+	transition: transform 0.4s var(--nt-ease);
+}
+.nt-attachment:hover img {
+	transform: scale(1.06);
+}
+.nt-attachment.is-new {
+	animation: nt-pop 0.35s var(--nt-spring) both;
+}
+.postTweetModal .nt-attachment-remove {
+	height: 1.25rem;
+	width: 1.25rem;
+	padding: 0;
+	box-shadow: none;
+	background: color-mix(in srgb, #000 62%, transparent);
+}
+.postTweetModal .nt-attachment-remove:hover {
+	background: color-mix(in srgb, #000 78%, transparent);
+}
+.nt-attachment-remove .nt-ico {
+	width: 0.75rem;
+	height: 0.75rem;
+}
+
+/* ---- 按钮：Obsidian 自己的 button 规则优先级更高，这里加一层前缀压回去 ---- */
+/* 工具条浮在卡片上沿，不压正文 */
+.postTweetModal .nt-controls {
+	top: -0.875rem;
+	right: 0.625rem;
+	z-index: 3;
+	box-shadow: 0 4px 12px -4px rgba(0, 0, 0, 0.18);
+}
+.nt-controls {
+	transform: translateY(3px);
+	transition: opacity 0.15s ease, transform 0.25s var(--nt-ease);
+}
+.nt-post:hover .nt-controls,
+.nt-post:focus-within .nt-controls {
+	transform: none;
+}
+.postTweetModal .nt-icon-btn {
+	height: 1.5rem;
+	padding: 0;
+	background: transparent;
+	box-shadow: none;
+}
+.postTweetModal .nt-icon-btn:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+}
+.nt-icon-btn .nt-ico {
+	width: 0.9375rem;
+	height: 0.9375rem;
+}
+.postTweetModal .nt-add {
+	height: auto;
+	justify-content: center;
+	padding: 0.5rem 0.75rem;
+	background: transparent;
+	box-shadow: none;
+	border: 1px dashed var(--background-modifier-border);
+}
+.postTweetModal .nt-add:hover {
+	color: var(--nt-accent);
+	border-color: color-mix(in srgb, var(--nt-accent) 45%, transparent);
+	background: color-mix(in srgb, var(--nt-accent) 6%, transparent);
+}
+.postTweetModal .nt-btn {
+	height: auto;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.4375rem 0.875rem;
+	transition: background-color 0.15s ease, color 0.15s ease, opacity 0.2s ease, transform 0.2s var(--nt-spring);
+}
+.postTweetModal .nt-btn:active:not(:disabled) {
+	transform: scale(0.95);
+}
+.postTweetModal .nt-btn-ghost {
+	background: transparent;
+	box-shadow: none;
+}
+.postTweetModal .nt-btn-ghost:hover:not(:disabled) {
+	background: var(--background-modifier-hover);
+}
+.postTweetModal .nt-btn-cta:not(:disabled) {
+	box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--nt-accent) 60%, transparent);
+}
+.nt-btn .nt-ico {
+	width: 1rem;
+	height: 1rem;
+}
+.nt-footer {
+	transition: none;
+}
+.nt-footer-status:not(:empty) {
+	animation: nt-rise 0.25s var(--nt-ease) both;
+}
+
+/* ---- Preview：照 X 的时间线排 ---- */
+.nt-preview {
+	display: none;
+}
+.postTweetModal.is-preview .nt-preview {
+	display: flex;
+	flex-direction: column;
+}
+.postTweetModal.is-preview :is(.nt-thread, .nt-add) {
+	display: none;
+}
+.nt-tw {
+	display: grid;
+	grid-template-columns: 2.5rem 1fr;
+	gap: 0 0.75rem;
+	padding: 0.25rem 0.25rem 0;
+	animation: nt-rise 0.35s var(--nt-ease) both;
+	animation-delay: calc(var(--i) * 55ms);
+}
+.nt-tw-side {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+.nt-tw .nt-avatar {
+	width: 2.5rem;
+	height: 2.5rem;
+	font-size: 1rem;
+}
+.nt-tw:not(:last-child) .nt-tw-side::after {
+	content: "";
+	flex: 1;
+	width: 2px;
+	margin: 0.25rem 0 -0.25rem;
+	border-radius: 1px;
+	background: var(--background-modifier-border);
+	transform-origin: top;
+	animation: nt-grow 0.4s var(--nt-ease) both;
+	animation-delay: calc(var(--i) * 55ms + 120ms);
+}
+.nt-tw-main {
+	min-width: 0;
+	padding-bottom: 0.75rem;
+}
+.nt-tw-meta {
+	display: flex;
+	align-items: baseline;
+	gap: 0.35rem;
+	font-size: var(--font-ui-small);
+	line-height: 1.4;
+}
+.nt-tw-name {
+	font-weight: var(--font-bold);
+	color: var(--text-normal);
+}
+.nt-tw-handle {
+	color: var(--text-faint);
+}
+.nt-tw-index {
+	margin-left: auto;
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+	font-size: var(--font-ui-smaller);
+}
+.nt-tw-text {
+	margin-top: 0.125rem;
+	font-family: var(--font-text);
+	font-size: 0.975rem;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	color: var(--text-normal);
+}
+.nt-tw-link {
+	color: var(--interactive-accent);
+}
+.nt-tw-media {
+	display: grid;
+	gap: 2px;
+	margin-top: 0.625rem;
+	border-radius: 0.875rem;
+	overflow: hidden;
+	border: 1px solid var(--background-modifier-border);
+	aspect-ratio: 16 / 9;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: 1fr 1fr;
+}
+.nt-tw-media img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+	grid-row: span 2;
+}
+.nt-tw-media.is-1 {
+	grid-template-columns: 1fr;
+	aspect-ratio: auto;
+	max-height: 20rem;
+}
+.nt-tw-media.is-1 img {
+	max-height: 20rem;
+}
+.nt-tw-media.is-3 img:not(:first-child),
+.nt-tw-media.is-4 img {
+	grid-row: span 1;
+}
+.nt-tw-actions {
+	display: flex;
+	justify-content: space-between;
+	max-width: 22rem;
+	margin-top: 0.625rem;
+	color: var(--text-faint);
+}
+.nt-tw-act {
+	display: inline-flex;
+	padding: 0.25rem;
+	margin: -0.25rem;
+	border-radius: 50%;
+	cursor: default;
+	transition: color 0.15s ease, background-color 0.15s ease;
+}
+.nt-tw-act:hover {
+	color: var(--interactive-accent);
+	background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+}
+.nt-tw-act .nt-ico {
+	width: 1.0625rem;
+	height: 1.0625rem;
+}
+.nt-tw-empty {
+	padding: 2rem 0;
+	text-align: center;
+	color: var(--text-faint);
+}
+
+/* ---- 发出去以后 ---- */
+.nt-posted-modal .modal-title {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.nt-posted-modal .modal-title .nt-ico-check {
+	width: 1.5rem;
+	height: 1.5rem;
+	color: color-mix(in srgb, var(--color-green) 70%, var(--text-muted));
+}
+.nt-posted-item {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.75rem;
+	padding: 0.75rem 0.875rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	color: var(--text-normal);
+	text-decoration: none;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	animation: nt-rise 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+	animation-delay: calc(var(--i) * 60ms + 200ms);
+	transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.nt-posted-item:hover {
+	color: var(--text-normal);
+	border-color: var(--background-modifier-border-hover);
+	background: var(--background-modifier-hover);
+	transform: translateY(-1px);
+}
+.nt-posted-text {
+	flex: 1;
+	min-width: 0;
+}
+.nt-posted-item .nt-ico-open {
+	flex: none;
+	width: 1rem;
+	height: 1rem;
+	margin-top: 0.2em;
+	color: var(--text-faint);
+	transition: color 0.15s ease;
+}
+.nt-posted-item:hover .nt-ico-open {
+	color: var(--interactive-accent);
+}
+.tweetContainer {
+	border-radius: var(--radius-m);
+}
+
+/* 发帖中的提示 */
+.nt-posting {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.nt-posting .nt-ico {
+	width: 1rem;
+	height: 1rem;
+	color: var(--interactive-accent);
+}
+
+/* ---- 图标：悬停在按钮上时自己动一下 ---- */
+.nt-ico {
+	display: inline-flex;
+	flex: none;
+	width: 1em;
+	height: 1em;
+}
+.nt-ico svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+	overflow: visible;
+}
+.nt-ico svg * {
+	transform-box: view-box;
+	transform-origin: 12px 12px;
+	transition: transform 0.4s var(--nt-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+}
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-arrow-up .nudge-up { transform: translateY(-3px); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-arrow-down .nudge-down { transform: translateY(3px); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-trash .lid { transform: translateY(-2.5px) rotate(-6deg); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-plus .turn { transform: rotate(90deg); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-x .turn { transform: rotate(90deg); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-image .sun { transform: translate(1px, -2px); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-image .hill { transform: translateX(-1.5px); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-open .nudge-out { transform: translate(2px, -2px); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-repost .turn { transform: rotate(180deg); }
+.nt-ico-clock .hand { transition-duration: 0.9s; }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-clock .hand { transform: rotate(360deg); }
+:is(button, a, .nt-tw-act):hover:not(:disabled) .nt-ico-send .fly { animation: nt-fly 0.7s ease-in-out; }
+:is(button, a, .nt-tw-act):hover .nt-ico-like .beat { animation: nt-beat 0.6s ease-in-out; }
+:is(button, a, .nt-tw-act):hover .nt-ico-views .bar { transform-origin: 12px 20px; animation: nt-bar 0.5s var(--nt-spring) both; }
+.nt-ico-views .b2 { animation-delay: 0.06s !important; }
+.nt-ico-views .b3 { animation-delay: 0.12s !important; }
+.nt-btn.is-sending .nt-ico-send .fly { animation: nt-fly-away 0.28s ease-in forwards; }
+.nt-ico-check .draw { stroke-dasharray: 1; animation: nt-draw 0.45s ease-out 0.05s both; }
+.nt-ico-check .draw.late { animation-delay: 0.35s; }
+.nt-ico-loader .spin { animation: nt-spin 0.8s linear infinite; }
+
+@keyframes nt-pop { from { opacity: 0; transform: scale(0.6); } }
+@keyframes nt-rise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes nt-grow { from { transform: scaleY(0); } }
+@keyframes nt-spin { to { transform: rotate(360deg); } }
+@keyframes nt-draw { from { stroke-dashoffset: 1; opacity: 0; } 25% { opacity: 1; } to { stroke-dashoffset: 0; opacity: 1; } }
+@keyframes nt-fly { 0%, 100% { transform: none; } 45% { transform: translate(3px, -3px) scale(0.85); opacity: 0.6; } }
+@keyframes nt-fly-away { to { transform: translate(14px, -14px) scale(0.5); opacity: 0; } }
+@keyframes nt-beat { 0%, 100% { transform: none; } 30% { transform: scale(1.2); } 55% { transform: scale(0.95); } }
+@keyframes nt-bar { from { transform: scaleY(0.3); } }
+
+@media (prefers-reduced-motion: reduce) {
+	.postTweetModal *,
+	.nt-posted-modal *,
+	.nt-posting * {
+		animation: none !important;
+		transition: none !important;
+	}
+}

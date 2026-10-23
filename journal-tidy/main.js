@@ -9,6 +9,10 @@
  *    主线：块里有 [#A] 任务的顶格块是主线块（规则在块去向 core 的 isMainBlock），一天最多 3 块，按先后取前三块，多出来的 [#A] 降成 [#B]。
  *    还没开始的主线块单独一区，放在 DOING 和 TODO 之间：DONE → DOING → 🎯 主线 → TODO；在做的、做完的照旧在 DOING / DONE 区。完成率由螺旋日程追踪。
  *    块内部自己用「- ---」分了栏的，子项也在块内排成 DONE → DOING → TODO，只在块内部排，不会跨块、也不会提到文件级。
+ *    母块自己还是 TODO / DOING、里面有子项做完了的，这一块不重排：那只是大任务里的一步，DONE 子项原地不动。
+ *    DOING 区（第一、二条分割线之间）里你自己放进去的 TODO 块留在 DOING 区，不挪去 TODO 区。
+ *    你自己加的分割线不动：TODO 区里用「- ---」分了组的，组照旧，只在组里排；顶格单独一行的「---」原样留着。
+ *    DONE 栏最上面一块「- 🤖 Agent 记录 · N 条」：Agent 自动记下、已经结束的机器行（🤖 开头，连同主题母块）都收在它下面，跟你自己做完的分开。
  *    顶格只写「- [[信息增量]]」的那一块归 TODO 区，排在 TODO 区最后（问题汇总、摘录都不碰它）。
  *    链接类条目（孤零零一条：没有母块、也没有子块，不超过两行，里面有小红书 / 知乎 / X / GitHub / B 站 / 抖音这类链接）
  *    聚成「链接」区，放在 TODO 区下面；有任务关键字的算任务，优先级更高。
@@ -433,6 +437,7 @@ function applyAnswers(text, kept, title) {
 // 规则：顶格块按状态排成 DONE 栏 → DOING → TODO（信息增量在最后）→ 链接 → 其余，区之间「- ---」；块里自己用分割线分了栏的，子项在块内照此排。
 // 状态怎么认、区里怎么排（优先级、闪卡归 DONE、链接类）这些底层判断还在块去向（done-to-top）的 core 里，那边改了这边跟着变；z 就是它的 core
 const CHILD_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;
+const HR_RE = /^(?:-{3,}|\*{3,}|_{3,})[ \t]*$/;   // 顶格单独一行的「---」：你自己画的分割线
 const FENCE_RE = /^[ \t]*(?:```|~~~)/;
 
 function trimTail(lines) {
@@ -467,6 +472,9 @@ function zoneInner(z, lines) {
     const plain = [lines[0], ...lead, ...kids.flatMap((k) => k.lines)];
     if (!kids.some((k) => k.sep)) return plain;      // 没用分割线：不排
     if (!kids.every((k) => k.sep || CHILD_ITEM_RE.test(k.lines[0]))) return plain;
+    // 母块自己还没做完（TODO / DOING），里面有子项做完了：那只是大任务里的一步，DONE 子项原地不动，这一块不重排
+    const own = itemZone(normalizeKeyword(lines[0].replace(/^[ \t]+/, ""), false));
+    if ((own === "TODO" || own === "DOING") && kids.some((k) => !k.sep && itemZone(k.lines[0]) === "DONE")) return plain;
 
     const zones = { DONE: [], DOING: [], TODO: [] }, rest = [];
     let before = true;
@@ -526,13 +534,27 @@ function linkCluster(kids, items) {
 // DONE 栏里再分三组：DONE 类任务（DONE → SUSPENDED → FAILED → CANCELLED）→ 没有任务标识的条目（原顺序，闪卡也在这组）→ 收起的链接
 function zoneOrganize(z, text) {
     const { parse, doneZoneEnd, normalizeKeyword, zoneOf, hasPrioShort, isCardBlock, trimBlock, isLinkBlock, sortZone, SEP } = z;
-    const { head, blocks, tail } = parse(text);
+    const agent = unwrapAgent(text);   // 「🤖 Agent 记录」母块先拆开，排完再收回去
+    const { head, blocks, tail } = parse(agent.text);
     const zones = { DONE: [], DOING: [], MAIN: [], TODO: [] };
     const links = [], rest = [];
     const donePlain = [], doneRead = [], read = [], doneReadKids = [], readKids = [];
     let pin = null;   // 「- [[信息增量]]」那一块（TODO 区里）
     const keep = doneZoneEnd(blocks);
-    blocks.forEach((b, i) => { b.inDone = i < keep; });
+    // 分段：DONE 栏是第 0 段，第一条「- ---」之后每条分割线（「- ---」或顶格的「---」）开一段。
+    // 第 1 段是 DOING 区（后面还有分割线把它收住才算）；TODO 区里你自己用分割线分的组按段号认
+    let seg = 0;
+    const opener = new Map();   // 段号 → 开这一段的那条分割线（原文）
+    blocks.forEach((b, i) => {
+        b.inDone = i < keep;
+        b.hr = !b.sep && HR_RE.test(b.lines[0]) && trimBlock(b.lines).length === 1;
+        if (i >= keep && keep >= 0 && (b.sep || b.hr)) opener.set(++seg, b.lines[0]);
+        b.seg = b.inDone ? 0 : seg;
+    });
+    const doingClosed = seg >= 2;
+    const todoGroups = new Map();   // 段号 → 这一段里留在 TODO 区的块；从别处挪来的（段号 -1）并进第一组
+    const segHasRest = new Set();   // 哪几段里有不归任务区的内容（链接、普通条目）
+    const toTodo = (b, ls) => { const k = b.seg >= 2 ? b.seg : -1; if (!todoGroups.has(k)) todoGroups.set(k, []); todoGroups.get(k).push(ls); zones.TODO.push(ls); };
     let inner = 0;
     // 链接区只在已经分区的文件（日记那种：有状态块或分割线）里排；
     // 一篇没分区的普通笔记不去动它，免得平白插进去几条分割线
@@ -559,16 +581,38 @@ function zoneOrganize(z, text) {
         }
         if (!b.sep && isCardBlock(b.lines)) b.zone = "DONE";   // 做成了闪卡的块归 DONE 区，不管首行写的是什么状态
         if (b.pin && pin) pin.push(...trimBlock(b.lines).slice(1));   // 第二块「- [[信息增量]]」：子块并进第一块
-        else if (b.pin) zones.TODO.push((pin = trimBlock(b.lines)));
+        else if (b.pin) pin = trimBlock(b.lines);   // 排在 TODO 区最后一组的最后
         else if (zoned && LINK_HEAD_RE.test(b.lines[0])) (b.inDone ? doneReadKids : readKids).push(...trimBlock(b.lines).slice(1));   // 已有的「🔗 链接」母块：子项并进来
+        else if (zoned && doingClosed && b.seg === 1 && b.zone === "TODO") zones.DOING.push(trimBlock(b.lines));   // 你自己放进 DOING 区的 TODO 块：留在 DOING 区
         else if (b.main && (b.zone === "TODO" || (!b.zone && !b.inDone))) zones.MAIN.push(trimBlock(b.lines));   // 还没开始的主线块：DOING 和 TODO 之间的主线区（首行没状态、子项里有 A 的母块也算）
         else if (b.zone === "DONE" && zoneOf(b.lines[0]) !== "DONE") donePlain.push(trimBlock(b.lines));   // 闪卡（首行没写 DONE 类关键字）跟普通条目一组
+        else if (b.zone === "TODO") toTodo(b, trimBlock(b.lines));
         else if (b.zone) zones[b.zone].push(trimBlock(b.lines));
         else if (b.inDone) (zoned && isReadLink(z, b.lines) ? doneRead : donePlain).push(trimBlock(b.lines));   // 手动放进 DONE 栏的普通条目留在栏里
+        else if (b.hr) rest.push(b);   // 顶格单独一行的「---」：你自己画的，原样留着（开了 TODO 区里一组的，在下面挪到那一组前面）
         else if (b.sep) { if (rest.length && !rest[rest.length - 1].sep) rest.push(b); }   // 开头的、连着的分隔线不要
-        else if (zoned && isLinkBlock(b.lines)) (isReadLink(z, b.lines) ? read : links).push(trimBlock(b.lines));   // 链接类：归到链接区
-        else rest.push(b);
+        else if (zoned && isLinkBlock(b.lines)) { segHasRest.add(b.seg); (isReadLink(z, b.lines) ? read : links).push(trimBlock(b.lines)); }   // 链接类：归到链接区
+        else { segHasRest.add(b.seg); rest.push(b); }
     }
+    // TODO 区：按你分的组排，组之间放回开那一组的分割线（原文）；从别处挪来的并进第一组，「- [[信息增量]]」在最后一组最后
+    const keys = [...todoGroups.keys()].filter((k) => k >= 0).sort((a, b) => a - b);
+    const groups = keys.map((k) => ({ open: opener.get(k), items: todoGroups.get(k) }));
+    if (todoGroups.has(-1)) { if (groups.length) groups[0].items.unshift(...todoGroups.get(-1)); else groups.push({ items: todoGroups.get(-1) }); }
+    if (pin) { if (!groups.length) groups.push({ items: [] }); groups[groups.length - 1].items.push(pin); }
+    const todoSlot = [];
+    for (const g of groups) {
+        const ls = sortZone("TODO", g.items).flat();
+        if (!ls.length) continue;
+        if (todoSlot.length) {
+            todoSlot.push(g.open || SEP);
+            const hr = g.open && rest.findIndex((b) => b.hr && b.lines[0] === g.open);   // 顶格「---」开的组：它已经放在这儿了，别处不再留
+            if (hr >= 0) rest.splice(hr, 1);
+        }
+        todoSlot.push(...ls);
+    }
+    // 顶格「---」那一段里的任务全挪走了、也没有别的内容：它没东西可隔了，跟「- ---」一样不留；段里还有普通内容的，照旧留在那段内容前面
+    for (let i = rest.length - 1; i >= 0; i--) if (rest[i].hr && !segHasRest.has(rest[i].seg)) rest.splice(i, 1);
+    for (let i = 0; i < rest.length; i++) if (rest[i].sep && (i === 0 || rest[i - 1].sep)) rest.splice(i--, 1);   // 去掉以后开头、连着的分隔线
     if (rest.length && rest[rest.length - 1].sep) rest.pop();
     const out = [];
     const readBlock = linkCluster(readKids, read);
@@ -577,7 +621,7 @@ function zoneOrganize(z, text) {
         // 日记的固定三区：DONE 栏 | DOING 区 | TODO 区（信息增量在它最后），后面还有内容的话，空着的区也留着它那条分隔线，
         // 所以 TODO 区永远在第二条「- ---」下面（模板 Templates/日记.md 就是这两条分隔线）。
         // 有主线块时 DOING 和 TODO 之间多一个主线区，TODO 区落到第三条下面；没有就不留这一区
-        const slots = ["DONE", "DOING", ...(zones.MAIN.length ? ["MAIN"] : []), "TODO"].map((n) => sortZone(n === "MAIN" ? "TODO" : n, zones[n]).flat());
+        const slots = ["DONE", "DOING", ...(zones.MAIN.length ? ["MAIN"] : []), "TODO"].map((n) => (n === "TODO" ? todoSlot : sortZone(n === "MAIN" ? "TODO" : n, zones[n]).flat()));
         slots[0].push(...donePlain.flat(), ...linkCluster(doneReadKids, doneRead));
         slots.forEach((ls, k) => {
             out.push(...ls);
@@ -585,15 +629,15 @@ function zoneOrganize(z, text) {
         });
     }
     extra.forEach((ls, i) => { if (i) out.push(SEP); out.push(...ls); });
-    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, MAIN: zones.MAIN.length, TODO: zones.TODO.length - (pin ? 1 : 0), LINK: links.length, READ: read.length + doneRead.length, inner, mainN, demoted };
-    return { text: head.concat(out, tail).join("\n"), counts };
+    const counts = { DONE: blocks.filter((b) => b.zone === "DONE").length, DOING: zones.DOING.length, MAIN: zones.MAIN.length, TODO: zones.TODO.length, LINK: links.length, READ: read.length + doneRead.length, inner, mainN, demoted };
+    return { text: wrapAgent(z, head.concat(out, tail).join("\n"), agent.folded), counts };
 }
 
 // ---------------- 机器行按主题归类 ----------------
 // 机器行 = 螺旋日程自动记日记、下面「归档记一笔」写的任务行：状态词（和时间）后面以 🤖 开头，
 // 比如「- DONE 09:17-09:50 🤖 让 done-to-top 移动时带上块标识符」。主题母块没有状态词：「- 🤖 Obsidian 改造 · 6 条 · 共 2h13m」。
 const MACHINE_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(?:\[.\][ \t]+)?(TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)[ \t]+(?:\d{1,2}[:：]\d{2}(?:[ \t]*[-–~～][ \t]*\d{1,2}[:：]\d{2})?[ \t]+)?🤖[ \t]*(.*)$/;
-const THEME_HEAD_RE = /^- 🤖 (.+?)(?: · \d+ 条(?: · 共 [\dhm]+)?)?[ \t]*$/;
+const THEME_HEAD_RE = /^- 🤖 (?!Agent 记录(?: · \d+ 条)?[ \t]*$)(.+?)(?: · \d+ 条(?: · 共 [\dhm]+)?)?[ \t]*$/;
 const CLOCK_TOTAL_RE = /^[ \t]*[-*+][ \t]+⏱.*共[ \t]*(?:(\d+)h)?(?:(\d+)m)?/;
 const NO_THEME = "杂事";
 const fmtMin = (m) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? (m % 60) + "m" : ""}` : `${m}m`);
@@ -602,6 +646,44 @@ const cleanTheme = (s) => String(s || "").replace(/[\r\n\[\]#·`*=~]/g, " ").rep
 
 // 归 DONE 区的状态词（和 done-to-top 的分区一致）
 const ENDED = new Set(["DONE", "SUSPENDED", "FAILED", "CANCELLED", "CANCELED"]);
+
+// ---------------- Agent 记录 ----------------
+// DONE 栏最上面一块「- 🤖 Agent 记录 · N 条」：Agent 自动记下、已经结束的顶格机器行（连同 ⏱ 子项）和主题母块都收进来，跟你自己做完的分开。
+// 分区、主题归类都先把它拆开（子项退回顶格）照旧排，排完再收回去，所以别的规则不用管它
+const AGENT_HEAD_RE = /^- 🤖 Agent 记录(?: · \d+ 条)?[ \t]*$/;
+const dedentOne = (l) => l.replace(/^(?:\t| {1,4})/, "");
+function unwrapAgent(text) {
+    const lines = text.split("\n"), out = [];
+    let inside = false, folded = false, found = false;
+    for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (AGENT_HEAD_RE.test(l)) {
+            inside = found = true;
+            if (FOLD_MARK_RE.test(lines[i + 1] || "")) { folded = true; i++; }   // 它自己的折叠标记：收回去时再写上
+            continue;
+        }
+        if (inside && !isBlank(l) && !/^[ \t]/.test(l)) inside = false;
+        out.push(inside && !isBlank(l) ? dedentOne(l) : l);
+    }
+    return { text: found ? out.join("\n") : text, folded };
+}
+const isAgentBlock = (lines) => {
+    const m = lines[0].match(MACHINE_RE);
+    return (m && m[1] === "" && ENDED.has(m[2])) || THEME_HEAD_RE.test(lines[0]);
+};
+function wrapAgent(z, text, folded) {
+    const { head, blocks, tail } = z.parse(text);
+    const end = z.doneZoneEnd(blocks);
+    if (end < 0) return text;   // 还没分区的笔记不收
+    const mine = blocks.slice(0, end).filter((b) => isAgentBlock(b.lines));
+    if (!mine.length) return text;
+    const body = blocks.filter((b) => !mine.includes(b));
+    const unit = text.split("\n").some((l) => /^\t/.test(l)) || !text.split("\n").some((l) => /^ {2,}\S/.test(l)) ? "\t" : "    ";
+    const kids = mine.flatMap((b) => z.trimBlock(b.lines)).map((l) => (isBlank(l) ? l : unit + l));
+    const n = kids.filter((l) => MACHINE_RE.test(l)).length;
+    const box = [`- 🤖 Agent 记录 · ${n} 条`, ...(folded ? [unit + "%% collapsed:: true %%"] : []), ...kids];
+    return head.concat(box, body.flatMap((b) => b.lines), tail).join("\n");
+}
 
 // 全篇的机器行。top = 顶格；done = 已经结束（顶格又结束了的才会被收进主题）
 function machineLines(text) {
@@ -614,8 +696,9 @@ function machineLines(text) {
 }
 
 // themes：Map(那一行原文 → 主题名)，没给主题的行不动。新母块放在它第一条成员原来的位置，已有的母块往里追加
-function groupMachine(text, themes) {
-    const { fm, body } = splitFrontmatter(text);
+function groupMachine(text, themes, z) {
+    const agent = z ? unwrapAgent(text) : { text, folded: false };
+    const { fm, body } = splitFrontmatter(agent.text);
     const unit = body.some(l => /^\t/.test(l)) || !body.some(l => /^ {2,}\S/.test(l)) ? "\t" : "    ";
     const segs = segment(body);
     const heads = new Map();
@@ -640,7 +723,8 @@ function groupMachine(text, themes) {
         for (const l of kids) { const c = l.match(CLOCK_TOTAL_RE); if (c) min += (+c[1] || 0) * 60 + (+c[2] || 0); }
         if (n) head.lines[0] = `- 🤖 ${theme} · ${n} 条` + (min ? ` · 共 ${fmtMin(min)}` : "");
     }
-    return { text: [...fm, ...out.flatMap(s => s.lines)].join("\n").replace(/\n{3,}/g, "\n\n"), grouped, themes: [...new Set([...themes.values()].map(cleanTheme).filter(Boolean))] };
+    const joined = [...fm, ...out.flatMap(s => s.lines)].join("\n").replace(/\n{3,}/g, "\n\n");
+    return { text: z ? wrapAgent(z, joined, agent.folded) : joined, grouped, themes: [...new Set([...themes.values()].map(cleanTheme).filter(Boolean))] };
 }
 
 // ---------------- 摘录记号 ----------------
@@ -1097,7 +1181,7 @@ module.exports = class JournalTidy extends Plugin {
                 const text = await this.app.vault.read(file);
                 const cands = opt.answerQuestions ? findQuestionCandidates(text, s.questionBlockTitle) : [];
                 // 机器行：超过门槛才归类。螺旋日程归过大方向的直接用，剩下的问 Claude
-                const all = opt.groupMachine ? machineLines(text) : [];
+                const all = opt.groupMachine ? machineLines(unwrapAgent(text).text) : [];   // Agent 记录里的也算顶格
                 const over = all.length > Math.max(0, s.machineThreshold);
                 const themes = new Map(), ask = [];
                 if (over) {
@@ -1141,7 +1225,7 @@ module.exports = class JournalTidy extends Plugin {
                     else {
                         if (ask.length && cls.status === "fulfilled") for (const m of ask) { const t = cleanTheme((cls.value.themes || {})[m.id]); if (t) themes.set(m.line, t); }
                         let r = null;
-                        await this.app.vault.process(file, (data) => { r = groupMachine(data, themes); return r.text; });
+                        await this.app.vault.process(file, (data) => { r = groupMachine(data, themes, this.zoneCore()); return r.text; });
                         const left = ask.filter(m => !themes.has(m.line)).length;
                         report.push(r.grouped ? `机器行 ${all.length} 条，${r.grouped} 条做完的收进了主题：${r.themes.join("、")}` : `机器行 ${all.length} 条，没有新的要归类`);
                         if (left) report.push(`${left} 条机器行没归上主题` + (cls.status === "rejected" ? `（${why(cls)}）` : ""));
@@ -1193,7 +1277,7 @@ module.exports = class JournalTidy extends Plugin {
     knownThemes(text) {
         const sp = this.app.plugins.plugins["nautilus-spiral"];
         const dirs = sp && typeof sp.knownDirs === "function" ? sp.knownDirs() : [];
-        const here = splitFrontmatter(text).body.map(l => l.match(THEME_HEAD_RE)).filter(Boolean).map(m => m[1].trim());
+        const here = splitFrontmatter(unwrapAgent(text).text).body.map(l => l.match(THEME_HEAD_RE)).filter(Boolean).map(m => m[1].trim());
         return [...new Set([...dirs, ...here].map(cleanTheme).filter(t => t && t !== NO_THEME))];
     }
 
@@ -1419,4 +1503,4 @@ class TidySettings extends PluginSettingTab {
     }
 }
 
-module.exports.__test = { cleanShareText, cleanUrl, isReadLink, linkCluster, zoneOrganize, zoneInner, hideFromMarks, repairFoldMarks, fillSupertagFields, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
+module.exports.__test = { unwrapAgent, wrapAgent, cleanShareText, cleanUrl, isReadLink, linkCluster, zoneOrganize, zoneInner, hideFromMarks, repairFoldMarks, fillSupertagFields, FROM_TAIL_RE, fixNumberedBullets, moveTodos, findQuestionCandidates, applyAnswers, segment, splitFrontmatter, machineLines, groupMachine, findExcerptCandidates, findThoughtCandidates, applyExcerpts, setTag, buildClassifyPrompt, scanDesktopSessions, safeTitle };
