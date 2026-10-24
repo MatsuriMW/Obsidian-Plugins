@@ -1645,7 +1645,10 @@ class RelatedView extends ItemView {
         }
         const dd = this.plugin.app.plugins.plugins["draft-desk"];
         if (dd?.renderButtons) dd.renderButtons(t, () => this.plugin.writingView());
-        if (f && this.plugin.isTopic(f)) {
+        // 追问成稿：qws-bridge 自己画按钮（带进度，在稿子里也认得出原选题）；老版本没有这个钩子时退回两个按钮
+        const qb = this.plugin.app.plugins.plugins["qws-bridge"];
+        if (f && qb?.renderButtons) qb.renderButtons(t, f, this.plugin.isTopic(f));
+        else if (f && this.plugin.isTopic(f)) {
             const b2 = t.createEl("button", { text: "🎤 QWS 采访" });
             b2.onclick = () => this.plugin.runQws(f, "qws");
             const b3 = t.createEl("button", { text: "🔥 grill-me" });

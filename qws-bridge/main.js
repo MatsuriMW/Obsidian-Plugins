@@ -1,4 +1,4 @@
-const { Plugin, Notice, TFile, getLinkpath } = require("obsidian");
+const { Plugin, Notice, Menu, TFile, getLinkpath } = require("obsidian");
 
 const OUT_ROOT     = "选题/_采访";      // 素材包和采访稿都放这里，每个选题一个子文件夹
 const CLAUDIAN_ID  = "realclaudian";
@@ -7,6 +7,8 @@ const MAX_CHARS    = 150000;            // 素材包总长度上限，防止塞�
 const JR = /^(\d{4})[-_.](\d{1,2})[-_.](\d{1,2})$/;
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const POINTER    = "00-素材包";          // 原笔记里留下的「素材已移到」那一行靠它认出来，下次不再搬
+const STEPS = ["还没采访过", "有素材包", "采访进行中 / 有采访记录", "有知识稿（02）", "有写作方案"];
+const STEP_FILES = [["00-素材包.md", "素材包"], ["01-完整采访记录.md", "完整采访记录"], ["02-采访分析与知识整理.md", "知识稿（02）"], ["写作方案.md", "写作方案"]];
 const safeName = (s) => String(s).replace(/[\\/:*?"<>|#^\[\]]/g, "").replace(/\s+/g, " ").trim().slice(0, 60) || "未命名";
 
 module.exports = class QwsBridge extends Plugin {
@@ -28,8 +30,49 @@ module.exports = class QwsBridge extends Plugin {
     cmd(checking, mode) {
         const f = this.app.workspace.getActiveFile();
         if (!f || f.extension !== "md") return false;
-        if (!checking) this.run(f, mode);
+        if (!checking) this.topicOf(f).then((t) => this.run(t.file, mode, t.line != null ? { line: t.line } : {}));
         return true;
+    }
+
+    // 稿子 → 原选题：稿子属性「选题: [[…]]」指回去（选题台双击卡片建的稿子都有）。
+    // 选题页就是那一页；日记块 = 那篇日记里行尾写着 📘[[这篇稿子]] 的那一行。不是稿子就是笔记自己
+    async topicOf(file) {
+        const mc = this.app.metadataCache;
+        const raw = [mc.getFileCache(file)?.frontmatter?.["选题"]].flat().filter(Boolean)[0];
+        const m = raw && String(raw).match(/\[\[([^\]|#]+)/);
+        const src = m && mc.getFirstLinkpathDest(m[1], file.path);
+        if (!(src instanceof TFile) || src === file) return { file, line: null, draft: false };
+        const lines = (await this.app.vault.cachedRead(src)).split("\n");
+        const hit = (mc.getFileCache(src)?.links || []).find((l) => mc.getFirstLinkpathDest(getLinkpath(l.link), src.path)?.path === file.path
+            && /📘\s*\[\[/.test(lines[l.position.start.line] || ""));
+        const line = hit ? hit.position.start.line : null;
+        return { file: src, line, lineText: line != null ? lines[line] : null, draft: true };
+    }
+
+    // 写作模式面板（第二大脑 RelatedView.renderTools）调这个，画「🎙 追问成稿 ▾」。
+    // 在稿子里也能用：顺着 选题: 找回原选题，采访目录、进度都是那个选题的。topic = 第二大脑认为当前笔记本身就是选题
+    renderButtons(el, file, topic) {
+        if (!file) return;
+        const b = el.createEl("button", { text: "🎙 追问成稿 ▾" });
+        b.hide();
+        this.topicOf(file).then((t) => {
+            if (!t.draft && !topic) return b.remove();
+            const pg = this.progress(t.file, t.line, t.lineText);
+            b.setText(`🎙 追问成稿${pg.level ? ` ${pg.level}/4` : ""} ▾`);
+            b.setAttr("aria-label", `${t.line != null ? `${t.file.basename} 第 ${t.line + 1} 行` : t.file.basename} · ${STEPS[pg.level]}`);
+            b.show();
+            b.onclick = (evt) => {
+                const menu = new Menu();
+                menu.addItem((it) => it.setTitle(`进度：${STEPS[pg.level]}`).setDisabled(true));
+                const opt = t.line != null ? { line: t.line } : {};
+                [["🎤 QWS 采访（选题 + 全部反链）", "qws"], ["🔥 grill-me 定写作方案", "grill"], ["📦 只生成素材包", "bundle"]]
+                    .forEach(([name, mode]) => menu.addItem((it) => it.setTitle(name).onClick(() => this.run(t.file, mode, opt))));
+                const have = STEP_FILES.filter(([n]) => this.app.vault.getAbstractFileByPath(`${pg.folder}/${n}`) instanceof TFile);
+                if (have.length) menu.addSeparator();
+                have.forEach(([n, label]) => menu.addItem((it) => it.setTitle(`打开${label}`).onClick(() => this.open(`${pg.folder}/${n}`))));
+                menu.showAtMouseEvent(evt);
+            };
+        });
     }
 
     // ---------- 入口：给选题台的按钮也用这个 ----------
@@ -75,6 +118,7 @@ module.exports = class QwsBridge extends Plugin {
         if (line == null) return file.basename;
         const raw = (lineText || "").replace(/^\s*[-*+]\s+(\[.\]\s+)?(TODO|DOING|DONE)?\s*/, "")
             .replace(/\[\[(文章选题|视频选题|blog选题|blog)(\|[^\]]*)?\]\]/g, "")
+            .replace(/📘\s*\[\[[^\]]*\]\]/gu, "")                          // 选题台双击建稿子时加的 📘[[稿件/…]]
             .replace(/#[^\s#]+/g, "")                                   // #选题/状态 #主题/穿搭 之类的标签
             .replace(/[📅🛫✅]\s*\d{4}-\d{2}-\d{2}|📆\S+|📶\s*\d+|⭐/gu, "")
             .replace(/\[\[([^\]|]*\|)?([^\]]*)\]\]/g, "$2")               // 其它双链只留显示文字

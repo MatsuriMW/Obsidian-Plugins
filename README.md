@@ -51,7 +51,7 @@
 | **LLM Wiki**<br>[`llm-wiki`](llm-wiki) | 仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检 | ★★ | 本机 Claude Code；配合第二大脑效果更好 |
 | **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效） | ★★ | Better Command Palette |
 | **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
-| **追问成稿（QWS / grill-me）**<br>[`qws-bridge`](qws-bridge) | 把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚 | ★ | Claudian 插件 + QWS / grill-me skill |
+| **追问成稿（QWS / grill-me）**<br>[`qws-bridge`](qws-bridge) | 把当前笔记和它的所有反链打包，交给 AI 来采访或盘问你，帮你把想法说清楚；写作模式面板上有按钮，在稿子里也认得出原来的选题 | ★ | Claudian 插件 + QWS / grill-me skill |
 | **日记整理**<br>[`journal-tidy`](journal-tidy) | 整理日记，分两种方式：基础整理在本地把手打的编号（- 1.）改成有序列表、任务分区、聚拢链接、给带标签的条目补上字段、折起做完的；你放进 DOING 区的 TODO、母块还没做完时里面做完的子项、你自己加的分割线都不动，Agent 自动记的做完的事收进 DONE 栏顶上的「🤖 Agent 记录」；进阶整理再请 Claude 联网回答日记里的问题，把 AI 助手自动记下的任务行按主题收拢，给摘录挂上记号。另外在 Claude 桌面 app 里归档一个会话，日记里自动记一笔。「今天是哪一篇日记」跟着螺旋日程的「日记日期分界」走（装了螺旋日程的话），两边不会差一天 | ★ | 本机 Claude Code；Logseq 式任务 |
 
 ### 日程与任务
@@ -81,7 +81,7 @@
 | **Journals**<br>[`journals`](journals) | 日记日历。改动：日历上标出每篇日记整理完没有，⌘⇧J 列出近两个月没整理完的；日记总是以编辑模式打开；侧栏日历更紧凑 | ★★ | 无 |
 | **Flashcards**<br>[`flashcards-obsidian`](flashcards-obsidian) | 从笔记生成并同步 Anki 卡片。改动：卡片的上下文会带上包着它的各层母块，在 Anki 里也知道这张卡在讲什么 | ★★ | Anki + AnkiConnect |
 | **Expandomatic**<br>[`expandomatic`](expandomatic) | 选区按 词 → 句 → 段 → 节 → 全文 逐级扩大，和 VSCode 的扩选一样。改动：和「编辑体验 Logseq 化」的块选中配合调整过 | ★★★ | 无 |
-| **MDFlow（自用）**<br>[`mdflow-local`](mdflow-local) | 把 Markdown 排成公众号文章、X Articles 和小红书图片。本地版，不跟插件市场更新 | ★★ | 无 |
+| **MDFlow（自用）**<br>[`mdflow-local`](mdflow-local) | 把 Markdown 排成公众号文章、X Articles 和小红书图片，可以一键发到 Hexo 博客、一次分发到几个平台。本地版，不跟插件市场更新 | ★★ | 无 |
 | **TODOseq**<br>[`todoseq`](todoseq) | 用 Logseq 式关键词（TODO / DOING / DONE）做轻量任务跟踪。改动：切换状态的快捷键让给了「任务状态快切」；关键词上不再挂悬停说明；关键词按状态上色（低饱和的蓝、红、绿，停下来的、没成的用暖灰色）；行里写的 2/3 这种进度不再被当成日期；优先级可以简写成 todoa、todo a、doing b，光标离开那一行就改成 TODO [#A]；⌃⇧I / ⌃⇧U 切换「重要」「紧急」（A 重要且紧急、B 紧急不重要、C 重要不紧急，从块去向搬过来的）；加了四个给 AI 的 TODO 状态 TODOFORAI / TODO4AI / TODO2AI / TODOTOAI（和 TODO 同类，可切到 DOING），小写的光标离开时改成大写；加了两个 Agent 会话的 DOING 中间态 TOREVIEW（停下来等你看）/ NEEDOK（等你点允许，显示成 NEEDOK?）/ ERRORED（报错停了）/ HITLIMIT（撞了用量限额，显示成 HITLIMIT!）/ QUEUED（已排队等续跑）/ DELEGATED（委派给 Agent 了）；关键词前面加了 lucide-animated 的动效小图标（DONE 是画勾的圆圈、DOING 是一直转的圈、TOREVIEW 是眨眼……），DOING 一直转，别的只在刚切换那一下播一次，和 PAUSED 一样点一下回 DOING、用渐变色区分，由螺旋日程按会话状态自动切 | ★★ | 无 |
 | **NoteTweet**<br>[`notetweet`](notetweet) | 在笔记里写推文和线程直接发到 X。改动：撰写框照 X 和 Typefully 重做——头像 + 账号、Write / Preview 两档（Preview 按 X 时间线排出整串帖子：线程线、图片宫格、#话题 @提及 链接上色）；字数改成 X 式的进度环（剩 30 字变暖色出数字，超了变红、卡片抖一下）；按钮换成 Lucide 动效图标（照 lucide-animated，悬停时自己动）；加帖、删帖、换顺序都有平滑过渡；弹窗贴上方开不再上下跳；按钮样式和 Obsidian 原生对齐；发帖中有转圈提示、发完有画出来的勾；编辑器右键选中文字可「Compose post from selection」；加了「Post current block」（命令 + 左侧功能区纸飞机按钮 + 右键菜单）：光标在列表项里取这一项连同子项，在段落里取整段，去掉列表符号、TODOseq 关键词、双链和粗体高亮记号后带进撰写框，嵌入的图片变附件，发完在这一块第一行末尾（块 id 前）打 #tweeted；各个动作有轻声的合成音效（加帖、删帖、换顺序、拆帖、加图、超限、发出、发成功），设置里能关 | ★★ | X 开发者账号的 API 密钥 |
 

@@ -357,11 +357,12 @@ module.exports = class DraftDesk extends Plugin {
         return /口播|播客|视频|演讲/.test(form) ? ["文章稿风格提示词", "口播稿风格提示词"] : ["文章稿风格提示词"];
     }
     // 选题名：属性「选题」→ 选题页 稿件: 链到 / 写着这篇的 → 稿名
+    // 选题台从日记块建的稿子写的是 [[日记|选题名]]，别名就是追问成稿的采访目录名
     topicName(file) {
         const raw = [this.fm(file)["选题"]].flat().filter(Boolean)[0];
         if (raw) {
-            const m = String(raw).match(/\[\[([^\]|#]+)/);
-            return safeName((m ? m[1] : String(raw)).split("/").pop());
+            const m = String(raw).match(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?/);
+            return safeName(m ? (m[2] || m[1].split("/").pop()) : String(raw).split("/").pop());
         }
         const mc = this.app.metadataCache;
         const linked = this.app.vault.getMarkdownFiles().find((f) => f.path.startsWith("选题/") && !f.path.startsWith(OUT_ROOT + "/")
