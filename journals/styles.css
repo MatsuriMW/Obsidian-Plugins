@@ -2,14 +2,29 @@
 /*$vite$:1*/
 
 /* ==== 马自立 本地补丁（开始）==== */
-/* 整理状态：实心点 = 整理完；空心圈 = 没整理完；淡点 = 今天以后；空日记照原样 */
+/* 整理状态：实心点 = 整理完；包着日期的弧 = 没整理完；淡点 = 今天以后；空日记照原样 */
+/* 没整理完：不要下面的点，改成一圈淡轨道 + 一段弧，弧从正上方顺时针走，长短 = --jx-left（DOING + TODO 区占全篇的比例，main.js 写的） */
 .notes-month-view__day[data-tidy="todo"] .shape-decoration.shape-circle {
-	background-color: transparent;
-	box-shadow: inset 0 0 0 1.5px var(--interactive-accent);
+	visibility: hidden;
 }
-.notes-month-view__day.is-active[data-tidy="todo"] .shape-decoration.shape-circle,
-.notes-month-view__day[aria-selected="true"][data-tidy="todo"] .shape-decoration.shape-circle {
-	box-shadow: inset 0 0 0 1.5px currentColor;
+.notes-month-view__day[data-tidy="todo"] .cell-decoration::after {
+	--jx-arc: var(--interactive-accent);
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 26px;
+	height: 26px;
+	transform: translate(-50%, -50%);
+	border-radius: 50%;
+	background: conic-gradient(var(--jx-arc) calc(var(--jx-left, 0) * 1turn), color-mix(in srgb, var(--jx-arc) 18%, transparent) 0);
+	-webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+	mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+	pointer-events: none;
+}
+.notes-month-view__day.is-active[data-tidy="todo"] .cell-decoration::after,
+.notes-month-view__day[aria-selected="true"][data-tidy="todo"] .cell-decoration::after {
+	--jx-arc: currentColor;
 }
 
 /* 今天以后的日记（提前写的计划）：点淡一些，不和「整理完」混在一起 */

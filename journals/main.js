@@ -24,9 +24,10 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 // ==== 马自立 本地补丁（开始）====================================================
 // Journals 3.5.1 原版代码一字未改，下面只是继承它导出的插件类，加三件事：
 //   1. 日记始终以编辑模式打开（原来的 Journal Edit Mode 插件并进来了）
-//   2. 判断每篇日记「整理完没有」，标在日历上：实心点 = 整理完，空心圈 = 没整理完
+//   2. 判断每篇日记「整理完没有」，标在日历上：实心点 = 整理完，包着日期的一段弧 = 没整理完
 //      整理完 = 最后一条顶格内容是分割线（- --- / ---），而且全篇没有没做完的任务
 //      （TODO / DOING / PAUSED / TOREVIEW / HITLIMIT / NEEDOK / QUEUED / ERRORED / NOW / LATER / WAIT / [ ]）；今天以后的日记和空日记不判断
+//      弧的长短 = 还没整理的比例：第一条顶格分割线以下（DOING 区 + TODO 区）的行数占全篇（DONE + DOING + TODO 区）的多少
 //   3. 一键列出近两个月没整理完的日记：命令（默认 ⌘⇧J），日历顶上的「未整理 N」按钮也能打开
 //   4. 侧栏里单独占一格的日历：这一格的高度自动贴合日历内容（翻到 6 周的月份会跟着变高），不留空白
 //   5. 样式见 styles.css 末尾同名补丁：去掉侧栏里日历上方的标签头、分割线和多余留白
@@ -73,7 +74,7 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 	const OPEN_RE = /^\s*[-*+]\s+(?:\[ \]|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAIT|WAITING|IN-PROGRESS)\b)/;
 	const DIVIDER_RE = /^(?:[-*+]\s+)?(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
-	// 一篇日记的整理状态：null = 不判断；{ done, open, lastDivider }
+	// 一篇日记的整理状态：null = 不判断；{ done, open, lastDivider, left }
 	function tidyStatus(text) {
 		if (text.startsWith("---\n")) { const end = text.indexOf("\n---", 4); if (end >= 0) text = text.slice(end + 4); }
 		const lines = text.split("\n").filter((l) => l.trim());
@@ -81,7 +82,15 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 		const top = lines.filter((l) => !/^[ \t]/.test(l));
 		const lastDivider = top.length > 0 && DIVIDER_RE.test(top[top.length - 1].trim());
 		const open = lines.filter((l) => OPEN_RE.test(l)).length;
-		return { done: lastDivider && open === 0, open, lastDivider };
+		// 还没整理的比例：第一条顶格分割线之前是 DONE 区，之后是 DOING 区 + TODO 区；分割线本身不算
+		const area = [0, 0];
+		let zone = 0;
+		for (const l of lines) {
+			if (!/^[ \t]/.test(l) && DIVIDER_RE.test(l.trim())) zone = 1;
+			else area[zone]++;
+		}
+		const left = area[0] + area[1] ? area[1] / (area[0] + area[1]) : 0;
+		return { done: lastDivider && open === 0, open, lastDivider, left };
 	}
 
 	function tidyLabel(st) {
@@ -89,7 +98,7 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 		const why = [];
 		if (!st.lastDivider) why.push("最后一条不是分割线");
 		if (st.open) why.push(`还有 ${st.open} 个没做完的任务`);
-		return "没整理完：" + why.join("，");
+		return "没整理完：" + why.join("，") + ` · DOING / TODO 区占 ${Math.round(st.left * 100)}%`;
 	}
 
 	class JournalsLocal extends Base {
@@ -260,11 +269,14 @@ separator: " | "`,_lr=Z(O({__name:`CodeBlockReferenceModal`,props:{journalName:{
 					const key = cell.getAttribute("data-anchor");
 					const st = this.tidy.get(key);
 					const want = !st ? "" : key > today ? "future" : st.done ? "done" : "todo";
-					if ((cell.getAttribute("data-tidy") || "") === want) continue;
+					const left = want === "todo" ? st.left.toFixed(3) : "";   // 弧的长短，写成 CSS 变量 --jx-left（0～1）
+					if ((cell.getAttribute("data-tidy") || "") === want && cell.style.getPropertyValue("--jx-left") === left) continue;
 					if (!cell.hasAttribute("data-label")) cell.setAttribute("data-label", cell.getAttribute("aria-label") || key);
 					const base = cell.getAttribute("data-label");
 					if (want) { cell.setAttribute("data-tidy", want); cell.setAttribute("aria-label", want === "future" ? `${base} · 还没到这一天` : `${base} · ${tidyLabel(st)}`); }
 					else { cell.removeAttribute("data-tidy"); cell.setAttribute("aria-label", base); }
+					if (left) cell.style.setProperty("--jx-left", left);
+					else cell.style.removeProperty("--jx-left");
 				}
 			}
 		}

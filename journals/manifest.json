@@ -3,7 +3,7 @@
   "name": "Journals",
   "version": "9999.0.0",
   "minAppVersion": "1.8.7",
-  "description": "日记、日历和周期笔记。自用补丁：日记始终以编辑模式打开（并入了原 Journal Edit Mode）；日历上标出每篇日记整理完没有（实心点 = 最后一条是分割线且没有没做完的任务，空心圈 = 没整理完）；侧栏日历去掉标签头、分割线和多余留白。",
+  "description": "日记、日历和周期笔记。自用补丁：日记始终以编辑模式打开（并入了原 Journal Edit Mode）；日历上标出每篇日记整理完没有（实心点 = 最后一条是分割线且没有没做完的任务，没整理完 = 包着日期的一段弧，弧长 = DOING + TODO 区占全篇的比例）；侧栏日历去掉标签头、分割线和多余留白。",
   "author": "马自立（改自 Sergii Kostyrko）",
   "authorUrl": "https://github.com/srg-kostyrko",
   "isDesktopOnly": false,
