@@ -4,7 +4,6 @@ emacs-logseq-inspired-outline	MatsuriMW/emacs-logseq-inspired-outline
 hover-outline	MatsuriMW/hover-outline
 logseq-style-alias	MatsuriMW/logseq-style-alias
 logseq-style-fold	MatsuriMW/logseq-style-fold
-list-fold-memory	MatsuriMW/list-fold-memory
 roam-backlinks	MatsuriMW/roam-backlinks
 nautilus-spiral	MatsuriMW/nautilus-spiral
 telegram-companion	MatsuriMW/telegram-companion
