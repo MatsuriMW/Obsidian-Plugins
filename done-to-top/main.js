@@ -80,7 +80,7 @@ const BULLET_RE = /^(\s*)([-*+]|\d+[.)])(\s+|$)(.*)$/;   // 列表项：无序�
 const ITEM_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)(.*)$/;
 const SEP_RE = /^[-*+]\s+-{3,}\s*$/;                 // 分割线只认「- ---」（*** ___ 不算）
 const SEP = "- ---";
-const KEYWORD_RE = /^(TODOFORAI|TODO4AI|TODO2AI|TODOTOAI|TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE)(\s+|$)/;
+const KEYWORD_RE = /^(TODOFORAI|TODO4AI|TODO2AI|TODOTOAI|TODO|DOING|LATER|NOW|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|IN-PROGRESS|SUSPENDED|CANCELED|CANCELLED|FAILED|DONE|YES|NO|MAYBE)(\s+|$)/;
 const CHECKBOX_RE = /^\[[^\]]\](\s+|$)/;
 const STAMP_RE = /^\*\*\d{1,2}[:：]\d{2}\*\*\s*/;          // 前面的 **07:37** 记录点
 const TODOS_HEAD_RE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*)?todos(?:\*\*)?\s*(?:[:：]|$)/i;   // todos 母块的那一行
@@ -120,6 +120,7 @@ function joinPrio(prio, rest) {
 }
 const ZONE = {
 	DONE: "DONE", CANCELED: "DONE", CANCELLED: "DONE", FAILED: "DONE", SUSPENDED: "DONE",
+	YES: "DONE", NO: "DONE", MAYBE: "TODO",   // 拿主意的三个词：YES / NO 算定了（NO 和 CANCELLED 一类），MAYBE 是还没定、和 WAITING 一类
 	DOING: "DOING", NOW: "DOING", "IN-PROGRESS": "DOING", PAUSED: "DOING", TOREVIEW: "DOING", HITLIMIT: "DOING", NEEDOK: "DOING", QUEUED: "DOING", ERRORED: "DOING", DELEGATED: "DOING",
 	TODO: "TODO", LATER: "TODO", WAITING: "TODO", WAIT: "TODO",
 	TODOFORAI: "TODO", TODO4AI: "TODO", TODO2AI: "TODO", TODOTOAI: "TODO",
@@ -233,9 +234,9 @@ function normalizeKeyword(line, withTime) {
 // DOING 区先按关键字分三段：DOING → DELEGATED → NEEDOK / TOREVIEW / ERRORED → HITLIMIT / QUEUED → PAUSED（和关键词颜色红 → 红渐到各色 → 黄一致；越要你马上动手的越靠前），段里再按优先级；
 // DONE 区不看优先级，只按关键字聚类（DONE 和手动放进来的、闪卡在前，然后 SUSPENDED → FAILED → CANCELLED）
 const KW_CLUSTER = {
-	DONE: { SUSPENDED: 1, FAILED: 2, CANCELLED: 3, CANCELED: 3 },
+	DONE: { SUSPENDED: 1, FAILED: 2, CANCELLED: 3, CANCELED: 3, NO: 3 },
 	DOING: { DELEGATED: 1, NEEDOK: 2, TOREVIEW: 2, ERRORED: 2, HITLIMIT: 3, QUEUED: 3, PAUSED: 4 },
-	TODO: { WAITING: 1, WAIT: 1, TODOFORAI: 2, TODO4AI: 2, TODO2AI: 2, TODOTOAI: 2 },
+	TODO: { WAITING: 1, WAIT: 1, MAYBE: 1, TODOFORAI: 2, TODO4AI: 2, TODO2AI: 2, TODOTOAI: 2 },
 };
 function rankIn(zone, line) {
 	let rest = line.replace(/^[ \t]*(?:[-*+]|\d+[.)])\s+/, "").replace(STAMP_RE, "");

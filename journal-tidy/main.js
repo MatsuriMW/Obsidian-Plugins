@@ -91,8 +91,8 @@ const MAX_BACKUPS = 5;
 const RECENT_LIMIT = 15;
 
 const LIST_ITEM = /^(?:[-*+]|\d+[.)])[ \t]/;
-const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED)\b|\[ \][ \t]+)|^(?:[-*+]|\d+[.)])[ \t].*(?:#待办(?![\w一-鿿])|\[\[待办(?:\|[^\]]*)?\]\])/;
-const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED)[ \t]+)?/;
+const TODO_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:(?:\[ \][ \t]+)?(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|MAYBE|SUSPENDED)\b|\[ \][ \t]+)|^(?:[-*+]|\d+[.)])[ \t].*(?:#待办(?![\w一-鿿])|\[\[待办(?:\|[^\]]*)?\]\])/;
+const PREFIX = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?(?:\[.\][ \t]+)?(?:(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|YES|NO|MAYBE)[ \t]+)?/;
 const indentOf = (l) => (l.match(/^[ \t]*/) || [""])[0].replace(/\t/g, "    ").length;
 const isBlank = (l) => l.trim() === "";
 const INFO_HEAD_RE = /^[-*+][ \t]+\[\[信息增量\]\][ \t]*$/;   // 「- [[信息增量]]」母块：块去向把它归在 TODO 区最后
@@ -729,7 +729,7 @@ function groupMachine(text, themes, z) {
 
 // ---------------- 摘录记号 ----------------
 const SEP_LINE = /^[-*+][ \t]+-{3,}[ \t]*$/;
-const TASK_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[.\][ \t]+|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED)\b)/;
+const TASK_TOP = /^(?:[-*+]|\d+[.)])[ \t]+(?:\*\*\d{1,2}[:：]\d{2}\*\*[ \t]*)?(?:\[.\][ \t]+|(?:TODO|DOING|NOW|LATER|PAUSED|TOREVIEW|HITLIMIT|NEEDOK|QUEUED|ERRORED|DELEGATED|WAITING|WAIT|SUSPENDED|DONE|CANCELLED|CANCELED|FAILED|YES|NO|MAYBE)\b)/;
 const hasTag = (line, tag) => line.split(/\s+/).includes(tag);
 const bareText = (s) => s.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/!?\[\[[^\]]*\]\]/g, "").replace(/[\s\-*+>#=|]/g, "");
 
@@ -1092,7 +1092,7 @@ module.exports = class JournalTidy extends Plugin {
         });
         // 列表折叠记忆开着时：这次收起 DONE 区不算你的操作，不写成折叠标记；
         // applyFoldInfo 会把别的折叠全展开，所以接着让它按标记把你自己折过的项补折回去
-        const lfm = this.app.plugins.plugins["list-fold-memory"];
+        const lfm = this.app.plugins.plugins["logseq-style-fold"] || this.app.plugins.plugins["list-fold-memory"];
         const apply = () => mode.applyFoldInfo({ folds, lines: view.editor.lineCount() });
         if (lfm && typeof lfm.quietly === "function") {
             lfm.quietly(apply);

@@ -275,6 +275,7 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
  *   TODO / LATER = circle-dashed · TODOFORAI 这类给 AI 的 = bot · DOING / NOW / IN-PROGRESS = loader-circle（一直转）· DONE = circle-check
  *   PAUSED = pause · WAITING = hourglass · SUSPENDED = snowflake · CANCELLED = ban · FAILED = x
  *   DELEGATED = send（纸飞机飞出去）· TOREVIEW = eye · NEEDOK = hand · ERRORED = badge-alert · HITLIMIT = gauge（指针打到头）· QUEUED = alarm-clock
+ *   拿主意的三个词：YES = thumbs-up · NO = thumbs-down · MAYBE = circle-question-mark（这三个 lucide-animated 里没有对应的动效，自己写的）
  * 图标是 CodeMirror 的小部件，插在关键词前面，不碰 TODOseq 自己的关键词元素。
  * 只有 DOING 一类的动效一直循环；别的只在这一行刚换成这个关键词的那一下播一次（⌘/、点关键词、手敲、螺旋日程自动切都算），
  * 滚动、重开笔记、别处重画时不再播。一次改了五行以上的（同步、批量整理）不播。只管编辑器（实时预览 / 源码），阅读视图不加
@@ -303,6 +304,9 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		hitlimit: P("m12 14 4-4", "needle") + P("M3.34 19a10 10 0 1 1 17.32 0"),
 		delegated: '<g class="fly">' + P("M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z") + P("m21.854 2.147-10.94 10.939") + "</g>" +
 			'<path class="trail" stroke-dasharray="2 2" d="M -3 28 C -0.5 26.8 1.6 24.6 3.3 22 C 4.8 19.7 5.2 17.6 4.2 16.1 C 3.2 14.7 1.4 14.5 0.3 15.8 C -0.9 17.2 -0.6 19.4 1.2 20.4 C 3.4 21.5 6.4 19.4 9 15.8"/>',
+		yes: '<g class="thumb">' + P("M7 10v12") + P("M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z") + "</g>",
+		no: '<g class="thumb">' + P("M17 14V2") + P("M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z") + "</g>",
+		maybe: '<circle cx="12" cy="12" r="10"/>' + '<g class="q">' + P("M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3") + P("M12 17h.01") + "</g>",
 		queued: '<g class="ring">' + P("M18 20.5L19.5 22") + P("M6 20.5L4.5 22") + P("M21 13C21 17.968 16.968 22 12 22C7.032 22 3 17.968 3 13C3 8.032 7.032 4 12 4C16.968 4 21 8.032 21 13Z") + P("M15.339 15.862L12.549 14.197C12.063 13.909 11.667 13.216 11.667 12.649V8.95898") + "</g>" +
 			'<g class="bells">' + P("M18 2L21.747 5.31064") + P("M6 2L2.25304 5.31064") + "</g>",
 	};
@@ -311,6 +315,7 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		DOING: "doing", NOW: "doing", "IN-PROGRESS": "doing", DONE: "done", PAUSED: "paused", WAITING: "waiting", WAIT: "waiting",
 		SUSPENDED: "suspended", CANCELLED: "cancelled", CANCELED: "cancelled", FAILED: "failed",
 		TOREVIEW: "review", NEEDOK: "needok", ERRORED: "errored", HITLIMIT: "hitlimit", QUEUED: "queued", DELEGATED: "delegated",
+		YES: "yes", NO: "no", MAYBE: "maybe",
 	};
 	const KWS = Object.keys(KIND).sort((a, b) => b.length - a.length).map((k) => k.replace("-", "\\-")).join("|");
 	// 行首（引用、列表符号、**07:37** 记录时刻之后）的关键词
@@ -370,14 +375,16 @@ LATER -> NOW -> DONE`).onChange(async a=>{let o=a.split(`
 		build(view) {
 			const out = new RangeSetBuilder(), doc = view.state.doc, now = Date.now();
 			for (const [pos, f] of this.fires) if (now - f.at >= FIRE_MS) this.fires.delete(pos);
+			// 行中间的嵌图会把一行切成两段可见范围：从上一段扫到的行之后接着扫，不然同一行画两个图标
+			let next = 0;
 			for (const { from, to } of view.visibleRanges) {
-				for (let pos = from; pos <= to;) {
+				for (let pos = Math.max(from, next); pos <= to;) {
 					const line = doc.lineAt(pos), k = kwOf(line.text);
 					if (k && !inCode(view.state, line.from)) {
 						const f = this.fires.get(line.from), fire = f && f.kw === k.kw ? f.id : 0;
 						out.add(line.from + k.at, line.from + k.at, Decoration.widget({ widget: new Icon(k.kw, fire), side: -1 }));
 					}
-					pos = line.to + 1;
+					pos = next = line.to + 1;
 				}
 			}
 			return out.finish();

@@ -47,6 +47,7 @@ const CONTEXT = {
 		{ keys: ["Shift+ArrowUp", "Shift+ArrowDown"], name: "扩选到上 / 下一块", when: "已选中整块时" },
 		{ keys: ["Mod+Shift+B"], name: "接着按块扩大：先加下面的列表块，再选母块，到顶层才交回 Expandomatic（键位跟着 Expandomatic 的「Expand Selection」）", when: "已选中整块时" },
 		{ keys: ["Enter"], name: "回到编辑（光标在块首行末尾）", when: "已选中整块时" },
+		{ keys: ["T", "D", "X", "Y", "N", "M", "C", "W"], name: "改任务状态：TODO / DOING / DONE / YES / NO / MAYBE / CANCELLED / WAITING（已经是这个状态就去掉）", when: "已选中整块时" },
 		{ keys: ["[", "（", "【", "「"], name: "选中文字后输入成对符号 = 包裹", when: "有选中文字时" },
 		{ keys: ["Enter"], name: "确认包裹：光标跳到右半边符号后面，不换行", when: "选中的文字被成对符号包着时" },
 		{ keys: ["Mod+Enter"], name: "在同级末尾新建块（Bike 的 create at the same level，有序列表接着编号）", when: "光标在列表里" },

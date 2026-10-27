@@ -2582,6 +2582,10 @@
 .todoseq-keyword-formatted[data-task-keyword='SUSPENDED'] { --tsq-kw: #a17f66; }
 .todoseq-keyword-formatted:is([data-task-keyword='CANCELLED'], [data-task-keyword='CANCELED']) { --tsq-kw: #a4a8ac; }
 .todoseq-keyword-formatted[data-task-keyword='FAILED'] { --tsq-kw: #93606b; }
+/* 拿主意的三个词跟着各自的分组上色：YES 和 DONE 一样算定了做、NO 和 CANCELLED 一类、MAYBE 和 WAITING 一样还悬着 */
+.todoseq-keyword-formatted[data-task-keyword='YES'] { --tsq-kw: #629c7f; }
+.todoseq-keyword-formatted[data-task-keyword='NO'] { --tsq-kw: #a4a8ac; }
+.todoseq-keyword-formatted[data-task-keyword='MAYBE'] { --tsq-kw: #8f7fb6; }
 /* Agent 会话的 DOING 中间态，螺旋日程按会话状态自动切（交互和 PAUSED 一样，⌘/ 或点一下回 DOING）。
    颜色从 DOING 的砖红起（本来在跑），渐到它停下来的方向：
      TOREVIEW → PAUSED 的黄（停下等你看）；NEEDOK → 赭橙（停在「允许吗？」上，要你马上点）；
@@ -2635,6 +2639,9 @@
 .tsq-ico[data-kw='HITLIMIT'] { --tsq-ico: #8a5a8c; }
 .tsq-ico[data-kw='QUEUED'] { --tsq-ico: #6f86a8; }
 .tsq-ico[data-kw='DELEGATED'] { --tsq-ico: #5b9690; }
+.tsq-ico[data-kw='YES'] { --tsq-ico: #629c7f; }
+.tsq-ico[data-kw='NO'] { --tsq-ico: #a4a8ac; }
+.tsq-ico[data-kw='MAYBE'] { --tsq-ico: #8f7fb6; }
 
 /* DOING：loader-circle，一直转（0.8 秒一圈，匀速） */
 .tsq-ico-doing .spin { animation: tsq-spin 0.8s linear infinite; }
@@ -2705,6 +2712,15 @@
 .tsq-ico-delegated.is-fire .trail { animation: tsq-trail 0.9s ease-out both; }
 @keyframes tsq-fly { 0%, 100% { transform: none; } 50% { transform: translate(3px, -3px) scale(0.8); } }
 @keyframes tsq-trail { 0% { opacity: 0; } 30%, 60% { opacity: 0.7; } 100% { opacity: 0; } }
+
+/* YES：大拇指往上翘一下；NO：往下点一下（都绕手腕转）；MAYBE：问号左右晃 */
+.tsq-ico-yes .thumb { transform-origin: 7px 22px; }
+.tsq-ico-no .thumb { transform-origin: 17px 2px; }
+.tsq-ico-yes.is-fire .thumb { animation: tsq-thumb-up 0.6s cubic-bezier(.3, 1.4, .6, 1) both; }
+.tsq-ico-no.is-fire .thumb { animation: tsq-thumb-down 0.6s cubic-bezier(.3, 1.4, .6, 1) both; }
+.tsq-ico-maybe.is-fire .q { animation: tsq-wob 0.5s linear both; }
+@keyframes tsq-thumb-up { 40% { transform: translateY(-1.5px) rotate(-14deg); } }
+@keyframes tsq-thumb-down { 40% { transform: translateY(1.5px) rotate(-14deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   .tsq-ico *, .tsq-ico.is-fire * { animation: none !important; }
