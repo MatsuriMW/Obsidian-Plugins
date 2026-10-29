@@ -47,7 +47,7 @@
 
 | 插件 | 作用 | 推荐度 | 需要什么 |
 |---|---|---|---|
-| **第二大脑（自用）**<br>[`second-brain-local`](second-brain-local) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从卡片和 Wiki 里随机漫步，作答直接记进 Anki；生成库周报。笔记不离开这台电脑 | ★★ | Ollama + EmbeddingGemma；Anki + AnkiConnect（可选） |
+| **第二大脑（自用）**<br>[`second-brain-local`](second-brain-local) | 跑在本机的语义检索层：写作时实时找出库里意思相近的段落；替 LLM Wiki 挑材料；每日回顾从 Wiki 条目里随机漫步、回看存疑条目、找孤岛笔记；生成库周报。笔记不离开这台电脑。刷卡已拆成 Card Walk | ★★ | Ollama + EmbeddingGemma |
 | **LLM Wiki**<br>[`llm-wiki`](llm-wiki) | 仿 Karpathy 的 LLM Wiki：让 Claude 把散在日记和笔记里的内容整理成主题条目，每句话都链回原文出处；自带体检 | ★★ | 本机 Claude Code；配合第二大脑效果更好 |
 | **Palette Enhancements**<br>[`palette-split-open`](palette-split-open) | 增强 Better Command Palette 的文件搜索：在右侧拆分打开、搜不到文件名时改搜正文、⌘O 之后打一个符号只搜某一类内容（、书签和看板 / ？Chrome 书签 / 《 选题台 / @ 小说选题台 / # Wiki 条目 / ！卡片，中英文标点等效） | ★★ | Better Command Palette |
 | **稿件台**<br>[`draft-desk`](draft-desk) | 写稿工作台：压测观点、补素材、扩写、正式化、一键排版，挂在第二大脑的写作面板上 | ★ | 本机 Claude Code、第二大脑、作者的写作 skill |
@@ -98,6 +98,7 @@
 | 插件 | 作用 | 仓库 |
 |---|---|---|
 | **Agent Deck** | Track Claude Code, Codex, WorkBuddy and DeepSeek Harness; drag sessions onto note items and items onto agents; keep agent status in the macOS menu bar. | [MatsuriMW/obsidian-agent-deck](https://github.com/MatsuriMW/obsidian-agent-deck) |
+| **Card Walk** | 刷卡：从库里抽 #card 卡片和 ==挖空==，在侧栏一张张揭开、作答，排程走 Anki。手机上也能刷，作答经 Upstash 中转几秒内进电脑上的 Anki；面板顶上一条同步状态，每次作答「已记 → 已到中转 → 已进 Anki」三步看得见，别的设备刚答过的卡会当场变灰。中英文界面，单独仓库发布 | [MatsuriMW/card-walk](https://github.com/MatsuriMW/card-walk) |
 | **Chrome Tab Groups** | Chrome 式标签页分组：命名、配色、折叠、整组拖动、移到新窗口，右键菜单也和 Chrome 一样 | [MatsuriMW/obsidian-chrome-tab-groups](https://github.com/MatsuriMW/obsidian-chrome-tab-groups) |
 | **Emacs Logseq Inspired Outline** | 受 Logseq 和 Emacs 启发的大纲编辑：Esc 选中整块，↑↓ 在块之间移动；选中文字后输入括号、引号会把文字包起来；⌘K 插分割线；⌘⌥↑ 跳到母块（光标停在母块末尾）、⌘Enter 在同级末尾新建块（有序列表接着编号）、把几块收进一个新母块；块可以在无序列表、有序列表（1. / 4.1 / a.）和普通段落之间转换，⌘\ 一键循环切换 | [MatsuriMW/emacs-logseq-inspired-outline](https://github.com/MatsuriMW/emacs-logseq-inspired-outline) |
 | **Hover Outline** | 编辑区角落的隐藏式目录（仿 Claude Code，位置可选左 / 右 × 上 / 中 / 下，默认左中）：平时只有一列短横线，鼠标移上去展开，点一下跳过去并把那一行停在正中 | [MatsuriMW/hover-outline](https://github.com/MatsuriMW/hover-outline) |

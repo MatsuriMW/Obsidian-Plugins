@@ -10,3 +10,4 @@ telegram-companion	MatsuriMW/telegram-companion
 chrome-tab-groups	MatsuriMW/obsidian-chrome-tab-groups
 agent-deck	MatsuriMW/obsidian-agent-deck
 token-receipt	MatsuriMW/token-receipt
+card-walk	MatsuriMW/card-walk
