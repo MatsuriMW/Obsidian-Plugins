@@ -1,21 +1,21 @@
 // Obsidian 书签桥：Chrome 这一头
-// · Chrome → Obsidian：书签一有变化（或每 30 秒的闹钟），把整棵书签树 POST 给 Obsidian 插件
-// · Obsidian → Chrome：长轮询 /poll 领操作，一次一条，用 chrome.bookmarks 执行后 /ack 回执
-// 只和本机 127.0.0.1:27184 通信。Obsidian 没开时什么都不做，等闹钟下次再试。
+// 手动同步：只有点扩展弹窗里的「同步」才连 Obsidian 一次，平时不轮询、不常驻。
+// · Chrome → Obsidian：把整棵书签树 POST 给 Obsidian 插件（/tree），顺带补插件缺的网站图标
+// · Obsidian → Chrome：用 /poll 把插件那边排队的操作一条条领来（带 once：不挂起，没有就回空），
+//   用 chrome.bookmarks 执行后 /ack 回执；执行过就再推一次树
+// 只和本机 127.0.0.1:27184 通信。
 
 const BASE = "http://127.0.0.1:27184";   // 端口和 manifest 的 host_permissions、插件里的 PORT 是同一个
-const POLL_TIMEOUT = 28000;               // 插件最多挂 20 秒；service worker 30 秒没动静会被回收
 const UNPAIRED_RETRIES = 40;              // 等用户在 Obsidian 里点「允许」：每 3 秒问一次，最多 2 分钟
+const MAX_OPS = 200;                      // 一轮最多执行多少条，防止回执对不上时停不下来
 
-let looping = false;      // 长轮询在跑
-let executing = false;    // 正在执行一条操作：这期间不推树，等回执发出去再推
-let pushTimer = null;
-let unpairedLeft = UNPAIRED_RETRIES;
-let status = { state: "off", lastOk: 0, error: "" };   // state: on / off / unpaired / denied
+let syncing = false;
+let unpairedLeft = 0;
 
+// 状态存 storage.local：浏览器重启后弹窗里也看得到上次同步的时间。state: on / syncing / off / unpaired / denied
 async function setStatus(patch) {
-	Object.assign(status, patch);
-	try { await chrome.storage.session.set({ status }); } catch {}
+	const { status = {} } = await chrome.storage.local.get("status");
+	try { await chrome.storage.local.set({ status: { ...status, ...patch } }); } catch {}
 }
 
 async function api(path, body, timeout = 8000) {
@@ -63,17 +63,6 @@ async function sendIcons(urls) {
 		const r = await api("/favicons", { icons });
 		urls = r.need;
 	}
-}
-
-function schedulePush() {
-	clearTimeout(pushTimer);
-	pushTimer = setTimeout(() => {
-		if (executing) return schedulePush();
-		ensure(true);
-	}, 300);
-}
-for (const ev of ["onCreated", "onRemoved", "onChanged", "onMoved", "onChildrenReordered", "onImportEnded"]) {
-	chrome.bookmarks[ev].addListener(schedulePush);
 }
 
 // ---------- Obsidian → Chrome ----------
@@ -137,53 +126,42 @@ async function exec(cmd) {
 	return res;
 }
 
-async function loop() {
-	if (looping) return;
-	looping = true;
-	try {
-		for (;;) {
-			const r = await api("/poll", {}, POLL_TIMEOUT);
-			await setStatus({ state: "on", lastOk: Date.now(), error: "" });   // 顺带重置 service worker 的空闲计时
-			if (!r.cmd) continue;
-			executing = true;
-			try {
-				await api("/ack", await exec(r.cmd));
-				await pushTree();
-			} finally { executing = false; }
-		}
-	} finally { looping = false; }
-}
+// ---------- 同步一次 ----------
 
-// ---------- 连接 ----------
-
-async function ensure(force) {
-	if (looping && !force) return;
+async function syncOnce() {
+	if (syncing) return;
+	syncing = true;
+	await setStatus({ state: "syncing", error: "" });
 	try {
 		await pushTree();
-		unpairedLeft = UNPAIRED_RETRIES;
-		await setStatus({ state: "on", lastOk: Date.now(), error: "" });
-		await loop();
+		const seen = new Set();
+		let ran = 0;
+		while (ran < MAX_OPS) {
+			const r = await api("/poll", { once: true });
+			if (!r.cmd || seen.has(r.cmd.id)) break;
+			seen.add(r.cmd.id);
+			await api("/ack", await exec(r.cmd));
+			ran++;
+		}
+		if (ran) await pushTree();
+		unpairedLeft = 0;
+		await setStatus({ state: "on", lastOk: Date.now(), ran, error: "" });
 	} catch (e) {
 		const code = e && e.code;
 		if (code === "unpaired") {
 			await setStatus({ state: "unpaired", error: "" });
-			if (unpairedLeft-- > 0) setTimeout(() => ensure(), 3000);
+			if (unpairedLeft-- > 0) setTimeout(() => syncOnce(), 3000);
 		} else if (code === "denied") {
 			await setStatus({ state: "denied", error: "" });
 		} else {
 			await setStatus({ state: "off", error: String((e && e.message) || e) });
 		}
-	}
+	} finally { syncing = false; }
 }
 
-chrome.alarms.create("tick", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(() => ensure());
-chrome.runtime.onStartup.addListener(() => ensure());
-chrome.runtime.onInstalled.addListener(() => ensure());
 chrome.runtime.onMessage.addListener((msg) => {
 	if (msg && msg.type === "sync") {
 		unpairedLeft = UNPAIRED_RETRIES;
-		ensure(true);
+		syncOnce();
 	}
 });
-ensure();

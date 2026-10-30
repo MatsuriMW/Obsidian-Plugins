@@ -1,10 +1,10 @@
 {
 	"manifest_version": 3,
 	"name": "Obsidian 书签桥",
-	"version": "0.1.0",
-	"description": "把 Chrome 书签和 Obsidian 里的「Chrome 书签」侧栏双向连起来。只和本机 127.0.0.1:27184 通信，不联网。",
+	"version": "0.2.0",
+	"description": "把 Chrome 书签和 Obsidian 里的「Chrome 书签」侧栏双向同步：点扩展弹窗里的「同步」才连一次，平时不运行。只和本机 127.0.0.1:27184 通信，不联网。",
 	"minimum_chrome_version": "120",
-	"permissions": ["bookmarks", "alarms", "favicon", "storage"],
+	"permissions": ["bookmarks", "favicon", "storage"],
 	"host_permissions": ["http://127.0.0.1:27184/*"],
 	"background": { "service_worker": "sw.js" },
 	"action": { "default_title": "Obsidian 书签桥", "default_popup": "popup.html" }

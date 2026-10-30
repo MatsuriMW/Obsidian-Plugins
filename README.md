@@ -40,7 +40,7 @@
 | **List Outdent Plain**<br>[`list-outdent-plain`](list-outdent-plain) | 在顶格列表项上再按 ⌘[，它就变成普通段落，子项跟着往前提一级 | ★★★ | 无 |
 | **任务状态快切**<br>[`task-toggle`](task-toggle) | ⌘/ 循环切换 TODO → DOING → DONE，自动写上开始和结束时间；⌘⇧/ 切换暂停、取消等状态 | ★★ | 用 Logseq 式任务关键词 |
 | **Outline Block**<br>[`outline-block`](outline-block) | 一键把一大段文字整理成层级列表并加上双链，先预览再替换 | ★★ | 本机 Claude Code（`claude` 命令行） |
-| **Chrome 书签**<br>[`chrome-bookmarks`](chrome-bookmarks) | 侧栏里一棵和 Chrome 双向同步的书签树：点一下用内置浏览器（或 Chrome）打开；在这里新建、改名、拖动、删除，Chrome 那边跟着变，反过来也一样。命令「搜索 Chrome 书签」在 Better Command Palette 里搜（要装 Palette Enhancements，没装就用自带的小面板）。在 Chrome 里新收藏的网页会按内容量自动记进笔记：单篇进待读、视频进待看、Wiki 式的进长期项目。要配合仓库里的 Chrome 扩展「Obsidian 书签桥」用，两边只走本机 127.0.0.1 通信。 |  |  |
+| **Chrome 书签**<br>[`chrome-bookmarks`](chrome-bookmarks) | 侧栏里一棵和 Chrome 双向同步的书签树：点一下用内置浏览器（或 Chrome）打开；在这里新建、改名、拖动、删除，下次在 Chrome 里点扩展的「同步」时补做，Chrome 那边的改动也是点「同步」才带过来，平时不运行。命令「搜索 Chrome 书签」在 Better Command Palette 里搜（要装 Palette Enhancements，没装就用自带的小面板）。在 Chrome 里新收藏的网页会按内容量自动记进笔记：单篇进待读、视频进待看、Wiki 式的进长期项目。要配合仓库里的 Chrome 扩展「Obsidian 书签桥」用，两边只走本机 127.0.0.1 通信。 |  |  |
 | **Paste Image Scale**<br>[`paste-image-scale`](paste-image-scale) | 粘贴或拖进来的图片，默认按原图宽度的 50% 显示：插好 ![[图片]] 之后自动补上 \|宽度。Retina 截图（@2x）正好回到屏幕上看到的大小。比例可调。 |  |  |
 
 ### 知识库与 AI：本地语义检索、LLM Wiki、复习和写作

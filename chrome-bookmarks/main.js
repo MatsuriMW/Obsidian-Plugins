@@ -1,9 +1,11 @@
 // Chrome 书签：侧栏里一棵和 Chrome 双向同步的书签树
 //
 // 怎么通的：Chrome 那头装扩展「Obsidian 书签桥」（仓库 chrome-bookmarks/extension），这头在 127.0.0.1:27184 起一个本机服务。
-//   · Chrome → Obsidian：扩展每次书签变化都把整棵树 POST 过来（/tree），这里存成快照（snapshot）
-//   · Obsidian → Chrome：面板里的操作先进队列（queue），扩展长轮询 /poll 一次领一条，执行完 /ack 回执
-//   · 面板显示的 = 快照 + 队列里还没执行的操作；所以 Chrome 没开时也能改，连上以后按顺序补做
+//   · 手动同步：只有在 Chrome 里点扩展弹窗的「同步」，扩展才来连一次；平时不轮询、不常驻（以前常驻长轮询，
+//     Chrome 和 ego lite 都装了扩展时两边互相踢，一秒几百个请求）
+//   · Chrome → Obsidian：同步时把整棵树 POST 过来（/tree），这里存成快照（snapshot）
+//   · Obsidian → Chrome：面板里的操作先进队列（queue），同步时扩展用 /poll 一条条领（不挂起，没有就回空），执行完 /ack 回执
+//   · 面板显示的 = 快照 + 队列里还没执行的操作；下次同步时按顺序补做
 // 谁能连：只认请求头 Origin 是 chrome-extension://… 的扩展，而且第一次要在弹窗里点「允许」；网页伪造不了这个头
 // 不直接改 Chrome 的 Bookmarks 文件：Chrome 开着账号同步，外部改文件会被覆盖，或者同步出重复
 //
@@ -17,8 +19,6 @@ const { execFile } = require("child_process");
 
 const VIEW = "chrome-bookmarks";
 const PORT = 27184;        // 和扩展 manifest 的 host_permissions 是同一个，要改得两边一起改
-const POLL_HOLD = 20000;   // 长轮询最多挂多久（扩展的 service worker 30 秒没动静会被 Chrome 回收）
-const ALIVE = 35000;       // 这么久没收到扩展的请求，就算断开
 const ICON_BATCH = 40;     // 一次向扩展要多少个网站图标
 const MAX_HITS = 200;      // 搜索最多列多少条
 const PALETTE_PLUGIN = "palette-split-open";
@@ -136,10 +136,7 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 		this.data = Object.assign({}, DEFAULT_DATA, await this.loadData());
 		this.icons = await this.readIcons();
 		if (!this.data.known && this.data.snapshot) this.detectNew();   // 现有书签记成「见过」，不回头整理
-		this.asked = new Set();   // 这次启动里已经向扩展要过图标的网站
-		this.lastSeen = 0;
-		this.wasOn = false;
-		this.waiter = null;       // 正挂着的那个 /poll
+		this.asked = new Set();   // 这一轮同步里已经向扩展要过图标的网站
 		this.save = debounce(() => this.saveData(this.data), 800, true);
 		this.saveIcons = debounce(() => this.app.vault.adapter.write(this.iconsPath(), JSON.stringify(this.icons)), 2000, true);
 		this.refresh = debounce(() => {
@@ -165,12 +162,10 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 		this.addCommand({ id: "undo-delete", name: "撤销上一次删除的 Chrome 书签", callback: () => this.undoDelete() });
 
 		this.startServer();
-		this.registerInterval(window.setInterval(() => this.checkAlive(), 5000));
 		this.app.workspace.onLayoutReady(() => this.placeOnce());
 	}
 
 	onunload() {
-		if (this.waiter) this.waiter.done(null);
 		if (this.server) {
 			if (this.server.closeAllConnections) this.server.closeAllConnections();
 			this.server.close();
@@ -234,7 +229,6 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 		req.on("end", () => {
 			let j;
 			try { j = body ? JSON.parse(body) : {}; } catch { return send(400, { error: "bad json" }); }
-			this.touch();
 			try { this.route(req.url, j, send, res); } catch (e) { console.error("[chrome-bookmarks]", e); send(500, { error: String(e.message || e) }); }
 		});
 	}
@@ -244,6 +238,7 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 			if (!j.tree || !Array.isArray(j.tree.children)) return send(400, { error: "bad tree" });
 			this.data.snapshot = slim(j.tree);
 			this.data.snapshotAt = Date.now();
+			this.asked.clear();   // 新的一轮同步：上次没要到的图标可以再要一次
 			this.detectNew();
 			this.save();
 			this.refresh();
@@ -255,7 +250,7 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 			this.refresh();
 			return send(200, { ok: true, need: this.missingIcons() });
 		}
-		if (url === "/poll") return this.poll(send, res);
+		if (url === "/poll") return j.once ? send(200, { cmd: this.data.queue[0] || null }) : send(410, { error: "upgrade" });
 		if (url === "/ack") { this.ack(j); return send(200, { ok: true }); }
 		send(404, { error: "not found" });
 	}
@@ -265,22 +260,13 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 		this.pairing = origin;
 		new PairModal(this.app, origin, !!this.data.origin, (yes) => {
 			this.pairing = null;
-			if (yes === true) { this.data.origin = origin; this.saveData(this.data); new Notice("Chrome 书签：已允许，几秒内连上"); }
+			if (yes === true) { this.data.origin = origin; this.saveData(this.data); new Notice("Chrome 书签：已允许，Chrome 那边几秒内接着同步"); }
 			else if (yes === false) { this.data.denied.push(origin); this.saveData(this.data); }
 			else this.pairSnooze = Date.now() + 60000;   // 没选就关掉了：一分钟内不再弹
 			this.refresh();
 		}).open();
 	}
 
-	connected() { return Date.now() - this.lastSeen < ALIVE; }
-	touch() { this.lastSeen = Date.now(); this.checkAlive(); }
-	checkAlive() {
-		const on = this.connected();
-		if (on === this.wasOn) return;
-		this.wasOn = on;
-		if (on) this.asked.clear();   // 重新连上：上次没要到的图标可以再要一次
-		this.refresh();
-	}
 
 	missingIcons() {
 		const need = [];
@@ -297,29 +283,12 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 
 	// ----- 操作队列 -----
 
-	poll(send, res) {
-		if (this.waiter) this.waiter.done(null);
-		if (this.data.queue.length) return send(200, { cmd: this.data.queue[0] });
-		const w = {
-			done: (cmd) => {
-				if (this.waiter === w) this.waiter = null;
-				clearTimeout(w.timer);
-				this.lastSeen = Date.now();
-				send(200, { cmd });
-			},
-		};
-		w.timer = setTimeout(() => w.done(null), POLL_HOLD);
-		res.on("close", () => { if (this.waiter === w) { this.waiter = null; clearTimeout(w.timer); } });
-		this.waiter = w;
-	}
-
 	enqueue(op, args, label, tmpId) {
 		const cmd = { id: `c${Date.now().toString(36)}-${this.data.seq++}`, op, args, label };
 		if (tmpId) cmd.tmpId = tmpId;
 		this.data.queue.push(cmd);
 		this.save();
 		this.refresh();
-		if (this.waiter) this.waiter.done(this.data.queue[0]);
 		return cmd;
 	}
 
@@ -356,7 +325,7 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 		return tree;
 	}
 
-	// 所有书签摊平成一个列表（文件夹不算），path 是所在文件夹；还没连上过 Chrome 时是 null。Palette Enhancements 的「Chrome 书签」范围读这个
+	// 所有书签摊平成一个列表（文件夹不算），path 是所在文件夹；还没同步过 Chrome 时是 null。Palette Enhancements 的「Chrome 书签」范围读这个
 	allBookmarks() {
 		const tree = this.viewTree();
 		if (!tree) return null;
@@ -446,7 +415,7 @@ module.exports = class ChromeBookmarksPlugin extends Plugin {
 
 	promptCreate(folder, parentId, preset = {}) {
 		const tree = this.viewTree();
-		if (!tree) return new Notice("还没连上 Chrome，先装好扩展「Obsidian 书签桥」");
+		if (!tree) return new Notice("还没同步过 Chrome：装好扩展「Obsidian 书签桥」，在 Chrome 里点它的「同步」");
 		const folders = this.folders(tree);
 		if (!folders.length) return;
 		const pick = [parentId, this.data.lastParent, folders[0].id].find((id) => id && folders.some((f) => f.id === id));
@@ -533,14 +502,12 @@ class BookmarksView extends ItemView {
 		const p = this.plugin, q = p.data.queue.length;
 		let cls = "", text;
 		if (p.serverError) text = `本机服务没起来：${p.serverError}`;
-		else if (p.connected()) {
-			if (q) { cls = "is-busy"; text = `正在同步 ${q} 项…`; }
-			else { cls = "is-on"; text = `已连接 Chrome · ${this.tree ? countUrls(this.tree) : 0} 条书签`; }
-		} else if (!p.data.snapshot) text = "还没连上 Chrome";
+		else if (!p.data.snapshot) text = "还没同步过：在 Chrome 里点扩展「Obsidian 书签桥」的「同步」";
 		else {
 			const d = new Date(p.data.snapshotAt);
 			const pad = (x) => String(x).padStart(2, "0");
-			text = `Chrome 未连接 · ${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())} 的快照` + (q ? ` · ${q} 项待同步` : "");
+			cls = q ? "is-busy" : "is-on";
+			text = `${d.getMonth() + 1}-${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())} 同步 · ${this.tree ? countUrls(this.tree) : 0} 条书签` + (q ? ` · ${q} 项等下次同步` : "");
 		}
 		this.statusEl.empty();
 		this.statusEl.createSpan({ cls: "cbm-dot " + cls });
@@ -562,11 +529,12 @@ class BookmarksView extends ItemView {
 
 	renderSetup(el) {
 		const box = el.createDiv({ cls: "cbm-setup" });
-		box.createEl("p", { text: "还没有连上 Chrome。装一次扩展就行：" });
+		box.createEl("p", { text: "还没有同步过 Chrome。装一次扩展就行：" });
 		const ol = box.createEl("ol");
 		ol.createEl("li", { text: "在 Chrome 打开 chrome://extensions，打开右上角「开发者模式」" });
 		ol.createEl("li", { text: "点「加载已解压的扩展程序」，选插件仓库里的 chrome-bookmarks/extension 目录" });
-		ol.createEl("li", { text: "回到 Obsidian，在弹出的窗口点「允许」" });
+		ol.createEl("li", { text: "点 Chrome 工具栏上的扩展「Obsidian 书签桥」，再点「同步」" });
+		ol.createEl("li", { text: "回到 Obsidian，在弹出的窗口点「允许」。以后书签有改动，就在 Chrome 里点一次「同步」" });
 	}
 
 	renderHits(el) {
@@ -846,11 +814,10 @@ class BookmarksSettingTab extends PluginSettingTab {
 		el.empty();
 		new Setting(el).setName("连接").setDesc(
 			p.serverError ? `本机服务没起来：${p.serverError}`
-				: p.connected() ? "已连接 Chrome。"
-				: d.origin ? "Chrome 未连接：Chrome 没开，或者扩展被停用了。连上之前在面板里做的修改会排队，连上后补做。"
-				: "还没有允许任何扩展。在 Chrome 里加载仓库的 chrome-bookmarks/extension 目录，然后回到这里点「允许」。");
+				: d.origin ? "手动同步：在 Chrome 里点扩展「Obsidian 书签桥」的「同步」，才会把书签推过来、执行这边排队的修改。平时不连，不占资源。"
+				: "还没有允许任何扩展。在 Chrome 里加载仓库的 chrome-bookmarks/extension 目录，点扩展弹窗里的「同步」，然后回到这里点「允许」。");
 		if (d.origin) new Setting(el).setName("已允许的扩展").setDesc(d.origin.replace("chrome-extension://", ""))
-			.addButton((b) => b.setButtonText("断开").onClick(async () => { d.origin = ""; p.lastSeen = 0; p.checkAlive(); await p.saveData(d); this.display(); }));
+			.addButton((b) => b.setButtonText("断开").onClick(async () => { d.origin = ""; await p.saveData(d); this.display(); }));
 		if (d.denied.length) new Setting(el).setName("拒绝过的扩展").setDesc(d.denied.map((o) => o.replace("chrome-extension://", "")).join("、"))
 			.addButton((b) => b.setButtonText("清掉记录").onClick(async () => { d.denied = []; await p.saveData(d); this.display(); }));
 		new Setting(el).setName("单击书签时").setDesc("按住 ⌘ 单击走另一边。")
