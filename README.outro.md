@@ -17,4 +17,4 @@
 
 ## 致谢
 
-改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、TODOseq（Stephen Cross）、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。
+改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。

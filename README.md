@@ -82,7 +82,6 @@
 | **Flashcards**<br>[`flashcards-obsidian`](flashcards-obsidian) | 从笔记生成并同步 Anki 卡片。改动：卡片的上下文会带上包着它的各层母块，在 Anki 里也知道这张卡在讲什么 | ★★ | Anki + AnkiConnect |
 | **Expandomatic**<br>[`expandomatic`](expandomatic) | 选区按 词 → 句 → 段 → 节 → 全文 逐级扩大，和 VSCode 的扩选一样。改动：和「编辑体验 Logseq 化」的块选中配合调整过 | ★★★ | 无 |
 | **MDFlow（自用）**<br>[`mdflow-local`](mdflow-local) | 把 Markdown 排成公众号文章、X Articles 和小红书图片，可以一键发到 Hexo 博客、一次分发到几个平台。本地版，不跟插件市场更新 | ★★ | 无 |
-| **TODOseq**<br>[`todoseq`](todoseq) | 用 Logseq 式关键词（TODO / DOING / DONE）做轻量任务跟踪。改动：切换状态的快捷键让给了「任务状态快切」；关键词上不再挂悬停说明；关键词按状态上色（低饱和的蓝、红、绿，停下来的、没成的用暖灰色）；行里写的 2/3 这种进度不再被当成日期；优先级可以简写成 todoa、todo a、doing b，光标离开那一行就改成 TODO [#A]；⌃⇧I / ⌃⇧U 切换「重要」「紧急」（A 重要且紧急、B 紧急不重要、C 重要不紧急，从块去向搬过来的）；加了四个给 AI 的 TODO 状态 TODOFORAI / TODO4AI / TODO2AI / TODOTOAI（和 TODO 同类，可切到 DOING），小写的光标离开时改成大写；加了两个 Agent 会话的 DOING 中间态 TOREVIEW（停下来等你看）/ NEEDOK（等你点允许，显示成 NEEDOK?）/ ERRORED（报错停了）/ HITLIMIT（撞了用量限额，显示成 HITLIMIT!）/ QUEUED（已排队等续跑）/ DELEGATED（委派给 Agent 了）；关键词前面加了 lucide-animated 的动效小图标（DONE 是画勾的圆圈、DOING 是一直转的圈、TOREVIEW 是眨眼……），DOING 一直转，别的只在刚切换那一下播一次，和 PAUSED 一样点一下回 DOING、用渐变色区分，由螺旋日程按会话状态自动切；加了拿主意的三个词 YES / NO / MAYBE（YES、NO 和 DONE 一样算定了，MAYBE 和 WAITING 一样还悬着），各配一个图标（竖大拇指、倒大拇指、问号） | ★★ | 无 |
 | **NoteTweet**<br>[`notetweet`](notetweet) | 在笔记里写推文和线程直接发到 X。改动：撰写框照 X 和 Typefully 重做——头像 + 账号、Write / Preview 两档（Preview 按 X 时间线排出整串帖子：线程线、图片宫格、#话题 @提及 链接上色）；字数改成 X 式的进度环（剩 30 字变暖色出数字，超了变红、卡片抖一下）；按钮换成 Lucide 动效图标（照 lucide-animated，悬停时自己动）；加帖、删帖、换顺序都有平滑过渡；弹窗贴上方开不再上下跳；按钮样式和 Obsidian 原生对齐；发帖中有转圈提示、发完有画出来的勾；编辑器右键选中文字可「Compose post from selection」；加了「Post current block」（命令 + 左侧功能区纸飞机按钮 + 右键菜单）：光标在列表项里取这一项连同子项，在段落里取整段，去掉列表符号、TODOseq 关键词、双链和粗体高亮记号后带进撰写框，嵌入的图片变附件，发完在这一块第一行末尾（块 id 前）打 #tweeted；各个动作有轻声的合成音效（加帖、删帖、换顺序、拆帖、加图、超限、发出、发成功），设置里能关 | ★★ | X 开发者账号的 API 密钥 |
 
 ### 附：没改代码、只固定了版本的社区插件
@@ -103,6 +102,7 @@
 | **Emacs Logseq Inspired Outline** | 受 Logseq 和 Emacs 启发的大纲编辑：Esc 选中整块，↑↓ 在块之间移动；选中文字后输入括号、引号会把文字包起来；⌘K 插分割线；⌘⌥↑ 跳到母块（光标停在母块末尾）、⌘Enter 在同级末尾新建块（有序列表接着编号）、把几块收进一个新母块；块可以在无序列表、有序列表（1. / 4.1 / a.）和普通段落之间转换，⌘\ 一键循环切换 | [MatsuriMW/emacs-logseq-inspired-outline](https://github.com/MatsuriMW/emacs-logseq-inspired-outline) |
 | **Hover Outline** | 编辑区角落的隐藏式目录（仿 Claude Code，位置可选左 / 右 × 上 / 中 / 下，默认左中）：平时只有一列短横线，鼠标移上去展开，点一下跳过去并把那一行停在正中 | [MatsuriMW/hover-outline](https://github.com/MatsuriMW/hover-outline) |
 | **Logseq Style Alias** | Make [[alias]] links open the page that has the alias, the way Logseq does, instead of creating an empty page. | [MatsuriMW/logseq-style-alias](https://github.com/MatsuriMW/logseq-style-alias) |
+| **Logseq Style Tasks** | Keyword tasks for Logseq-style journals: todos: blocks, priority shorthand, keyword cycle groups with their own hotkeys, animated keyword icons and task sounds. A fork of TODOseq. | [MatsuriMW/logseq-style-tasks](https://github.com/MatsuriMW/logseq-style-tasks) |
 | **Logseq Style Fold** | Remember how list items are folded by writing a Logseq-style collapsed:: true line into the note, hidden from view. The marker text is configurable. | [MatsuriMW/logseq-style-fold](https://github.com/MatsuriMW/logseq-style-fold) |
 | **Nautilus Spiral** | A spiral day planner driven by your daily note: events stay pinned, to-dos flow from now into the free gaps, and time spent in AI agent sessions can be logged back as DOING and PAUSED tasks. Interface in Chinese. | [MatsuriMW/nautilus-spiral](https://github.com/MatsuriMW/nautilus-spiral) |
 | **Roam Backlinks** | Edit backlinks in place, block by block, just like in Logseq and Roam Research, with breadcrumbs that expand context, relevance sorting, co-mention filters and PDF export with backlinks. | [MatsuriMW/roam-backlinks](https://github.com/MatsuriMW/roam-backlinks) |
@@ -128,4 +128,4 @@
 
 ## 致谢
 
-改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、TODOseq（Stephen Cross）、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。
+改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。

@@ -37,7 +37,6 @@ journals
 flashcards-obsidian
 expandomatic
 mdflow-local
-todoseq
 notetweet
 
 ## 附：没改代码、只固定了版本的社区插件
