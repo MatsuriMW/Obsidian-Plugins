@@ -11,6 +11,10 @@
 - 改过的社区插件把版本号锁成了 `9999.0.0` 或带 `-local` 后缀，这样插件市场不会用原版覆盖它们。想用原版的话，去插件市场装原作者的版本就行。
 - 快捷键都注册成了 Obsidian 命令，可以在「设置 → 快捷键」里搜到、改掉。
 
+## 反馈与后续
+
+想追踪后续功能、反馈问题、关注后续进展，欢迎关注我的 Twitter：[@Matsurimywaifu](https://x.com/Matsurimywaifu)。
+
 ## 致谢
 
 改过的社区插件的原作者：Telegram Inbox、SuperTags（Daniele D'Amico）、Journals（Sergii Kostyrko）、Flashcards（Alex Colucci）、Expandomatic（Onsi Fakhouri）、MDFlow、TODOseq（Stephen Cross）、Breadcrumbs（MichaelPPorter）。这些插件的许可证以原项目为准。
