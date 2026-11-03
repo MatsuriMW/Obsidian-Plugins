@@ -1876,11 +1876,11 @@ module.exports = class DoneToTopPlugin extends Plugin {
 		new Notice(`➡️ 已发送到明天（${to.name}）：${label}${orig.length > 1 ? `（含 ${orig.length - 1} 行子项）` : ""}`);
 	}
 
-	// 发到 X：交给 NoteTweet 插件的发推编辑框，预填这一块（连同子项，见 tweetText）；超过一条的长度 NoteTweet 会自动拆成线程。
-	// 这里不直接发，发不发、发哪个账号在编辑框里定。NoteTweet 的编辑框只认「当前选中的文字」当预填，借它一下 currentSelection
+	// 发到 X：交给 Thread Studio 插件的发推编辑框，预填这一块（连同子项，见 tweetText）；超过一条的长度 Thread Studio 会自动拆成线程。
+	// 这里不直接发，发不发、发哪个账号在编辑框里定。Thread Studio 的编辑框只认「当前选中的文字」当预填，借它一下 currentSelection
 	async sendToTwitter(editor) {
-		const nt = this.app.plugins.plugins["notetweet"];
-		if (!nt || typeof nt.composeAndPost !== "function") return new Notice("要先装好并启用 NoteTweet 插件");
+		const nt = this.app.plugins.plugins["thread-studio"];
+		if (!nt || typeof nt.composeAndPost !== "function") return new Notice("要先装好并启用 Thread Studio 插件");
 		const lines = editor.getValue().split("\n");
 		const b = this.blockAt(lines, editor.getCursor().line);
 		if (!b) return new Notice("光标不在列表项里");
